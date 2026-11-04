@@ -52,7 +52,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         return route.fulfill({ response, json: replace(await response.json()) });
       });
       await page.goto(`${baseUrl}/ui#agent/${agentKey}`, { waitUntil: "networkidle" });
-      for (const scenario of ["retry", "discard", "retry-invalid", "discard-invalid", "retry-auth", "discard-auth", "discard-partial", "stale", "protected", "newer", "navigation"]) {
+      for (const scenario of ["retry", "retry-incomplete", "retry-batch", "retry-ids", "retry-status", "retry-empty", "retry-waiting", "retry-refusal", "discard", "retry-invalid", "discard-invalid", "retry-auth", "discard-auth", "discard-partial", "stale", "protected", "newer", "navigation"]) {
         const kind = scenario.startsWith("discard") || scenario === "protected" ? "discard" : "retry";
         canonical = raw(scenario === "protected");
         await page.evaluate(async key => {
@@ -81,10 +81,21 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           returned.prompt_queue.entries = returned.prompt_queue.entries.filter(entry => entry.id !== "first");
           returned.prompt_queue.queue_work = null;
           returned.running = kind === "retry";
-          const response = { agent: returned, discarded: kind === "discard", batch: { batch_id: "batch", state:"resolved", entry_ids: ["first"], unresolved_entry_ids: [], dispositions: { first: { entry_id: "first", outcome: "declined_with_reason", reason: "Operator discarded" } } } };
+          if (["retry-waiting","retry-refusal"].includes(scenario)) {
+            returned.running=false;
+            returned.prompt_queue.entries=structuredClone(canonical.prompt_queue.entries);
+            returned.prompt_queue.queue_work=structuredClone(canonical.prompt_queue.queue_work);
+            if (scenario==="retry-refusal") returned.prompt_queue.dispatch_error={message:"token-secret"};
+          }
+          const response = { status:returned.running?"started":"accepted",batch_id:"batch",processed_entry_ids:["first"],current_entry_ids:returned.prompt_queue.entries.map(entry=>entry.id),agent: returned, discarded: kind === "discard", batch: { batch_id: "batch", state:"resolved", entry_ids: ["first"], unresolved_entry_ids: [], dispositions: { first: { entry_id: "first", outcome: "declined_with_reason", reason: "Operator discarded" } } } };
           seen.release(); await held.promise;
           if (scenario.endsWith("auth") || scenario === "stale") return route.fulfill({ status: scenario === "stale" ? 409 : 401, json: { error: "token-secret prompt-secret" } });
           if (scenario.endsWith("invalid")) return route.fulfill({ json: {} });
+          if (scenario==="retry-incomplete") return route.fulfill({json:{agent:returned}});
+          if (scenario==="retry-empty") return route.fulfill({status:200,body:""});
+          if (scenario==="retry-batch") response.batch_id="other-batch";
+          if (scenario==="retry-ids") response.processed_entry_ids=["later"];
+          if (scenario==="retry-status") response.status="accepted";
           if (scenario === "discard-partial") { response.batch.unresolved_entry_ids = ["first"]; return route.fulfill({ json: response }); }
           canonical = structuredClone(returned);
           if (scenario === "newer") canonical.prompt_queue.entries.push({ id: "newer", prompt: "New message", source: "user", state: "queued" });
@@ -100,7 +111,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         await page.evaluate(async () => refresh({ force: true }));
         if (scenario === "navigation") await page.evaluate(() => navigate({ type: "tab", tab: "agents" }));
         held.release();
-        const uncertain = /invalid|auth|partial/.test(scenario) || scenario === "stale";
+        const uncertain = /invalid|auth|partial|incomplete|batch|ids|status|empty/.test(scenario) || scenario === "stale";
         await page.waitForFunction(({ key, uncertain }) => uncertain ? state.pendingPromptQueueActions.get(key)?.phase === "uncertain" : !state.pendingPromptQueueActions.has(key), { key: agentKey, uncertain });
         await page.waitForFunction(() => !state.refreshInFlight);
         assert.equal(writes, 1);
@@ -112,6 +123,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           await page.waitForFunction(key => !state.pendingPromptQueueActions.has(key), agentKey);
           assert.equal(writes, 1);
         }
+        if (["retry-waiting","retry-refusal"].includes(scenario)) assert((await page.locator(".growl").innerText()).includes(scenario==="retry-refusal"?"Could not process the queue.":"Queue is waiting to start."));
         if (scenario === "newer") assert(await page.evaluate(key => findAgent(key).prompt_queue.entries.some(entry => entry.id === "newer"), agentKey));
         if (scenario === "navigation") {
           assert.equal(await page.evaluate(() => location.hash), "#agents");

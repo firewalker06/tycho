@@ -187,6 +187,30 @@ function fixture(kind = "process") {
     assert.equal(f.stats().writes,0,"failed recovery must not expand Discard to newer work");
     assert.equal(f.state.pendingPromptQueueActions.size,0); assert(f.state.agentDetails.fixture.prompt_queue.entries.some(entry=>entry.id==="b")); cases++;
   }
+  for (const mode of ["started","waiting","refusal","incomplete","empty","batch","ids","status","current","partial"]) {
+    const f=fixture(), initial=f.state.agentDetails.fixture;
+    initial.prompt_queue.dispatch_error={message:"private"};
+    initial.prompt_queue.queue_work={batch_id:"batch",entry_ids:["a","b"],unresolved_entry_ids:["a","b"],dispositions:{},entries:[{id:"a",source:"user"},{id:"b",source:"user"}]};
+    f.c.readResponse={agent:structuredClone(initial)};
+    const returned=structuredClone(initial);returned.running=!["waiting","refusal"].includes(mode);
+    if (mode!=="refusal") returned.prompt_queue.dispatch_error=null;
+    let result={status:returned.running?"started":"accepted",batch_id:"batch",processed_entry_ids:["a","b"],current_entry_ids:["a","b"],agent:returned};
+    if (mode==="incomplete") result={agent:returned};
+    if (mode==="empty") result={};
+    if (mode==="batch") result.batch_id="other";
+    if (mode==="ids") result.processed_entry_ids=["unknown"];
+    if (mode==="partial") result.processed_entry_ids=["a"];
+    if (mode==="status") result.status="accepted";
+    if (mode==="current") result.current_entry_ids=[];
+    let writes=0;
+    f.c.apiPost=async()=>{writes++;return result;};
+    await f.run('runFailedPromptQueueAction("fixture","retry")');
+    const valid=["started","waiting","refusal"].includes(mode);
+    assert.equal(f.state.pendingPromptQueueActions.get("fixture")?.phase,valid?undefined:"uncertain");
+    if (valid) assert(f.messages.at(-1).message.includes(mode==="started"?"Queue started.":mode==="waiting"?"waiting":"Could not process"));
+    else {await f.run('reconcilePromptQueueAction("fixture","retry")');assert.equal(writes,1);}
+    cases++;
+  }
   const claimed = fixture();
   const claimedAgent = claimed.state.agentDetails.fixture;
   claimedAgent.prompt_queue.dispatch_error = {message:"private-error-sentinel"};

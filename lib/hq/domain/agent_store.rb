@@ -968,7 +968,7 @@ module HQ
       end
     end
 
-    def retry_prompt_queue!(key, expected_entry_ids: nil, expected_batch_id: nil)
+    def retry_prompt_queue!(key, expected_entry_ids: nil, expected_batch_id: nil, include_result: false)
       mutate do |agents, _events|
         target = agents.find { |agent| agent.key == key.to_s }
         raise ArgumentError, "Unknown agent: #{key}" unless target
@@ -982,10 +982,19 @@ module HQ
         raise ArgumentError, "No queued dispatch is waiting for retry" unless target.prompt_queue_dispatch_error
         raise ArgumentError, "An inquiry must be resolved before retrying queued work" if target.inquiry_blocking_prompt_queue?
 
+        batch = target.active_queue_work
+        batch_id = batch&.fetch("id", nil)
+        retried_ids = batch ? QueueWork.unresolved_ids(batch) : []
         target.clear_prompt_queue_dispatch_error!
         target.active_queue_work["resume_pending"] = true if target.active_queue_work && !target.prompt_queue_claim
         dispatch_prompt_queue!(target, agents)
-        target
+        if include_result
+          { "status" => target.running? ? "started" : "accepted", "batch_id" => batch_id,
+            "processed_entry_ids" => retried_ids,
+            "current_entry_ids" => target.visible_prompt_queue_entries.map { |entry| entry["id"].to_s }, "agent" => target }
+        else
+          target
+        end
       end
     end
 

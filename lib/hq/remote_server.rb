@@ -3737,9 +3737,10 @@ module HQ
 
     def retry_prompt_queue(key, attrs = {})
       find_agent!(key)
-      target = @agent_store.retry_prompt_queue!(key, **failed_queue_snapshot(attrs))
+      result = @agent_store.retry_prompt_queue!(key, **failed_queue_snapshot(attrs), include_result: true)
+      target = result.fetch("agent")
       @agent_activity_snapshot.upsert!(target)
-      { agent: agent_payload(target), conversation: conversation(target.key) }
+      result.reject { |name, _value| name == "agent" }.merge(agent: agent_payload(target), conversation: conversation(target.key))
     rescue ArgumentError => e
       raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
     end

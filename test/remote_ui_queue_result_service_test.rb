@@ -150,6 +150,43 @@ module RemoteUIQueueResultServiceTest
     puts "legacy disposed claim guarded retry: ok"
   end
 
+  def assert_guarded_retry_domain_results
+    %w[started busy refusal].each do |scenario|
+      PromptQueueTest.with_queue_store do |registry, workspace|
+        target = PromptQueueTest.terminal_agent(workspace, status: "blocked")
+        target.enqueue_prompt!(id: "first", prompt: "First message", source: "user")
+        store = HQ::AgentStore.new(registry.projects)
+        store.save([target])
+        service = HQ::RemoteService.new(registry:)
+        service.instance_variable_set(:@agent_store, store)
+        failed = PromptQueueTest.with_stubbed_start(error: IOError.new("Controlled refusal")) do
+          service.process_prompt_queue(target.key, "entry_ids" => ["first"], "expected_entry_ids" => ["first"])
+        end
+        batch_id = failed[:agent][:prompt_queue]["queue_work"]["batch_id"]
+        attrs = { "expected_entry_ids" => ["first"], "expected_batch_id" => batch_id }
+        result = if scenario == "refusal"
+                   PromptQueueTest.with_stubbed_start(error: IOError.new("Controlled retry refusal")) { service.retry_prompt_queue(target.key, attrs) }
+                 else
+                   PromptQueueTest.with_stubbed_running_start do
+                     if scenario == "busy"
+                       current = service.send(:find_agent_reference!, target.key)
+                       blocker = HQ::ManagedAgent.new(key: "busy", name: "Busy", project_key: "web", template_key: "custom", workspace:, prompt: "Work")
+                       store.save([current, blocker])
+                       store.start_agent!(blocker.key)
+                     end
+                     service.retry_prompt_queue(target.key, attrs)
+                   end
+                 end
+        assert(result["batch_id"] == batch_id && result["processed_entry_ids"] == ["first"], "retry must identify its original batch and messages")
+        assert(result["status"] == (scenario == "started" ? "started" : "accepted"), "retry must report the actual domain result")
+        assert(result[:agent][:running] == (scenario == "started"), "accepted must not become started")
+        assert(result["current_entry_ids"] == result[:agent][:prompt_queue]["entries"].map { |entry| entry["id"] }, "retry current IDs must match projection")
+        assert(result[:agent][:prompt_queue]["dispatch_error"], "launch refusal must remain visible") if scenario == "refusal"
+      end
+    end
+    puts "guarded retry domain started/busy/refusal: ok"
+  end
+
   def run!
     %w[started busy refusal].each do |scenario|
       PromptQueueTest.with_queue_store do |registry, workspace|
@@ -191,6 +228,7 @@ module RemoteUIQueueResultServiceTest
         puts "queue service #{scenario}: #{result['status']}, running=#{agent[:running]}, selected=#{result['processed_entry_ids'].join(',')}"
       end
     end
+    assert_guarded_retry_domain_results
     assert_guarded_failed_actions
     assert_uncertain_discard_cannot_remove_part_of_a_failed_claim
     assert_guarded_retry_rejects_a_legacy_disposed_claim_entry
