@@ -221,8 +221,10 @@ module RemoteUIAssetSnapshotTest
       'id="app" class="app-shell" aria-busy="true"',
       'href="/manifest.webmanifest?v=<%= HQ::RemoteUI.asset_version %>"'
     ]
+    # Light-theme logos load from light.css on demand; a head preload goes unused in dark theme.
+    raise "index template must not preload theme-specific images" if template.include?('rel="preload"')
     missing_template = required_template.reject { |fragment| template.include?(fragment) }
-    raise "missing initial loading shell contract: #{missing_template.join(", ")}" unless missing_template.empty?
+    raise "missing initial loading shell contract:#{missing_template.join(", ")}" unless missing_template.empty?
     forbidden_template = [
       'class="tycho-boot-title"',
       'id="tycho-boot-message"',
