@@ -258,5 +258,26 @@ function fixture(kind = "process") {
     else assert.throws(()=>f.run('promptQueueReadFailedBatch(findAgent("fixture"))'),/invalid_result/);
     cases++;
   }
+  if (process.env.TYCHO_QUEUE_RETRY_PROOF_INPUT === "1") {
+    for (const row of JSON.parse(fs.readFileSync(0,"utf8"))) {
+      const f=fixture(), initial=structuredClone(row.before), result=structuredClone(row.result);
+      initial.key="fixture";result.agent.key="fixture";
+      f.state.agentDetails.fixture=initial;f.state.agents=[initial];f.c.readResponse={agent:initial};
+      let writes=0;f.c.apiPost=async()=>{writes++;return result;};
+      await f.run('runFailedPromptQueueAction("fixture","retry")');
+      const expected=initial.prompt_queue.queue_work.unresolved_entry_ids;
+      assert.deepEqual(result.processed_entry_ids,row.actual_entry_ids);
+      const complete=JSON.stringify(expected)===JSON.stringify(row.actual_entry_ids);
+      const action=f.state.pendingPromptQueueActions.get("fixture");
+      assert.equal(action?.phase,complete?undefined:"uncertain",row.scenario);
+      if (!complete) {
+        assert.deepEqual([...action.entryIds],expected,"original complete scope must stay intact");
+        assert(!f.messages.some(item=>item.message==="Queue started."));
+        await f.run('reconcilePromptQueueAction("fixture","retry")');
+        assert.equal(writes,1,"recovery cannot automatically repeat or expand the mutation");
+      }
+      cases++;
+    }
+  }
   console.log(`remote_ui_queue_result_test: ${cases} cases passed`);
 })().catch(error => { console.error(error); process.exitCode = 1; });

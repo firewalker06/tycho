@@ -984,11 +984,21 @@ module HQ
 
         batch = target.active_queue_work
         batch_id = batch&.fetch("id", nil)
-        retried_ids = batch ? QueueWork.unresolved_ids(batch) : []
+        baseline_run_count = target.run_count
         target.clear_prompt_queue_dispatch_error!
         target.active_queue_work["resume_pending"] = true if target.active_queue_work && !target.prompt_queue_claim
         dispatch_prompt_queue!(target, agents)
         if include_result
+          run = target.last_run
+          claim = target.prompt_queue_claim
+          # Proof follows the selected delivery, which can be smaller than the batch.
+          retried_ids = if target.run_count > baseline_run_count && run&.metadata&.fetch("prompt_queue_claim_id", nil) == batch_id
+                          Array(run.metadata["prompt_queue_entry_ids"]).map(&:to_s)
+                        elsif claim && claim["id"] == batch_id
+                          Array(claim["entries"]).map { |entry| entry["id"].to_s }
+                        else
+                          []
+                        end
           { "status" => target.running? ? "started" : "accepted", "batch_id" => batch_id,
             "processed_entry_ids" => retried_ids,
             "current_entry_ids" => target.visible_prompt_queue_entries.map { |entry| entry["id"].to_s }, "agent" => target }

@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "open3"
 require_relative "prompt_queue_test"
 
 module RemoteUIQueueResultServiceTest
@@ -187,6 +188,89 @@ module RemoteUIQueueResultServiceTest
     puts "guarded retry domain started/busy/refusal: ok"
   end
 
+  def assert_retry_proof_matches_actual_delivery
+    rows = []
+    %w[full started busy refusal partial prior newer protected].each do |scenario|
+      PromptQueueTest.with_queue_store do |registry, workspace|
+        target = PromptQueueTest.terminal_agent(workspace, status: "blocked")
+        ids = scenario == "prior" ? %w[done a b] : %w[a b]
+        ids.each { |id| target.enqueue_prompt!(id:, prompt: "Message #{id}", source: scenario == "protected" && id == "b" ? "delegation_callback" : "user") }
+        store = HQ::AgentStore.new(registry.projects)
+        store.save([target])
+        service = HQ::RemoteService.new(registry:)
+        service.instance_variable_set(:@agent_store, store)
+        service.read_prompt_queue(target.key)
+        if scenario == "prior"
+          current = service.send(:find_agent_reference!, target.key)
+          current.complete_queue_work!(current.active_queue_work["id"], [{ "entry_id" => "done", "outcome" => "completed" }])
+          store.save([current])
+        end
+        selected = scenario == "full" ? %w[a b] : ["a"]
+        PromptQueueTest.with_stubbed_start(error: IOError.new("Controlled launch refusal")) do
+          service.process_prompt_queue(target.key, "entry_ids" => selected, "expected_entry_ids" => %w[a b])
+        end
+        current = service.send(:find_agent_reference!, target.key)
+        batch_id = current.active_queue_work["id"]
+        assert(current.prompt_queue_claim["entries"].map { |entry| entry["id"] } == selected, "failed claim must retain the selected delivery only")
+        if scenario == "newer"
+          current.enqueue_prompt!(id: "newer", prompt: "New message", source: "user")
+          store.save([current])
+        end
+        before = service.send(:agent_payload, current)
+        snapshot = current.visible_prompt_queue_entries.map { |entry| entry["id"] }
+        attrs = { "expected_entry_ids" => snapshot, "expected_batch_id" => batch_id }
+        result = if scenario == "refusal"
+                   PromptQueueTest.with_stubbed_start(error: IOError.new("Controlled retry refusal")) { service.retry_prompt_queue(target.key, attrs) }
+                 else
+                   PromptQueueTest.with_stubbed_running_start do
+                     if scenario == "busy"
+                       blocker = HQ::ManagedAgent.new(key: "busy", name: "Busy", project_key: "web", template_key: "custom", workspace:, prompt: "Work")
+                       store.save([current, blocker])
+                       store.start_agent!(blocker.key)
+                     end
+                     service.retry_prompt_queue(target.key, attrs)
+                   end
+                 end
+        after = service.send(:find_agent_reference!, target.key)
+        actual = if %w[busy refusal].include?(scenario)
+                   after.prompt_queue_claim["entries"].map { |entry| entry["id"] }
+                 else
+                   after.last_run.metadata["prompt_queue_entry_ids"]
+                 end
+        assert(actual == selected, "retry must not expand the retained claim")
+        assert(result["processed_entry_ids"] == actual, "retry proof must equal actual claim/delivery IDs: #{scenario}")
+        assert(result["batch_id"] == batch_id, "retry proof must retain batch identity")
+        assert(result["status"] == (%w[busy refusal].include?(scenario) ? "accepted" : "started"), "retry must retain actual running state")
+        assert(HQ::QueueWork.unresolved_ids(after.active_queue_work) == %w[a b], "retry delivery does not complete the whole batch")
+        if scenario == "prior"
+          assert(after.active_queue_work["dispositions"]["done"]["outcome"] == "completed", "retry must preserve prior outcomes")
+        end
+        if scenario == "protected"
+          begin
+            service.discard_prompt_queue(target.key, attrs)
+            raise "Protected callback must not be discarded"
+          rescue HQ::RemoteService::Error => e
+            assert(e.status == 409, "protected callback discard must remain rejected")
+          end
+        end
+        if %w[started partial prior newer protected].include?(scenario)
+          after.instance_variable_set(:@structured_result, { "status" => scenario == "partial" ? "partial" : "success" })
+          after.send(:gate_successful_queue_work!, after.last_run)
+          assert(after.active_queue_work["dispositions"]["a"]["outcome"] == "completed", "only delivered instructions may auto-complete")
+          assert(HQ::QueueWork.unresolved_ids(after.active_queue_work) == ["b"], "undelivered work must remain unresolved")
+          assert(!after.active_queue_work["resume_pending"], "proof correction must not request automatic expansion")
+        end
+        rows << { scenario: scenario, before: before, result: result, actual_entry_ids: actual }
+      end
+    end
+    File.write(ENV["TYCHO_QUEUE_RETRY_PROOF_RESULTS"], JSON.generate(rows)) if ENV["TYCHO_QUEUE_RETRY_PROOF_RESULTS"]
+    output, status = Open3.capture2e({ "TYCHO_QUEUE_RETRY_PROOF_INPUT" => "1" }, "node", File.join(__dir__, "support/queue_result_contract.js"),
+                                   File.expand_path("../lib/hq/remote_ui/assets/app.js", __dir__), stdin_data: JSON.generate(rows))
+    assert(status.success?, "actual retry results must retain the correct consumer barrier: #{output}")
+    puts output
+    puts "retry proof equals actual retained claim/delivery: 8 variants passed"
+  end
+
   def run!
     %w[started busy refusal].each do |scenario|
       PromptQueueTest.with_queue_store do |registry, workspace|
@@ -228,6 +312,7 @@ module RemoteUIQueueResultServiceTest
         puts "queue service #{scenario}: #{result['status']}, running=#{agent[:running]}, selected=#{result['processed_entry_ids'].join(',')}"
       end
     end
+    assert_retry_proof_matches_actual_delivery
     assert_guarded_retry_domain_results
     assert_guarded_failed_actions
     assert_uncertain_discard_cannot_remove_part_of_a_failed_claim

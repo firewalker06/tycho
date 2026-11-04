@@ -1,12 +1,25 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
 
 module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
   const results = [];
   const gate = () => { let release; const promise = new Promise(resolve => { release = resolve; }); return { promise, release }; };
   for (const width of [1440, 390]) for (const theme of ["dark", "light"]) {
     const context = await browser.newContext({ viewport: { width, height: 900 }, isMobile: width < 500, hasTouch: width < 500 });
+    if (width === 1440 && theme === "dark") {
+      const served = await context.request.get(`${baseUrl}/ui.js`);
+      const bundle = await served.text();
+      const expected = ["prompt_submissions.js","inquiry_submissions.js","app.js"].map(name=>fs.readFileSync(path.join(__dirname,"../../lib/hq/remote_ui/assets",name),"utf8")).join("\n");
+      assert(served.ok());assert.equal(bundle,expected,"browser must use the current complete UI bundle");
+      if (captureDir) fs.writeFileSync(path.join(captureDir,"queue-recovery-source.json"),JSON.stringify({
+        servedBundleSha256:crypto.createHash("sha256").update(bundle).digest("hex"),
+        appSha256:crypto.createHash("sha256").update(fs.readFileSync(path.join(__dirname,"../../lib/hq/remote_ui/assets/app.js"))).digest("hex"),
+        queueResultOnly:process.env.TYCHO_REMOTE_UI_QUEUE_RESULT_ONLY === "1",
+        actualDomainResultsSha256:process.env.TYCHO_QUEUE_RETRY_PROOF_RESULTS?crypto.createHash("sha256").update(fs.readFileSync(process.env.TYCHO_QUEUE_RETRY_PROOF_RESULTS)).digest("hex"):null,
+      },null,2));
+    }
     const page = await context.newPage();
     page.setDefaultTimeout(10000);
     await page.addInitScript(() => { document.hasFocus = () => true; });
@@ -260,6 +273,48 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       assert.equal(partialWrites,1);assert.deepEqual(canonical.prompt_queue.entries.map(entry=>entry.id),["newer"]);
       await page.unroute("**/prompt-queue/discard",discardRemaining);
       results.push({width,theme,scenario:"discard-only-unresolved-with-prior-outcome",writes:partialWrites});
+      const proofRows = process.env.TYCHO_QUEUE_RETRY_PROOF_RESULTS
+        ? JSON.parse(fs.readFileSync(process.env.TYCHO_QUEUE_RETRY_PROOF_RESULTS,"utf8")) : [];
+      if (proofRows.length) await page.evaluate(()=>{
+        window.queueProofGrowls=[];window.queueProofOriginalGrowl=showGrowl;
+        showGrowl=(...args)=>{window.queueProofGrowls.push(args[0]);return window.queueProofOriginalGrowl(...args);};
+      });
+      for (const row of proofRows) {
+        await page.waitForFunction(()=>!state.refreshInFlight && !state.activityInFlight);
+        canonical={...structuredClone(original),...structuredClone(row.before),key:agentKey,name:"Queue messages"};
+        await page.evaluate(async key=>{
+          state.pendingPromptQueueActions.delete(key);await ensureAgentDetail(key,true);window.queueProofGrowls=[];
+          state.renderedViewHtml="";render();clearTimeout(state.timer);clearTimeout(state.activityTimer);
+          document.querySelector("[data-prompt-queue]").open=true;
+        },agentKey);
+        const complete=JSON.stringify(row.before.prompt_queue.queue_work.unresolved_entry_ids)===JSON.stringify(row.actual_entry_ids);
+        const seen=gate();held=gate();let writes=0;
+        const actualRetry=async route=>{
+          writes++;
+          assert.deepEqual(route.request().postDataJSON(),{expected_entry_ids:row.before.prompt_queue.entries.map(entry=>entry.id),expected_batch_id:row.result.batch_id});
+          seen.release();await held.promise;
+          const result=structuredClone(row.result);result.agent.key=agentKey;result.agent.name="Queue messages";
+          canonical=structuredClone(result.agent);
+          return route.fulfill({json:result});
+        };
+        await page.route("**/prompt-queue/retry",actualRetry);
+        await page.locator("[data-retry-prompt-queue]").press("Enter");await seen.promise;
+        await page.evaluate(key=>runFailedPromptQueueAction(key,"retry"),agentKey);held.release();
+        await page.waitForFunction(({key,complete})=>complete?!state.pendingPromptQueueActions.has(key):state.pendingPromptQueueActions.get(key)?.phase==="uncertain",{key:agentKey,complete});
+        await page.waitForFunction(()=>!state.refreshInFlight && !state.activityInFlight);
+        assert.equal(writes,1);
+        if (!complete) {
+          assert.deepEqual(await page.evaluate(key=>state.pendingPromptQueueActions.get(key).entryIds,agentKey),row.before.prompt_queue.queue_work.unresolved_entry_ids);
+          assert((await page.locator("[data-prompt-queue]").innerText()).includes("Could not confirm queue processing."));
+          assert(!(await page.evaluate(()=>window.queueProofGrowls)).includes("Queue started."),"partial retry must not emit a started notification");
+          await page.locator("[data-review-queue-action]").press("Enter");
+          await page.waitForFunction(key=>!state.pendingPromptQueueActions.has(key),agentKey);
+          assert.equal(writes,1,"actual partial recovery cannot replay or expand work");
+        }
+        await page.unroute("**/prompt-queue/retry",actualRetry);
+        results.push({width,theme,scenario:`actual-domain-retry-${row.scenario}`,writes,complete,requestedCount:row.before.prompt_queue.queue_work.unresolved_entry_ids.length,confirmedCount:row.actual_entry_ids.length});
+      }
+      if (proofRows.length) await page.evaluate(()=>{showGrowl=window.queueProofOriginalGrowl;});
       await Promise.all(diagnosticReads);
       assert(diagnostics.length > 0);
       assert(!/token-secret|prompt-secret|private\/file|debug-.*sentinel|Prepare the summary/.test(diagnostics.join("\n")));
