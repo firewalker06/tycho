@@ -4,6 +4,11 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+### Remote UI polling
+
+- Let an in-flight poll finish when the window loses focus, so the status no
+  longer stays on Refreshing. Only the next poll waits until focus returns.
+
 ## 0.14.1 - 2026-10-26
 
 ### Agent list and harness marks

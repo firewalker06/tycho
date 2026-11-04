@@ -43,9 +43,10 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           else await heldSignal;
           await page.evaluate(() => { document.hasFocus = () => false; window.dispatchEvent(new Event("blur")); });
           if (start === "blur-in-flight") { release(); await page.waitForFunction(() => !state.refreshInFlight); }
-          assert.equal(await page.evaluate(() => Boolean(state.initialRouteLoaded)), false);
+          // A failed load stays pending; an in-flight load finishes after blur.
+          assert.equal(await page.evaluate(() => Boolean(state.initialRouteLoaded)), start === "blur-in-flight");
           assert.equal(await page.evaluate(() => state.timer), null);
-          assert.equal(requests.filter(p => route.request.test(p)).length, 0, "failed/inactive initialization must not load route data");
+          if (start === "retry") assert.equal(requests.filter(p => route.request.test(p)).length, 0, "failed initialization must not load route data");
           await page.unroute("**/servers/resources");
           await page.evaluate(() => { delete document.hasFocus; window.dispatchEvent(new Event("focus")); });
         }

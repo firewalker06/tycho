@@ -83,7 +83,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           await page.evaluate(() => { document.hasFocus = () => false; window.dispatchEvent(new Event("blur")); });
           releaseRecovery();
           await page.waitForFunction(() => !state.refreshInFlight);
-          assert.equal(await page.evaluate(() => state.initialRouteLoaded), false);
+          assert.equal(await page.evaluate(() => state.initialRouteLoaded), true, "in-flight recovery finishes after blur");
           assert.equal(await page.evaluate(() => state.timer), null);
           await page.waitForTimeout(250); assert.equal(attempts, heldAttempts);
           await page.evaluate(() => { delete document.hasFocus; for (let i = 0; i < 8; i++) { window.dispatchEvent(new Event("focus")); document.dispatchEvent(new Event("visibilitychange")); } });
