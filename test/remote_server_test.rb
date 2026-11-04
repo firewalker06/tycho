@@ -61,6 +61,8 @@ module RemoteServerTest
     assert_remote_inquiry_payload_has_stable_id_and_guarded_answer
     assert_remote_inquiry_dismiss_restore_and_retirement_lifecycle
     assert_remote_agent_payload_includes_attachments
+    assert_attachment_reads_skip_lifecycle_lock
+    assert_attachment_reads_exclude_restored_retired_owner
     assert_json_attachment_download_preserves_raw_bytes
     assert_attachment_download_uses_original_filename
     assert_remote_agent_pull_request_diff_payload
@@ -2888,6 +2890,125 @@ module RemoteServerTest
              "expected old attachment records to fall back to the source path basename")
       assert(service.attachment_blob(legacy.fetch("id")).dig(:headers, "Content-Disposition").include?('filename="out.mp4"'),
              "expected old attachments to download with their source filename")
+    end
+  end
+
+  def assert_attachment_reads_skip_lifecycle_lock
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      agent = HQ::ManagedAgent.new(key: "attachment-read", name: "Read", project_key: "web",
+                                   template_key: "custom", workspace: workspace, prompt: "Work.")
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+      path = File.join(workspace, "report.md")
+      File.write(path, "# First generation\n")
+      HQ::AgentMemory.new(agent).append_attachment!({ "id" => "report-attachment", "type" => "file", "path" => path, "title" => "Report" })
+      service = HQ::RemoteService.new(registry: registry, web_push_notifier: RecordingPushNotifier.new,
+                                      agent_list_cache: HQ::AgentListCache.new(max_age: 60))
+      locked = Queue.new
+      release = Queue.new
+      holder = Thread.new do
+        store.send(:with_exclusive_lock) { locked << true; release.pop }
+      end
+      locked.pop
+      begin
+        reader = Thread.new { service.attachment("report-attachment") }
+        assert(reader.join(1), "attachment GET waited for the lifecycle lock")
+        assert(reader.value["content"] == "# First generation\n", "expected fresh Markdown")
+        service.instance_variable_get(:@agent_store).define_singleton_method(:load_with_poll_events) do |**|
+          raise "attachment read entered lifecycle maintenance"
+        end
+        File.write(path, "# Changed generation\n")
+        assert(service.attachment("report-attachment")["content"] == "# Changed generation\n", "read cached stale file content")
+        assert(service.attachment_blob("report-attachment")[:body] == File.binread(path), "download used stale content")
+        File.write(path, "x" * (HQ::RemoteService::ATTACHMENT_CONTENT_LIMIT + 1))
+        large = service.attachment("report-attachment")
+        assert(large["content_truncated"] && large["content"].bytesize == HQ::RemoteService::ATTACHMENT_CONTENT_LIMIT,
+               "read changed the preview limit")
+        File.delete(path)
+        begin
+          missing = service.attachment("report-attachment")
+          assert(missing["content_error"], "missing file lost its error")
+        rescue HQ::RemoteService::Error => error
+          assert(error.status == 404, "missing file must return 404")
+        end
+        File.binwrite(path, "binary\x00content")
+        assert(service.attachment("report-attachment")["format"] == "binary", "binary Markdown name was rendered as text")
+        assert(service.attachment_blob("report-attachment")[:body] == "binary\x00content", "binary bytes changed")
+        HQ::AgentMemory.new(agent).append_attachment!({ "id" => "new-attachment", "type" => "file", "path" => path, "title" => "New" })
+        assert(service.attachment("new-attachment")["id"] == "new-attachment", "snapshot hid a newly added attachment")
+        project = service.instance_variable_get(:@projects).first
+        project.define_singleton_method(:hidden?) { true }
+        begin
+          service.attachment("report-attachment")
+          raise "hidden project attachment remained visible"
+        rescue HQ::RemoteService::Error => error
+          assert(error.status == 404, "hidden attachment must return 404")
+        ensure
+          project.singleton_class.remove_method(:hidden?)
+        end
+        HQ::FileStore.write_json(HQ::AGENTS_FILE, [])
+        begin
+          service.attachment("report-attachment")
+          raise "removed agent attachment remained visible"
+        rescue HQ::RemoteService::Error => error
+          assert(error.status == 404, "removed attachment must return 404")
+        end
+      ensure
+        release << true
+        holder.join
+        reader&.join
+      end
+    end
+  end
+
+  def assert_attachment_reads_exclude_restored_retired_owner
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      agent = HQ::ManagedAgent.new(key: "retired-owner", name: "Retired", project_key: "web",
+                                   template_key: "custom", workspace: workspace, prompt: "Work.")
+      store = HQ::AgentStore.new(registry.projects)
+      store.save([agent])
+      path = File.join(workspace, "retired.md")
+      File.write(path, "# Retired\n")
+      HQ::AgentMemory.new(agent).append_attachment!({ "id" => "retired-attachment", "type" => "file", "path" => path, "title" => "Retired" })
+      saved_record = JSON.parse(File.read(HQ::AGENTS_FILE))
+      saved_attachments = File.binread(agent.attachments_path)
+      service = HQ::RemoteService.new(registry: registry, web_push_notifier: RecordingPushNotifier.new,
+                                      agent_list_cache: HQ::AgentListCache.new(max_age: 60))
+      assert(service.attachment("retired-attachment")["id"] == "retired-attachment", "expected active owner attachment")
+
+      # Warm snapshot first, then archive: the ledger change alone must invalidate it.
+      store.archive_agent!(agent.key, root: File.join(dir, "archive"))
+      %w[attachment attachment_blob].each do |reader|
+        begin
+          service.public_send(reader, "retired-attachment")
+          raise "#{reader} served an archived owner"
+        rescue HQ::RemoteService::Error => error
+          assert(error.status == 404, "archived owner #{reader} must return 404")
+        end
+      end
+
+      # Restore the retired primary record; the ledger still retires the key.
+      FileUtils.mkdir_p(File.dirname(agent.attachments_path))
+      File.binwrite(agent.attachments_path, saved_attachments)
+      HQ::FileStore.write_json(HQ::AGENTS_FILE, saved_record)
+      service.send(:read_all_agents)
+      stat_before = File.stat(HQ::AGENTS_FILE)
+      %w[attachment attachment_blob].each do |reader|
+        begin
+          service.public_send(reader, "retired-attachment")
+          raise "#{reader} served a restored retired owner"
+        rescue HQ::RemoteService::Error => error
+          assert(error.status == 404, "restored retired owner #{reader} must return 404")
+        end
+      end
+      assert(File.stat(HQ::AGENTS_FILE).mtime == stat_before.mtime && JSON.parse(File.read(HQ::AGENTS_FILE)) == saved_record,
+             "attachment read must not write the store")
     end
   end
 
@@ -7143,7 +7264,7 @@ module RemoteServerTest
         snapshot, signature = store.read_snapshot
         current = snapshot.fetch(0)
         assert(current.name == current.prompt, "snapshot mixed concurrent record generations")
-        assert(signature.length == 4, "expected a signature from the opened file descriptor")
+        assert(signature.first.length == 4, "expected a signature from the opened file descriptor")
       end
       writer.value
       snapshot, = store.read_snapshot

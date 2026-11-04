@@ -702,13 +702,20 @@ def run_attachment_preview_smoke!(dir:, base_url:, agent_key:, fixture:, browser
   node_dir = File.join(dir, "node")
   install_playwright!(node_dir)
   script = File.join(node_dir, "attachment-preview.js")
+  smoke_file = if ENV["TYCHO_REMOTE_UI_ATTACHMENT_LOAD_ONLY"] == "1"
+                 "attachment_load_smoke.js"
+               elsif ENV["TYCHO_REMOTE_UI_ATTACHMENT_FILTER_ONLY"] == "1"
+                 "attachment_filter_smoke.js"
+               else
+                 "attachment_preview_smoke.js"
+               end
   File.write(script, <<~JS)
     const { chromium } = require("playwright");
-    const smoke = require(#{File.join(ROOT, "test", "browser", ENV["TYCHO_REMOTE_UI_ATTACHMENT_FILTER_ONLY"] == "1" ? "attachment_filter_smoke.js" : "attachment_preview_smoke.js").inspect});
+    const smoke = require(#{File.join(ROOT, "test", "browser", smoke_file).inspect});
     (async () => {
       const browser = await chromium.launch({ executablePath: #{browser.inspect}, headless: true });
       try {
-        await smoke({ browser, baseUrl: #{base_url.inspect}, agentKey: #{agent_key.inspect}, otherAgentKey: #{other_agent_key.inspect}, captureDir: process.env.TYCHO_REMOTE_UI_CAPTURE_DIR || "" });
+        await smoke({ browser, baseUrl: #{base_url.inspect}, agentKey: #{agent_key.inspect}, otherAgentKey: #{other_agent_key.inspect}, logsDir: #{fixture.fetch(:logs_dir).inspect}, ruby: #{RbConfig.ruby.inspect}, captureDir: process.env.TYCHO_REMOTE_UI_CAPTURE_DIR || "" });
       } finally { await browser.close(); }
     })().catch((error) => { console.error(error); process.exit(1); });
   JS
@@ -10819,9 +10826,12 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     raise "Failed to seed Claude cost fixture: #{out}" unless status.success?
   end
 
+  baseline_path = ENV["TYCHO_REMOTE_UI_ATTACHMENT_LOAD_BASELINE"].to_s
+  baseline_args = ENV["TYCHO_REMOTE_UI_ATTACHMENT_LOAD_ONLY"] == "1" && !baseline_path.empty? ? ["-r", baseline_path] : []
   @server_pid = Process.spawn(
     env,
-    RbConfig.ruby, "bin/tycho", "serve", "--host", "127.0.0.1", "--port", port.to_s,
+    RbConfig.ruby, *baseline_args,
+    "bin/tycho", "serve", "--host", "127.0.0.1", "--port", port.to_s,
     chdir: ROOT,
     out: [log_path, "w"],
     err: %i[child out],
@@ -10984,7 +10994,7 @@ if ENV["TYCHO_REMOTE_UI_CONVERSATION_ANIMATION_ONLY"] == "1"
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "conversation_animation_smoke")
       exit 0
     end
-    if ENV["TYCHO_REMOTE_UI_ATTACHMENT_PREVIEW_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_ATTACHMENT_FILTER_ONLY"] == "1"
+    if ENV["TYCHO_REMOTE_UI_ATTACHMENT_PREVIEW_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_ATTACHMENT_FILTER_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_ATTACHMENT_LOAD_ONLY"] == "1"
       run_attachment_preview_smoke!(dir:, base_url:, agent_key:, fixture:, browser:)
       exit 0
     end

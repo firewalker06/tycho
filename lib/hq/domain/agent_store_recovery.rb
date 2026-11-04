@@ -53,6 +53,18 @@ module HQ
 
     attr_reader :store_path
 
+    def self.state_path_for(store_path)
+      "#{store_path}.recovery.json"
+    end
+
+    # Identity of the recovery ledger file; changes whenever retired keys or sessions change.
+    def self.state_signature(store_path)
+      stat = File.stat(state_path_for(store_path))
+      [stat.ino, stat.size, stat.mtime.to_i, stat.mtime.nsec]
+    rescue SystemCallError
+      nil
+    end
+
     def initialize(store_path:, now: -> { Time.now }, retention_days: nil)
       @store_path = store_path
       @now = now
@@ -106,6 +118,15 @@ module HQ
       end
       warn_regressions(current, candidate, recovered:, bootstrap_recovered:)
       candidate
+    end
+
+    # Read-only counterpart of reconcile_loaded for retired keys: drops unexpectedly restored
+    # archived records without writing the store, ledger, or logs.
+    def without_retired(records)
+      retired = Array(read_state["retired_keys"])
+      return records if retired.empty?
+
+      records.reject { |record| retired.include?(record["key"]) }
     end
 
     def reconcile_loaded(records)
@@ -561,7 +582,7 @@ module HQ
     end
 
     def state_path
-      "#{store_path}.recovery.json"
+      self.class.state_path_for(store_path)
     end
 
     def log_warning(message)

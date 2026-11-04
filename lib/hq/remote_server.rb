@@ -2647,7 +2647,7 @@ module HQ
     end
 
     def attachment(id)
-      agent, attachment = find_attachment!(id)
+      agent, attachment = RequestTiming.measure("attachment_lookup") { find_attachment!(id) }
       payload = attachment_payload(agent, attachment)
       return payload unless payload["type"].to_s == "file"
       return payload unless %w[html markdown text].include?(payload["format"].to_s)
@@ -2659,7 +2659,9 @@ module HQ
       end
 
       size = File.size(path)
-      payload["content"] = File.open(path, "rb") { |file| file.read(ATTACHMENT_CONTENT_LIMIT) }.to_s.scrub
+      payload["content"] = RequestTiming.measure("attachment_read") do
+        File.open(path, "rb") { |file| file.read(ATTACHMENT_CONTENT_LIMIT) }.to_s.scrub
+      end
       payload["content_truncated"] = size > ATTACHMENT_CONTENT_LIMIT
       if payload["format"].to_s == "html" && !payload["content_truncated"]
         payload["preview_assets"] = html_preview_assets(payload["content"], path, agent.workspace)
@@ -2671,7 +2673,7 @@ module HQ
     end
 
     def attachment_blob(id)
-      agent, attachment = find_attachment!(id)
+      agent, attachment = RequestTiming.measure("attachment_lookup") { find_attachment!(id) }
       raise Error.new("Attachment file not found", status: 404) unless attachment["type"].to_s == "file"
 
       path = attachment_file_path(attachment, agent.workspace)
@@ -2686,7 +2688,7 @@ module HQ
           "X-Content-Type-Options" => "nosniff"
         },
         raw_body: true,
-        body: File.binread(path)
+        body: RequestTiming.measure("attachment_read") { File.binread(path) }
       }
     rescue SystemCallError => e
       raise Error.new(e.message, status: 404)
@@ -5758,8 +5760,10 @@ module HQ
 
     def find_attachment!(id)
       target_id = id.to_s
-      load_agents.each do |agent|
-        agent.attachments.each do |attachment|
+      # Reading an attachment must not wait for lifecycle reconciliation or dispatch work.
+      visible_agents(cached_all_agents).each do |agent|
+        attachments = RequestTiming.measure("attachment_history") { agent.attachments }
+        attachments.each do |attachment|
           return [agent, attachment] if attachment_id(agent, attachment) == target_id
         end
       end
