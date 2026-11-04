@@ -31,6 +31,12 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         for (const reference of refs.filter(ref => ref.state === "active")) state.agents.push({ ...reference, archived: false, running: reference.status === "running", delegation: { parent: { key: owner.key, owner: reference.owner } } });
         state.agentDetails[key] = owner;
         window.linkedFixtureDelegation = owner.delegation;
+        window.updateLinkedFixtureReference = (childKey, changes) => {
+          const delegation = structuredClone(window.linkedFixtureDelegation);
+          const reference = delegation.children.find(candidate => candidate.key === childKey);
+          Object.assign(reference, changes);
+          window.linkedFixtureDelegation = delegation;
+        };
         state.renderedViewHtml = "";
         render();
       };
@@ -51,16 +57,25 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     if (baselineSource && captureDir) {
       await page.evaluate(source => {
         window.currentLinkedRenderer = renderLinkedAgentsFlyout;
+        window.currentLinkedToggleRenderer = renderLinkedAgentsToggle;
         const start = source.indexOf("function renderLinkedAgentsFlyout(");
         const end = source.indexOf("\nfunction renderLinkedAgentsToggle", start);
         renderLinkedAgentsFlyout = new Function(`return (${source.slice(start, end)})`)();
+        const toggleStart = source.indexOf("function renderLinkedAgentsToggle(");
+        const toggleEnd = source.indexOf("\nfunction renderAttachmentToggle", toggleStart);
+        renderLinkedAgentsToggle = new Function(`return (${source.slice(toggleStart, toggleEnd)})`)();
         window.TychoAppearance.setPreference("dark");
         state.renderedViewHtml = ""; render();
       }, baselineSource);
       await page.locator("[data-toggle-linked-agents]").click();
+      assert.equal(await page.locator(".linked-agents-count").innerText(), "6", "baseline badge counts every linked agent");
       await page.screenshot({ path: path.join(captureDir, `${device}-before.png`) });
       await page.keyboard.press("Escape");
-      await page.evaluate(() => { renderLinkedAgentsFlyout = window.currentLinkedRenderer; state.renderedViewHtml = ""; render(); });
+      await page.evaluate(() => {
+        renderLinkedAgentsFlyout = window.currentLinkedRenderer;
+        renderLinkedAgentsToggle = window.currentLinkedToggleRenderer;
+        state.renderedViewHtml = ""; render();
+      });
     }
     for (const preference of ["dark", "light", "system"]) {
       await page.evaluate(() => window.installLinkedFixture());
@@ -120,10 +135,33 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       results.push({ device, preference, nativeDisclosure: true, keyboard: true, touch: device === "mobile", renderPreservation: true, actionLabels: true, bounds });
       await page.keyboard.press("Escape");
     }
+    await page.locator("[data-toggle-linked-agents]").click();
+    const liveFlyout = page.locator("[data-linked-agents-flyout]");
+    const liveHistory = liveFlyout.locator(".linked-agent-history > summary");
+    await liveHistory.click();
+    await page.locator("#prompt-input").fill("Keep this live refresh draft");
+    await page.locator("#prompt-input").focus();
+    await page.evaluate(() => window.updateLinkedFixtureReference("fixture-idle", { connected: false }));
+    await page.evaluate(() => refresh({ force: true }));
+    await page.waitForFunction(() => document.querySelector(".linked-agents-count")?.textContent === "3");
+    assert.equal(await liveHistory.innerText(), "Archived or disconnected (3)", "disconnect moves the link to history during refresh");
+    assert(await liveFlyout.locator("details").evaluate(element => element.open), "history disclosure stays open during refresh");
+    assert.equal(await page.locator("#prompt-input").inputValue(), "Keep this live refresh draft", "draft survives relationship refresh");
+    assert(await page.locator("#prompt-input").evaluate(element => element === document.activeElement), "composer focus survives relationship refresh");
+    const liveToggle = page.locator("[data-toggle-linked-agents]");
+    await liveToggle.focus();
+    assert(await liveToggle.evaluate(element => element === document.activeElement), "linked-agent toggle can receive focus before refresh");
+    await page.evaluate(() => window.updateLinkedFixtureReference("fixture-input", { state: "archived", archived: true }));
+    await page.evaluate(() => refresh({ force: true }));
+    await page.waitForFunction(() => document.querySelector(".linked-agents-count")?.textContent === "2");
+    assert.equal(await liveHistory.innerText(), "Archived or disconnected (4)", "archive moves another link to history during refresh");
+    assert(await liveFlyout.locator("details").evaluate(element => element.open), "history disclosure stays open after archive refresh");
+    assert.equal(await page.locator("#prompt-input").inputValue(), "Keep this live refresh draft", "draft survives archive refresh");
+    assert(await liveToggle.evaluate(element => element === document.activeElement), "linked-agent toggle focus survives refresh");
     await page.evaluate(() => window.installLinkedFixture("old"));
     await page.locator("[data-toggle-linked-agents]").click();
     assert.equal(await page.locator(".linked-agents-count").innerText(), "0", "inactive-only links retain a zero-count badge control");
-    assert.equal(await page.locator("[data-linked-agents-flyout] .agent-reference:visible").count(), 0);
+    assert.equal(await page.locator("[data-linked-agents-flyout] .agent-reference:visible").count(), 2, "inactive linked agents remain visible in the expanded history");
     assert.equal(await page.locator(".linked-agent-history > summary").innerText(), "Archived or disconnected (2)");
     await page.evaluate(() => window.installLinkedFixture("empty"));
     assert.equal(await page.locator("[data-toggle-linked-agents]").count(), 0);
