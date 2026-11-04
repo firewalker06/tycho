@@ -5471,6 +5471,7 @@ module HQ
         latest_inquiry: inquiry,
         suspended_inquiry: suspended_inquiry_payload(agent),
         prompt_queue: prompt_queue_payload(agent),
+        prompt_acceptances: prompt_acceptance_proofs(agent),
         attachments: RequestTiming.measure("detail_attachments") { attachment_payloads(agent) },
         skills: agent.skills,
         skill_trigger: SkillDiscovery.trigger_for(agent.agent),
@@ -6063,7 +6064,23 @@ module HQ
       ids
     end
 
-    def prompt_acceptance_receipt(target, request_id, result, resumed_schedules)
+    # Read-only proofs omit payloads and fingerprints. An incomplete schedule effect
+    # still needs the original exact retry; a read must not skip that effect.
+    def prompt_acceptance_proofs(agent)
+      revision = agent_revision(agent)
+      queued = agent.prompt_queue.to_h { |entry| [entry["client_request_id"], entry] }
+      agent.prompt_receipts.filter_map do |event_id, metadata|
+        next if metadata["rejected"] || !metadata["schedule_resume_complete"]
+        next unless event_id.start_with?("prompt-arrival:")
+
+        request_id = event_id.delete_prefix("prompt-arrival:")
+        entry = queued[request_id]
+        result = { status: entry ? :queued : :accepted, entry:, receipt_metadata: metadata, replayed: true }
+        prompt_acceptance_receipt(agent, request_id, result, [], revision:)
+      end
+    end
+
+    def prompt_acceptance_receipt(target, request_id, result, resumed_schedules, revision: nil)
       queued = result.fetch(:status) == :queued
       entry = result[:entry]
       metadata = entry&.dig("message_metadata", "prompt_receipt") || result.fetch(:receipt_metadata)
@@ -6081,7 +6098,7 @@ module HQ
           outcome: queued ? "queued" : result[:replayed] ? "replayed" : "accepted",
           replayed: result.fetch(:replayed), accepted_at: metadata.fetch("accepted_at"),
           source: metadata.fetch("source"), authority: metadata["authority"],
-          queue_entry:, revision: agent_revision(target), running: target.running?
+          queue_entry:, revision: revision || agent_revision(target), running: target.running?
         },
         resumed_schedules: resumed_schedules.map { |schedule| schedule.slice(:key, :name, "key", "name") }
       }

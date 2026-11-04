@@ -904,8 +904,50 @@ cannot later become an accepted write. Legacy error contracts stay unchanged.
 
 The browser stores only pending message data and its destination in a dedicated
 IndexedDB store. It stores no bearer token or resource catalog. Accepted payloads
-are removed; failed local cleanup can only cause an exact replay after reload.
-Reloaded pending messages require an explicit retry. An uncertain message blocks
+are removed. Agent detail includes `prompt_acceptances`: read-only receipts from
+that durable index, without payloads or fingerprints. Proofs retain the original
+request/agent/server identity and report queued work as queued, not delivered.
+Records with incomplete original schedule effects are excluded so an exact retry
+can still finish those effects. A matching proof removes the local retry without
+another POST. The browser also checks its original server URL. Equal text or a
+nearby timestamp is never proof for an outbox intent. Missing proof and read/auth
+errors keep uncertainty. Reloaded pending messages are never sent automatically.
+
+Cancel retry persists a local cancellation marker before hiding that retry. It
+makes no server queue mutation and cannot retract an accepted message. Late send
+responses cannot restore or apply a cancelled intent. Newer drafts, files, and
+other intents stay separate. Uncertain payloads stay in the outbox rather than
+being copied back into a composer that could create another ID. Only a bound
+rejection restores a correction draft.
+
+The cancellation decision is shared by updated tabs on this browser origin.
+IndexedDB read/write transactions preserve an existing stop during intent writes
+and cleanup. After attachment encoding is saved, a final transaction reads the
+stop and synchronously begins the HTTP request only if no stop exists. The
+transaction ends without waiting for HTTP. Thus cancellation commits first and
+prevents dispatch, or dispatch begins first and its already-issued request can
+still be accepted. Cancellation does not abort that request. BroadcastChannel
+(or a storage-event fallback) updates live views after checking the saved stop;
+missed notifications cannot bypass the dispatch check. Tabs running older code
+must reload to use this contract.
+
+Each drain owns a lane token. A valid response or read proof settles that intent
+and releases only its token, including when its old HTTP response is still held.
+A late success, error, or invalid response cannot release a newer token or apply
+the older intent's effects twice. A cancelled request with no acceptance proof
+still owns its lane until HTTP settles; later proof can release it without
+restoring its composer effects.
+
+Cancellation markers contain only the intent ID and cancelled status. They have
+no age expiry or fixed count bound: a suspended tab can retain a stale intent
+indefinitely. Startup uses a cursor and collects/sorts only active entries, but
+still scans stored markers. Retention is limited by the browser's origin quota;
+no lifetime quota or startup-latency bound is claimed. A failed write reports
+failure and leaves uncertainty. There is no automatic clearing, age-only cleanup,
+or claim that a failed cancellation succeeded. Safe future collection requires
+a way to fence every older writer before deleting its stop authority.
+
+An uncertain message blocks
 later writes to that agent. Each agent's write lane ends after receipt validation,
 not after full resource refresh. Background refreshes coalesce, retain existing
 401/offline/backoff handling, and use mutation/detail generations to reject
@@ -918,6 +960,31 @@ and `bundle exec ruby test/prompt_receipt_recovery_test.rb`. Run the browser che
 with `TYCHO_REMOTE_UI_PROMPT_RECEIPT_ONLY=1 bin/remote-ui-smoke`. They include removed
 PRs, replaced snapshots, visible draft/context correction, and accepted replay after
 context removal.
+
+For lane ownership and shared IndexedDB cancellation checks, run
+`TYCHO_REMOTE_UI_PROMPT_RECEIPT_ONLY=1 TYCHO_REMOTE_UI_PROMPT_CONCURRENCY_ONLY=1 bin/remote-ui-smoke`.
+This runs held-response/proof/late-response ordering, two-tab waiting and stale
+retry cases with and without notifications, both dispatch/cancel transaction
+orders and concurrent races, cancellation during file preparation, and desktop/
+mobile Dark/Nord Light two-tab composer preservation. Optional
+`TYCHO_REMOTE_UI_PROMPT_CONCURRENCY_CASE=lane|tabs` selects the focused cases;
+`TYCHO_REMOTE_UI_PROMPT_OUTBOX_BASELINE=/absolute/path/prompt_submissions.js`
+serves a pinned module for before checks. Use an outside-checkout capture path.
+
+For delivery-proof and local cancellation checks, run
+`TYCHO_REMOTE_UI_PROMPT_RECEIPT_ONLY=1 TYCHO_REMOTE_UI_PROMPT_RETRY_ONLY=1 bin/remote-ui-smoke`.
+The fixture covers lost/malformed replies, a proof before the held response,
+read/auth errors, same-text distinct IDs, multiple ordered intents, cancellation,
+late replies, reload/navigation, and local/synthetic peer routes in desktop/mobile
+Dark and Nord Light. Set `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the checkout to
+save screenshots and request-count evidence. For a before comparison,
+`TYCHO_REMOTE_UI_PROMPT_RETRY_BASELINE=/absolute/path/ui.js` serves the pinned
+full UI bundle (prompt submissions, inquiry submissions, then app).
+For a focused repeat of a timing case, set
+`TYCHO_REMOTE_UI_PROMPT_RETRY_CASE=1440:dark:peer:immediate` and optional
+`TYCHO_REMOTE_UI_PROMPT_RETRY_REPEATS=10` (1–20). Failure traces contain IDs,
+receipt revisions, timing, and synthetic UI status, without prompt/file bodies.
+
 
 ### `POST /agents/{key}/messages`
 

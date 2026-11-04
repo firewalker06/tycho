@@ -45,6 +45,7 @@ module RemoteUIInquiryCacheTest
           ],
           state: { agentDetails: {}, agentDetailGenerations: new Map() },
           reconcileOptimisticPromptQueue: () => {},
+          reconcilePromptSubmissions: () => {},
           resourceRequest: () => ({server:{key:"local"}}),
           scopeApiResponse: data => data,
           upsertAgent: agent => { context.state.agentDetails[agent.key] = agent; },

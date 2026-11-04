@@ -21,6 +21,7 @@ script = <<~'JS'
         scopeApiResponse: data => ({...data, agent: {...data.agent,key}}),
         activityFields: agent => ({awaiting_input:agent.awaiting_input}),
         reconcileOptimisticPromptQueue: () => {},
+        reconcilePromptSubmissions: () => {},
         apiGet: async () => {reads++; return held;},
         refresh: async () => {refreshes++; await held;}};
       vm.createContext(context); vm.runInContext("let inquiryAnswers; const inquiryAnswerDisplaySnapshots = new WeakMap();",context);
@@ -47,7 +48,7 @@ script = <<~'JS'
       const state={agentDetails:{agent:initial},agents:[initial],activityAgents:new Map([["agent",{...initial}]]),
         activityReadyServerKeys:new Set(),archivedAgentKeys:new Set(),archivedAgentCatalogConfirmedKeys:new Set(),
         agentDetailGenerations:new Map(),resourceMutationGeneration:0};
-      const ctx={state,reconcileOptimisticPromptQueue:()=>{},activityFields:agent=>({...agent}),
+      const ctx={state,reconcileOptimisticPromptQueue:()=>{},reconcilePromptSubmissions:()=>{},activityFields:agent=>({...agent}),
         resourceRequest:()=>({server:{key:"local"}}),scopeApiResponse:data=>data,
         apiGet:async()=>({agent:{...initial,name:"New",running:false,latest_inquiry:null,awaiting_input:false}})};
       vm.createContext(ctx);

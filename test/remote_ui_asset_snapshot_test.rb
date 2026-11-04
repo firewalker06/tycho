@@ -46,7 +46,9 @@ module RemoteUIAssetSnapshotTest
       'if (navigatedOptimistically) navigate({ type: "agent", key });',
       "function acceptComposerPrompt(entry, receipt)",
       "state.composerRecoveryDrafts.set(entry.key, entry.payload.prompt)",
-      'role="alert" data-composer-submission-error',
+      'role="${sending ? "status" : "alert"}"',
+      'data-composer-submission-error',
+      'data-cancel-prompt="${escapeAttr(entry.id)}"',
       'escapeHtml(block.send_status || "sending...")',
       'block.pending && !block.accepted ? \' aria-busy="true"\' : ""',
     ]
