@@ -1113,8 +1113,7 @@ module HQ
     end
 
     def suspend_inquiry!(key, inquiry_id)
-      mutate do |agents, _events|
-        target = find_agent_in!(agents, key)
+      with_stored_agent(key) do |target|
         raise ArgumentError, "Inquiry has changed; refresh and try again" unless target.suspend_inquiry!(inquiry_id)
 
         target
@@ -1122,8 +1121,7 @@ module HQ
     end
 
     def restore_inquiry!(key, inquiry_id)
-      mutate do |agents, _events|
-        target = find_agent_in!(agents, key)
+      with_stored_agent(key) do |target|
         raise ArgumentError, "Inquiry is no longer restorable; refresh and try again" unless target.restore_inquiry!(inquiry_id)
 
         target
@@ -1811,6 +1809,22 @@ module HQ
       File.realpath(path.to_s)
     rescue StandardError
       File.expand_path(path.to_s)
+    end
+
+    # Runs a memory-only change for one agent under the store lock. It skips the
+    # fleet-wide load, poll, and rewrite that mutate performs, because the change
+    # appends to the agent's memory journal and leaves its stored record as is.
+    def with_stored_agent(key)
+      with_exclusive_lock do
+        record = RequestTiming.measure("record_read") do
+          Array(FileStore.read_json(AGENTS_FILE, fallback: [])).find { |candidate| candidate["key"] == key.to_s }
+        end
+        raise ArgumentError, "Unknown agent: #{key}" unless record
+
+        agent = ManagedAgent.from_hash(record)
+        agent.usage_metrics_store = @usage_metrics_store
+        yield agent
+      end
     end
 
     def with_exclusive_lock

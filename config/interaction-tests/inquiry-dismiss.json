@@ -1,0 +1,22 @@
+{
+  "name": "Inquiry Dismiss",
+  "url": "http://127.0.0.1:18800/",
+  "timeoutMs": 60000,
+  "steps": [
+    { "action": "open", "url": "/ui#agent/web-inquiry-0" },
+    { "action": "wait", "expect": { "selector": "#inquiry-form", "visible": true } },
+    { "action": "expand", "selector": "details[data-state-key='inquiry-actions:web-inquiry-0:dismiss']" },
+    {
+      "action": "measure",
+      "name": "Dismiss removes the inquiry form",
+      "trigger": {
+        "action": "click",
+        "selector": "[data-inquiry-lifecycle-action='dismiss'][data-agent-key='web-inquiry-0']",
+        "text": "Dismiss inquiry"
+      },
+      "expect": { "selector": "#inquiry-form", "visible": false },
+      "screenshot": "#view",
+      "withinMs": 100
+    }
+  ]
+}
