@@ -63,7 +63,9 @@ module HQ
     # Writers publish the primary file with an atomic rename. An open descriptor
     # reads one committed generation without waiting for lifecycle maintenance.
     # Do not recover backups here: an old backup can contain an archived agent.
+    # Retired keys are excluded read-only, as load does; the signature covers the recovery ledger too.
     def read_snapshot
+      ledger_signature = AgentStoreRecovery.state_signature(AGENTS_FILE)
       records, signature = RequestTiming.measure("record_read") do
         File.open(AGENTS_FILE, "r:UTF-8") do |file|
           stat = file.stat
@@ -72,10 +74,11 @@ module HQ
       end
       raise IOError, "Invalid agent store" unless records.is_a?(Array) && records.all? { |record| record.is_a?(Hash) }
 
+      records = @recovery.without_retired(records)
       agents = RequestTiming.measure("record_build") do
         records.map { |record| attach_usage_metrics_store(ManagedAgent.from_hash(record)) }
       end
-      [agents, signature]
+      [agents, [signature, ledger_signature]]
     rescue Errno::ENOENT
       [[], nil]
     rescue JSON::ParserError => e
