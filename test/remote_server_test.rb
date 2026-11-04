@@ -8354,7 +8354,8 @@ module RemoteServerTest
              js[:body].match?(/id="#{Regexp.escape(form_id)}"[^>]*class="[^"]*ui-form-layout[^"]*"[^>]*data-ds-form="lifecycle"/),
              "expected #{form_id} to use the lifecycle form contract")
     end
-    assert(js[:body].scan("ui-form-section-heading").length >= 10 &&
+    assert(js[:body].include?('<strong>Timing</strong>') &&
+           js[:body].include?('<strong>Recurring messages</strong>') &&
            js[:body].scan("ui-form-actions").length >= 8,
            "expected lifecycle and Settings forms to share section-heading and action anatomy")
     %w[
@@ -8938,9 +8939,8 @@ module RemoteServerTest
            js[:body].include?('iconSvg("squarePen")') &&
            js[:body].include?('iconSvg("trash2")') &&
            js[:body].include?('class="inline-icon-button ui-button" type="button" data-open-response-style') &&
-           js[:body].include?("shared writing guidance") &&
-           js[:body].include?("without changing the task or required output format"),
-           "expected Settings to explain response style and show the correct add or edit action with an excerpt")
+           js[:body].include?("Applied to cold and resumed managed-agent runs unless a project or template overrides it."),
+           "expected Settings to retain response-style scope and the correct add or edit action with an excerpt")
     assert(js[:body].include?("function deleteResponseStyle()") &&
            js[:body].include?('apiDelete("/settings/response-style")') &&
            js[:body].include?("Managed agents will stop receiving this writing guidance"),
@@ -9174,7 +9174,7 @@ module RemoteServerTest
            js[:body].include?("data-select-onboarding-cli") &&
            js[:body].include?("agent_cli_guides"),
            "expected onboarding to render selectable server-provided CLI installation guides")
-    assert(js[:body].include?("No installation is needed.") &&
+    assert(js[:body].include?("Found at ${escapeHtml(path)}.") &&
            js[:body].include?("aria-pressed") &&
            js[:body].include?("target=\"_blank\" rel=\"noreferrer\""),
            "expected onboarding CLI guidance to expose readiness, keyboard semantics, and safe official-doc links")
@@ -9240,8 +9240,8 @@ module RemoteServerTest
            "expected Remote UI to parse Project edit routes")
     assert(js[:body].include?("function renderProjectForm"),
            "expected Remote UI to render Project edit forms")
-    assert(js[:body].include?("Project Information"),
-           "expected Project edit form to label read-only project metadata")
+    assert(js[:body].include?('<strong>Key</strong>') && js[:body].include?('<strong>Workspace</strong>'),
+           "expected Project edit form to label read-only metadata fields")
     assert(js[:body].include?('id="project-form"'),
            "expected Project edit form to use a dedicated form")
     assert(js[:body].include?('id="project-harness" name="agent"'),
