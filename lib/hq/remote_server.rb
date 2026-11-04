@@ -622,7 +622,7 @@ module HQ
         return ok(service.remove_prompt_queue(key, body)) if method == "POST" && tail == ["prompt-queue", "remove"]
         return ok(service.prompt_queue_notice(key)) if method == "GET" && tail == ["prompt-queue", "notice"]
         return ok(service.read_prompt_queue(key)) if method == "POST" && tail == ["prompt-queue", "read"]
-        return ok(service.retry_prompt_queue(key)) if method == "POST" && tail == ["prompt-queue", "retry"]
+        return ok(service.retry_prompt_queue(key, body)) if method == "POST" && tail == ["prompt-queue", "retry"]
         return ok(service.discard_prompt_queue(key, body)) if method == "POST" && tail == ["prompt-queue", "discard"]
         if method == "POST" && tail.length == 3 && tail.first == "queue-work" && tail[2] == "complete"
           return ok(service.complete_queue_work(key, tail[1], body))
@@ -3725,11 +3725,22 @@ module HQ
       raise Error.new(e.message, status:)
     end
 
-    def retry_prompt_queue(key)
+    def failed_queue_snapshot(attrs)
+      return {} unless attrs.key?("expected_entry_ids") || attrs.key?("expected_batch_id")
+
+      ids = queue_action_entry_ids(attrs, "expected_entry_ids", allow_empty: true)
+      batch_id = attrs["expected_batch_id"].to_s
+      raise Error.new("Expected queue batch is required", status: 422) if batch_id.empty?
+
+      { expected_entry_ids: ids, expected_batch_id: batch_id }
+    end
+
+    def retry_prompt_queue(key, attrs = {})
       find_agent!(key)
-      target = @agent_store.retry_prompt_queue!(key)
+      result = @agent_store.retry_prompt_queue!(key, **failed_queue_snapshot(attrs), include_result: true)
+      target = result.fetch("agent")
       @agent_activity_snapshot.upsert!(target)
-      { agent: agent_payload(target), conversation: conversation(target.key) }
+      result.reject { |name, _value| name == "agent" }.merge(agent: agent_payload(target), conversation: conversation(target.key))
     rescue ArgumentError => e
       raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
     end
@@ -3750,7 +3761,7 @@ module HQ
       entry_ids = queue_action_entry_ids(attrs, "entry_ids")
       expected_entry_ids = queue_action_entry_ids(attrs, "expected_entry_ids", allow_empty: true)
       result = @agent_store.remove_prompt_queue_entries!(
-        key, entry_ids:, expected_entry_ids:, reason: attrs["reason"]
+        key, entry_ids:, expected_entry_ids:, reason: attrs["reason"], expected_batch_id: attrs["expected_batch_id"]
       )
       target = result.fetch("agent")
       @conversation_blocks_cache.delete(key)
@@ -3762,7 +3773,7 @@ module HQ
 
     def discard_prompt_queue(key, attrs = {})
       find_agent!(key)
-      result = @agent_store.discard_prompt_queue!(key, reason: attrs["reason"])
+      result = @agent_store.discard_prompt_queue!(key, reason: attrs["reason"], **failed_queue_snapshot(attrs))
       target = result.fetch("agent")
       @conversation_blocks_cache.delete(key)
       @agent_activity_snapshot.upsert!(target)

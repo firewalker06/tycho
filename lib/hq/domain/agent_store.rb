@@ -968,29 +968,65 @@ module HQ
       end
     end
 
-    def retry_prompt_queue!(key)
+    def retry_prompt_queue!(key, expected_entry_ids: nil, expected_batch_id: nil, include_result: false)
       mutate do |agents, _events|
         target = agents.find { |agent| agent.key == key.to_s }
         raise ArgumentError, "Unknown agent: #{key}" unless target
+        validate_failed_queue_snapshot!(target, expected_entry_ids, expected_batch_id)
+        if expected_batch_id && target.prompt_queue_claim
+          # A guarded retry cannot replay work with a durable outcome.
+          unresolved = target.active_queue_work ? QueueWork.unresolved_ids(target.active_queue_work) : []
+          claimed = Array(target.prompt_queue_claim["entries"]).map { |entry| entry["id"].to_s }
+          raise ArgumentError, "Queue changed; refresh and try again" if (claimed - unresolved).any?
+        end
         raise ArgumentError, "No queued dispatch is waiting for retry" unless target.prompt_queue_dispatch_error
         raise ArgumentError, "An inquiry must be resolved before retrying queued work" if target.inquiry_blocking_prompt_queue?
 
+        batch = target.active_queue_work
+        batch_id = batch&.fetch("id", nil)
+        baseline_run_count = target.run_count
         target.clear_prompt_queue_dispatch_error!
         target.active_queue_work["resume_pending"] = true if target.active_queue_work && !target.prompt_queue_claim
         dispatch_prompt_queue!(target, agents)
-        target
+        if include_result
+          run = target.last_run
+          claim = target.prompt_queue_claim
+          # Proof follows the selected delivery, which can be smaller than the batch.
+          retried_ids = if target.run_count > baseline_run_count && run&.metadata&.fetch("prompt_queue_claim_id", nil) == batch_id
+                          Array(run.metadata["prompt_queue_entry_ids"]).map(&:to_s)
+                        elsif claim && claim["id"] == batch_id
+                          Array(claim["entries"]).map { |entry| entry["id"].to_s }
+                        else
+                          []
+                        end
+          { "status" => target.running? ? "started" : "accepted", "batch_id" => batch_id,
+            "processed_entry_ids" => retried_ids,
+            "current_entry_ids" => target.visible_prompt_queue_entries.map { |entry| entry["id"].to_s }, "agent" => target }
+        else
+          target
+        end
       end
     end
 
-    def discard_prompt_queue!(key, reason: nil)
-      mutate do |agents, _events|
+    def discard_prompt_queue!(key, reason: nil, expected_entry_ids: nil, expected_batch_id: nil)
+      mutate(dispatch_prompt_queues: expected_batch_id.nil?) do |agents, _events|
         target = agents.find { |agent| agent.key == key.to_s }
         raise ArgumentError, "Unknown agent: #{key}" unless target
+        validate_failed_queue_snapshot!(target, expected_entry_ids, expected_batch_id)
         raise ArgumentError, "An inquiry must be resolved before discarding queued work" if target.inquiry_blocking_prompt_queue?
 
         result = target.discard_failed_prompt_queue!(reason: reason)
-        dispatch_prompt_queue!(target, agents)
+        dispatch_prompt_queue!(target, agents) unless expected_batch_id
         result.merge("agent" => target)
+      end
+    end
+
+    def validate_failed_queue_snapshot!(target, expected_entry_ids, expected_batch_id)
+      if expected_entry_ids && Array(expected_entry_ids).map(&:to_s) != target.visible_prompt_queue_entries.map { |entry| entry["id"].to_s }
+        raise ArgumentError, "Queue changed; refresh and try again"
+      end
+      if expected_batch_id && expected_batch_id.to_s != target.active_queue_work&.fetch("id", nil).to_s
+        raise ArgumentError, "Queue changed; refresh and try again"
       end
     end
 
@@ -1018,10 +1054,11 @@ module HQ
       end
     end
 
-    def remove_prompt_queue_entries!(key, entry_ids:, expected_entry_ids:, reason: nil)
+    def remove_prompt_queue_entries!(key, entry_ids:, expected_entry_ids:, reason: nil, expected_batch_id: nil)
       mutate(dispatch_prompt_queues: false) do |agents, _events|
         target = find_agent_in!(agents, key)
         raise ArgumentError, "Agent is running" if target.running?
+        validate_failed_queue_snapshot!(target, nil, expected_batch_id)
 
         current_ids = target.visible_prompt_queue_entries.map { |entry| entry["id"].to_s }
         expected = Array(expected_entry_ids).map(&:to_s)

@@ -2248,10 +2248,10 @@ title: !123 value
           controls: Array.from(document.querySelectorAll("[data-queue-action]")).map((button) => button.textContent.trim()),
           checkboxes: document.querySelectorAll("[data-select-queue-entry]").length,
         }));
-        if (!initial.timing?.includes("Queue processor active") || !initial.timing?.includes("failed") || initial.timing?.includes("about 5 seconds")) {
+        if (!initial.timing?.includes("Queue paused.") || initial.timing?.includes("Queue processor") || initial.timing?.includes("about 5 seconds")) {
           throw new Error(`Blocked queue timing was misleading: ${JSON.stringify(initial)}`);
         }
-        if (initial.reason !== "queue not processed since state is failed" || initial.ids.join(",") !== queueEntryIds.join(",") || initial.checkboxes !== 6 ||
+        if (initial.reason !== "Queue paused." || initial.ids.join(",") !== queueEntryIds.join(",") || initial.checkboxes !== 6 ||
             initial.controls.join("|") !== "Process selected|Remove selected|Process all|Remove all") {
           throw new Error(`Blocked queue controls are incomplete: ${JSON.stringify(initial)}`);
         }
@@ -2301,13 +2301,13 @@ title: !123 value
         }
         await page.click("[data-queue-action='remove-selected']");
         const selectedConfirmation = await page.locator("#confirmation-description").textContent();
-        if (!selectedConfirmation.includes("1 queued entry")) throw new Error(`Selected removal confirmation lost its count: ${selectedConfirmation}`);
+        if (!selectedConfirmation.includes("1 queued message")) throw new Error(`Selected removal confirmation lost its count: ${selectedConfirmation}`);
         await page.click("[data-confirmation-accept]");
         await page.waitForFunction((removedId) => !document.querySelector(`[data-prompt-queue] [data-prompt-queue-entry='${removedId}']`), queueEntryIds[1]);
 
         await page.click("[data-queue-action='remove-all']");
         const bulkConfirmation = await page.locator("#confirmation-description").textContent();
-        if (!bulkConfirmation.match(/5 queued entries/)) throw new Error(`Bulk removal confirmation lost its count: ${bulkConfirmation}`);
+        if (!bulkConfirmation.match(/5 queued messages/)) throw new Error(`Bulk removal confirmation lost its count: ${bulkConfirmation}`);
         await page.click("[data-confirmation-accept]");
         await page.waitForFunction(() => !document.querySelector("[data-prompt-queue]"));
 
@@ -2369,7 +2369,7 @@ title: !123 value
         await page.waitForFunction(() => document.querySelector(".prompt-queue-timing")?.textContent.includes("in 5 minutes"));
         await page.waitForFunction(() => document.querySelector(".prompt-queue-entry-meta")?.textContent.includes("in 5 minutes"));
         const delayedTiming = await page.locator(".prompt-queue-timing").innerText();
-        if (!delayedTiming.includes("Queue processor active") || !delayedTiming.includes("in 5 minutes") || delayedTiming.includes("Eligible") || delayedTiming.includes("about 5 seconds") || /[0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]+:[0-9]{2}|Invalid Date/.test(delayedTiming)) {
+        if (delayedTiming.includes("Queue processor") || !delayedTiming.includes("in 5 minutes") || delayedTiming.includes("Eligible") || delayedTiming.includes("about 5 seconds") || /[0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]+:[0-9]{2}|Invalid Date/.test(delayedTiming)) {
           throw new Error(`Delayed queue timing was misleading: ${delayedTiming}`);
         }
         await page.locator("[data-prompt-queue] > summary").focus();
@@ -2430,7 +2430,7 @@ title: !123 value
           await route.fulfill({ response, json: body });
         });
         await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(queueProcessAllAgentKey)}`, { waitUntil: "networkidle" });
-        await page.waitForFunction(() => document.querySelector(".prompt-queue-timing")?.textContent.includes("Queue processor inactive"));
+        await page.waitForFunction(() => document.querySelector(".prompt-queue-timing")?.textContent.includes("Waiting to start."));
         await page.locator("[data-prompt-queue] > summary").focus();
         if (!(await page.locator("[data-prompt-queue]").evaluate((node) => node.open))) await page.keyboard.press("Enter");
         await page.getByRole("button", { name: "Start queue", exact: true }).waitFor({ state: "visible" });
@@ -2440,7 +2440,7 @@ title: !123 value
         await page.setViewportSize({ width: 1440, height: 900 });
         inactiveProcessor = false;
         await page.evaluate(async () => { await refresh(); });
-        await page.waitForFunction(() => document.querySelector(".prompt-queue-timing")?.textContent.includes("Queue processor active"));
+        await page.waitForFunction(key => findAgent(key)?.prompt_queue?.processing?.processor === "active", queueProcessAllAgentKey);
         inactiveProcessor = true;
         await page.evaluate(async () => { await refresh(); });
         await page.getByRole("button", { name: "Start queue", exact: true }).focus();
@@ -10832,6 +10832,10 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     wait_for_remote(base_url, log_path)
     mark_schedule_daemon_running(fixture.fetch(:logs_dir), @server_pid)
     agent_key ||= create_agent(base_url)
+    if ENV["TYCHO_REMOTE_UI_QUEUE_RESULT_ONLY"] == "1"
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "queue_result_smoke")
+      next
+    end
     if ENV["TYCHO_REMOTE_UI_SCHEDULE_SAVE_ONLY"] == "1"
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "schedule_save_smoke")
       next
