@@ -91,6 +91,34 @@ Keep the scenario JSON and HTML report with the verification notes or PR evidenc
 
 The profiling result supports the feature review. It does not replace regression tests or change the required [local CI signoff](/Users/didik/Code/personal/tycho/docs/LOCAL_CI.md).
 
+## Inquiry Dismiss fixture
+
+Run `bin/remote-ui-inquiry-dismiss-fixture` from the repository root. It creates a
+fresh temporary Tycho home, config, schedules, logs, workspace, and 600 synthetic
+inquiry agents. It clears inherited managed-run variables and server credentials,
+then runs `tycho serve` in the foreground on a free localhost port. No harness is
+started. Stop that server with Ctrl-C; its temporary files remain for inspection.
+
+Copy the printed profile command to a second terminal. The generated config is a
+copy of `config/interaction-tests/inquiry-dismiss.json` with the actual fixture
+port. The committed URL is an example; use the generated config, not that URL.
+Set `TYCHO_PLAYWRIGHT_PATH` if Playwright is outside the local module path.
+
+The initial state is agent `web-inquiry-0` with a visible inquiry and an open
+actions menu. The measured action clicks **Dismiss inquiry**. The expected state
+is that the inquiry form is hidden. The 1500 ms diagnostic limit allows the
+remaining background fleet-poll lock wait at 600 agents, including cold startup;
+it is not a 100 ms responsiveness claim or a CI timing gate. Use the regression
+tests to detect fleet polling on the lifecycle request itself.
+
+Before each repeat, open the printed fixture URL and use **Restore inquiry**.
+Alternatively, stop the server and start a fresh fixture. Use the same viewport,
+fleet size, cache condition, and background work for before/after comparisons.
+For a stale-cache sample, replace or touch only this fixture's
+`logs/managed_agents.json` immediately before dispatching the measured POST.
+Record this extra preparation with the results. Keep all screenshots and reports
+outside the repository.
+
 ## Check the profiler itself
 
 Run the optional Chrome smoke check when changing the profiler or checking its setup:

@@ -3935,22 +3935,24 @@ module HQ
 
     def dismiss_inquiry(key, inquiry_id, actor: DelegationActor.user_actor)
       raise Error.new("Parent-declared requests cannot dismiss user inquiries", status: 403) if actor.parent?
-      find_agent!(key)
+      reference = find_agent_reference!(key)
+      raise Error.new("Archived agent is read-only: #{key}", status: 409) if reference.archived?
 
       target = @agent_store.suspend_inquiry!(key, inquiry_id)
       @agent_activity_snapshot.upsert!(target)
-      { agent: agent_payload(target), conversation: conversation(target.key) }
+      { agent: agent_payload(target) }
     rescue ArgumentError => e
       raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
     end
 
     def restore_inquiry(key, inquiry_id, actor: DelegationActor.user_actor)
       raise Error.new("Parent-declared requests cannot restore user inquiries", status: 403) if actor.parent?
-      find_agent!(key)
+      reference = find_agent_reference!(key)
+      raise Error.new("Archived agent is read-only: #{key}", status: 409) if reference.archived?
 
       target = @agent_store.restore_inquiry!(key, inquiry_id)
       @agent_activity_snapshot.upsert!(target)
-      { agent: agent_payload(target), conversation: conversation(target.key) }
+      { agent: agent_payload(target) }
     rescue ArgumentError => e
       raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
     end

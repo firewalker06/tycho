@@ -57,6 +57,7 @@ The **Interaction Profiler** is optional verification when adding or changing a 
 - Set `TYCHO_REMOTE_UI_MERMAID_ONLY=1` with `bin/remote-ui-smoke` for real Chrome checks of Mermaid themes, ELK state layout, source controls, security, accessibility, and desktop/mobile layout. Set `TYCHO_REMOTE_UI_CAPTURE_DIR` to save screenshots outside the repository.
 - Set `TYCHO_REMOTE_UI_APPEARANCE_ONLY=1` with `bin/remote-ui-smoke` for Light/Dark/System selection, pre-paint persistence, cross-tab and OS changes, draft preservation, and desktop/mobile conversation and inquiry states. Set `TYCHO_REMOTE_UI_CAPTURE_DIR` to retain evidence outside the repository.
 - `bin/remote-ui-queue-read-fixture`: start an isolated Remote UI acceptance fixture with one queued user prompt and one delegated reply; run the printed queue command to transition from visible pending state to the expandable **Read queue** Conversation block.
+- `bin/remote-ui-inquiry-dismiss-fixture`: start an isolated 600-agent inquiry fixture on a free localhost port and print a generated Interaction Profiler config. See `docs/REMOTE_UI_INTERACTION_PROFILER.md` for sampling and reset steps.
 - `bin/capture-site-quickstart`: regenerate the v0.10.0 website launch and watch screenshots from deterministic synthetic Remote UI fixtures at 1440x900.
 - `bin/capture-site-tui-conversation`: regenerate the v0.10.0 website TUI conversation screenshot from a deterministic synthetic fixture at 1440x900.
 - `bundle exec ruby -c bin/tycho`: syntax-check the main executable before opening a PR.
