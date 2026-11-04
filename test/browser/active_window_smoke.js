@@ -80,6 +80,8 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     const hiddenStart = requests.length;
     release();
     await page.waitForFunction(() => !state.refreshInFlight && !state.activityInFlight);
+    if (captureDir) await page.screenshot({ path: path.join(captureDir, `blur-in-flight-${label}.png`) });
+    assert.notEqual(await page.evaluate(() => state.connection), "Refreshing", `${label}: in-flight poll status settles after blur`);
     await sleep(3600);
     assert.equal(requests.length, hiddenStart, `${label}: hidden continuation requests`);
     assert.equal((await facts(page)).refreshTimer, false);

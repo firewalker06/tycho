@@ -9,7 +9,7 @@ script = <<~'JS'
   const source = fs.readFileSync(process.argv[1], "utf8");
   let id = 0, focused = false, hidden = false, activityCalls = 0, catalogCalls = 0;
   let finishActivity, finishCatalog, rejectCatalog;
-  const timers = new Map();
+  const timers = new Map(), statuses = [];
   const context = {
     document: { get hidden() { return hidden; }, hasFocus: () => focused },
     window: { scrollY: 10 }, location: { hash: "#agents" },
@@ -23,7 +23,7 @@ script = <<~'JS'
     brokerGet: () => { activityCalls++; return new Promise(resolve => { finishActivity = resolve; }); },
     preserveWorkspaceDuringPoll: () => false, canSkipCatalogLoad: () => false,
     loadResourceCatalog: () => { catalogCalls++; return new Promise((resolve, reject) => { finishCatalog = resolve; rejectCatalog = reject; }); },
-    setConnection() {}, render() {}, failBootShell() {}, bootError() {},
+    setConnection: (text) => { statuses.push(text); }, render() {}, failBootShell() {}, bootError() {},
   };
   vm.createContext(context);
   const start = source.indexOf("let pollingWindowActive = false;");
@@ -77,6 +77,18 @@ script = <<~'JS'
     focused = false;
     await Promise.all(callbacks.map(fn => fn()));
     assert.equal(catalogCalls, 2); assert.equal(activityCalls, 3);
+    // Blur during an in-flight poll lets it finish and update status; only the next poll is withheld.
+    focused = true; context.syncPollingWindow();
+    statuses.length = 0;
+    const blurredRefresh = context.refresh();
+    assert.equal(catalogCalls, 3); assert.deepEqual(statuses, ["Refreshing"]);
+    focused = false; context.syncPollingWindow();
+    finishCatalog({}); await blurredRefresh;
+    assert.equal(statuses.length, 2, "in-flight poll updates status after blur");
+    assert.notEqual(statuses[statuses.length - 1], "Refreshing", "status does not stay fetching");
+    assert.equal(timers.size, 0, "next poll is not scheduled while blurred");
+    focused = true; context.syncPollingWindow();
+    assert.equal(timers.size, 2, "polling restarts on focus");
   }
   run().catch(error => { console.error(error); process.exitCode = 1; });
 JS
