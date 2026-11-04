@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const vm = require("node:vm");
 const source = fs.readFileSync(process.argv[2], "utf8");
 const fn = name => source.match(new RegExp(`^(?:async )?function ${name}\\([^]*?^}`, "m"))[0];
-const functions = ["promptQueueSelection", "promptQueueActionResult", "promptQueueActionMessage", "runPromptQueueAction", "reconcilePromptQueueAction", "inquiryAnswerDisplayState", "inquiryAnswerDisplayUnchanged", "agentDetailGeneration", "ensureAgentDetail"].map(fn).join("\n");
+const functions = ["promptQueueWaitMessage", "promptQueueDiagnostic", "promptQueueReadAgent", "runFailedPromptQueueAction", "promptQueueSelection", "promptQueueActionResult", "promptQueueActionMessage", "runPromptQueueAction", "reconcilePromptQueueAction", "inquiryAnswerDisplayState", "inquiryAnswerDisplayUnchanged", "agentDetailGeneration", "ensureAgentDetail"].map(fn).join("\n");
 let cases = 0;
 function fixture(kind = "process") {
   let resolve, reject, reads = 0, writes = 0, refreshes = 0;
@@ -11,8 +11,8 @@ function fixture(kind = "process") {
   const selection = new Set(["a", "b"]);
   const state = { agents: [agent], agentDetails: { fixture: agent }, activityAgents: new Map(), agentDetailGenerations: new Map(),
     resourceMutationGeneration: 0, promptQueueSelections: new Map([["fixture", selection]]), pendingPromptQueueActions: new Map() };
-  const messages = [], applied = [];
-  const c = { state, console, location: { hash: "#agent/fixture" }, clearTimeout, arrayValue: x => x || [],
+  const messages = [], applied = [], diagnostics = [];
+  const c = { state, console: {warn: (...args) => diagnostics.push(args), debug: (...args) => diagnostics.push(args)}, location: { hash: "#agent/fixture" }, clearTimeout, arrayValue: x => x || [],
     findAgent: () => state.agentDetails.fixture, render() {}, schedule() {}, syncPendingPromptQueueActions() {},
     reconcileOptimisticPromptQueue() {}, confirmAction: async () => true, showGrowl: (message, level) => messages.push({ message, level }),
     upsertAgent: value => { applied.push(value); state.agentDetails.fixture = value; },
@@ -30,7 +30,7 @@ function fixture(kind = "process") {
     return { status, [kind === "remove" ? "removed_entry_ids" : "processed_entry_ids"]: ids,
       current_entry_ids: resultAgent.prompt_queue.entries.map(entry => entry.id), agent: resultAgent };
   };
-  return { c, state, selection, messages, applied, run, response,
+  return { c, state, selection, messages, applied, diagnostics, run, response,
     start: async () => { const promise = run(`runPromptQueueAction({dataset:{agentKey:"fixture",queueAction:"${kind}-selected"}})`); await new Promise(resolve => setImmediate(resolve)); return { promise }; },
     finish: async (pending, value) => { resolve(value); await pending.promise; },
     fail: async pending => { reject(Error("Synthetic network/peer error")); await pending.promise; },
@@ -68,7 +68,7 @@ function fixture(kind = "process") {
       assert.equal(f.state.pendingPromptQueueActions.get("fixture").phase, "uncertain");
       assert.deepEqual([...f.selection], ["a", "b"]);
       assert.equal(f.applied.length, 0);
-      assert(f.messages.at(-1).message.includes("not confirmed"));
+      assert(f.messages.at(-1).message.includes("Could not confirm"));
       await f.start(); assert.equal(f.stats().writes, 1, "uncertain action cannot replay");
       // Bad reads retain the barrier; a valid canonical read releases controls without writing.
       f.c.readResponse = {};
@@ -104,8 +104,8 @@ function fixture(kind = "process") {
   const f = fixture(), p = await f.start(), result = f.response();
   result.agent.prompt_queue.dispatch_error = { message: "Synthetic native launch refusal" };
   await f.finish(p, result);
-  assert(f.messages.at(-1).message.includes("Dispatch failed"));
-  assert(f.messages.at(-1).message.includes("Retry queue")); cases++;
+  assert(f.messages.at(-1).message.includes("Could not process the queue"));
+  assert(!f.messages.at(-1).message.includes("Synthetic")); cases++;
   for (const kind of ["process", "remove"]) {
     const f = fixture(kind), p = await f.start(); await f.finish(p, {});
     let release;
@@ -134,5 +134,38 @@ function fixture(kind = "process") {
   await race.finish(action, race.response("started"));
   releaseOldRead({agent: race.response("accepted").agent}); await oldRead;
   assert.equal(race.state.agentDetails.fixture.name, "Newer observed canonical state", "pre-result detail read cannot replace newer canonical state after confirmed action"); cases++;
+  const privacy = fixture(), privacyPending = await privacy.start();
+  privacy.c.apiGet = async () => { throw Object.assign(Error("token-secret private prompt /private/file"), {status:401}); };
+  await privacy.fail(privacyPending);
+  await privacy.run('reconcilePromptQueueAction("fixture")');
+  const visible = JSON.stringify(privacy.messages) + privacy.state.pendingPromptQueueActions.get("fixture").message;
+  const logged = JSON.stringify(privacy.diagnostics);
+  assert(!/Synthetic|token-secret|private prompt|private\/file/.test(visible + logged));
+  assert(logged.includes('"httpStatus":401')); cases++;
+  for (const protectedEntry of [false, true]) {
+    const removal = fixture("remove"), p = await removal.start(); await removal.finish(p, {});
+    const agent = removal.response("accepted").agent;
+    if (protectedEntry) agent.prompt_queue.entries[0].source = "delegation_callback";
+    removal.c.readResponse = {agent};
+    const recovery = removal.run('reconcilePromptQueueAction("fixture", "discard")');
+    await new Promise(resolve => setImmediate(resolve));
+    if (protectedEntry) {
+      await recovery; assert.equal(removal.stats().writes, 1); assert.equal(removal.state.pendingPromptQueueActions.get("fixture").phase, "uncertain");
+    } else {
+      assert.equal(removal.stats().writes, 2);
+      await removal.finish({promise: recovery}, removal.response("removed"));
+      assert.equal(removal.state.pendingPromptQueueActions.size, 0);
+      assert(removal.messages.at(-1).message.includes("Removed 2"));
+    }
+    cases++;
+  }
+  for (const running of [false, true]) {
+    const f = fixture();
+    const agent = f.response("accepted").agent; agent.running = running;
+    f.c.readResponse = {agent};
+    await f.run('runFailedPromptQueueAction("fixture", "retry")');
+    assert.equal(f.stats().writes, 0); assert.equal(f.state.pendingPromptQueueActions.size, 0);
+    assert(f.messages.at(-1).message.includes(running ? "already running" : "Queue changed")); cases++;
+  }
   console.log(`remote_ui_queue_result_test: ${cases} cases passed`);
 })().catch(error => { console.error(error); process.exitCode = 1; });

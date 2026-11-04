@@ -9,6 +9,66 @@ module RemoteUIQueueResultServiceTest
     raise message unless condition
   end
 
+  def assert_guarded_failed_actions
+    %w[retry discard protected].each do |operation|
+      PromptQueueTest.with_queue_store do |registry, workspace|
+        target = PromptQueueTest.terminal_agent(workspace, status: "blocked")
+        target.enqueue_prompt!(id: "first", prompt: "First message", source: operation == "protected" ? "delegation_callback" : "user")
+        store = HQ::AgentStore.new(registry.projects)
+        store.save([target])
+        service = HQ::RemoteService.new(registry:)
+        service.instance_variable_set(:@agent_store, store)
+        failed = PromptQueueTest.with_stubbed_start(error: IOError.new("Controlled launch refusal")) do
+          service.process_prompt_queue(target.key, "entry_ids" => ["first"], "expected_entry_ids" => ["first"])
+        end
+        batch = failed.fetch(:agent).fetch(:prompt_queue).fetch("queue_work")
+        attrs = { "expected_entry_ids" => ["first"], "expected_batch_id" => batch.fetch("batch_id") }
+        current = service.send(:find_agent_reference!, target.key)
+        current.enqueue_prompt!(id: "later", prompt: "Later message", source: "user")
+        store.save([current])
+        %w[retry discard].each do |kind|
+          begin
+            service.public_send("#{kind}_prompt_queue", target.key, attrs)
+            raise "Expected stale #{kind} rejection"
+          rescue HQ::RemoteService::Error => e
+            assert(e.status == 409, "stale recovery must be a conflict")
+          end
+        end
+        current = service.send(:find_agent_reference!, target.key)
+        assert(current.prompt_queue_dispatch_error && current.visible_prompt_queue_entries.map { |entry| entry["id"] } == %w[first later],
+               "stale recovery must retain error, work and order")
+        attrs["expected_entry_ids"] = %w[first later]
+        begin
+          service.discard_prompt_queue(target.key, attrs.merge("expected_batch_id" => "other-batch"))
+          raise "Expected changed-batch rejection"
+        rescue HQ::RemoteService::Error => e
+          assert(e.status == 409, "different batch must not be discarded")
+        end
+        if operation == "retry"
+          PromptQueueTest.with_stubbed_running_start do
+            response = service.retry_prompt_queue(target.key, attrs)
+            assert(response.fetch(:agent).fetch(:running), "explicit retry must start the same failed work")
+          end
+        elsif operation == "discard"
+          PromptQueueTest.with_stubbed_start(error: IOError.new("Controlled later launch refusal")) do
+            response = service.discard_prompt_queue(target.key, attrs)
+            assert(response[:discarded] && response[:batch]["dispositions"]["first"]["outcome"] == "declined_with_reason",
+                   "discard must record the original batch disposition")
+            assert(response[:agent][:prompt_queue]["entries"].any? { |entry| entry["id"] == "later" }, "later work must not be discarded")
+          end
+        else
+          begin
+            service.discard_prompt_queue(target.key, attrs)
+            raise "Expected protected callback rejection"
+          rescue HQ::RemoteService::Error => e
+            assert(e.status == 409, "protected callbacks must be retried")
+          end
+        end
+      end
+    end
+    puts "guarded failed queue retry/discard: ok"
+  end
+
   def run!
     %w[started busy refusal].each do |scenario|
       PromptQueueTest.with_queue_store do |registry, workspace|
@@ -50,6 +110,7 @@ module RemoteUIQueueResultServiceTest
         puts "queue service #{scenario}: #{result['status']}, running=#{agent[:running]}, selected=#{result['processed_entry_ids'].join(',')}"
       end
     end
+    assert_guarded_failed_actions
     # Exercise the unchanged source-appropriate dispositions and protected callback rules.
     PromptQueueTest.assert_bulk_removal_is_audited_and_stale_snapshots_do_nothing
     PromptQueueTest.assert_failed_claim_can_be_discarded_except_for_delegation_callbacks

@@ -18,9 +18,9 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       await page.locator("[data-appearance-preference]").selectOption(theme);
       const original = (await (await page.request.get(`${baseUrl}/agents/${agentKey}`)).json()).agent;
       let canonical;
-      const raw = () => ({ ...structuredClone(original), name: "Synthetic queue result", running: false,
-        prompt_queue: { entries: ["a", "b", "protected"].map(id => ({ id, prompt: `Synthetic ${id}`, source: id === "protected" ? "delegation_callback" : "user", state: "queued" })),
-          processing_stopped: true, unprocessed_reason: "Synthetic queue requires review", processing: { state: "workspace", message: "Waiting for the workspace." } } });
+      const raw = () => ({ ...structuredClone(original), name: "Queue messages", running: false,
+        prompt_queue: { entries: ["a", "b", "protected"].map(id => ({ id, prompt: ({a:"Prepare the summary",b:"Check the result",protected:"Reply from another agent"})[id], source: id === "protected" ? "delegation_callback" : "user", state: "queued" })),
+          processing_stopped: true, unprocessed_reason: "debug-state-sentinel", processing: { state: "workspace", message: "Waiting for the workspace." } } });
       canonical = raw();
       await page.route(/\/servers\/(resources|activity)(\?.*)?$/, async route => {
         const response = await route.fetch();
@@ -63,7 +63,10 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           const returned = raw();
           returned.running = scenario === "started";
           if (kind === "remove" && scenario !== "stale") returned.prompt_queue.entries = returned.prompt_queue.entries.filter(e => !ids.includes(e.id));
-          if (scenario === "refusal") returned.prompt_queue.dispatch_error = { message: "Synthetic native launch refusal. Use Retry queue." };
+          if (scenario === "refusal") {
+            returned.prompt_queue.dispatch_error = { message: "Synthetic token-secret /private/file" };
+            returned.prompt_queue.queue_work = {batch_id:"batch", entry_ids:["a","b"], unresolved_entry_ids:["a","b"], entries:returned.prompt_queue.entries.filter(e=>e.id!=="protected")};
+          }
           const status = scenario === "unknown" ? "unknown" : scenario === "stale" ? "stale" : kind === "remove" ? "removed" : scenario === "started" ? "started" : "accepted";
           if (!["newer", "navigation", "unknown"].includes(scenario)) canonical = structuredClone(returned);
           return route.fulfill({ json: { status, [kind === "remove" ? "removed_entry_ids" : "processed_entry_ids"]: ids,
@@ -75,7 +78,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         await Promise.race([seen.promise, page.waitForTimeout(10000).then(() => { throw Error(`No mutation request: ${kind} ${scenario}`); })]);
         assert.deepEqual(sent, { entry_ids: ["a", "b"], expected_entry_ids: ["a", "b", "protected"] });
         await page.locator('[data-prompt-queue-management][aria-busy="true"]').waitFor();
-        assert((await page.locator('[data-prompt-queue]').innerText()).includes("Waiting for the result"));
+        assert((await page.locator('[data-prompt-queue]').innerText()).includes(kind === "remove" ? "Removing messages" : "Processing queue"));
         await page.evaluate(async () => refresh({ force: true }));
         assert.equal(await page.locator('[data-queue-action="process-all"]').isEnabled(), false);
         if (scenario === "started") {
@@ -85,7 +88,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         if (captureDir && kind === "process" && scenario === "busy") await page.screenshot({ path: path.join(captureDir, `queue-pending-${width}-${theme}.png`) });
         if (scenario === "newer") {
           canonical.name = "Newer canonical name";
-          canonical.prompt_queue.entries.push({ id: "newer", prompt: "Newer synthetic entry", source: "user" });
+          canonical.prompt_queue.entries.push({ id: "newer", prompt: "New message", source: "user" });
           await page.evaluate(async key => { await ensureAgentDetail(key, true); state.promptQueueSelections.set(key, new Set(["newer"])); }, agentKey);
         }
         if (scenario === "navigation") {
@@ -110,24 +113,24 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           await page.locator("[data-prompt-queue] > summary").focus(); await page.keyboard.press("Enter");
         }
         const text = after.growl;
-        if (scenario === "started") assert(text.includes("Started 2 queued entries"));
-        if (scenario === "busy") assert(text.includes("Accepted 2 queued entries") && text.includes("Waiting for the workspace") && !text.includes("Started"));
-        if (scenario === "refusal") assert(text.includes("Dispatch failed") && text.includes("Retry queue") && !text.includes("Started"));
+        if (scenario === "started") assert(text.includes("Started 2 queued messages"));
+        if (scenario === "busy") assert(text.includes("Accepted 2 queued messages") && text.includes("Waiting for the workspace") && !text.includes("Started"));
+        if (scenario === "refusal") assert(text.includes("Could not process the queue") && !text.includes("Started"));
         if (scenario === "partial") assert(text.includes("1 of 2 selected") && !text.includes("Removed 2") && !text.includes("Started 2"));
         if (scenario === "stale") assert(text.includes("Queue changed"));
-        if (uncertain) assert(text.includes("not confirmed"));
+        if (uncertain) assert(text.includes("Could not confirm"));
         if (scenario === "newer") {
           assert.equal(after.name, "Newer canonical name"); assert(after.ids.includes("newer")); assert.deepEqual(after.selected, ["newer"]);
         }
         if (scenario === "navigation") assert.equal(after.hash, "#agents");
         if (uncertain) {
           assert.deepEqual(after.selected, ["a", "b"]);
-          assert.equal(await page.locator('[data-queue-action="process-all"]').isEnabled(), false);
+          assert.equal(await page.locator('[data-queue-action="process-all"]').count(), 0);
           await page.locator("[data-review-queue-action]").waitFor();
-          assert((await page.locator("[data-prompt-queue]").innerText()).includes("not confirmed"));
+          assert((await page.locator("[data-prompt-queue]").innerText()).includes("Could not confirm"));
           if (captureDir && scenario === "invalid" && kind === "process") await page.screenshot({ path: path.join(captureDir, `queue-uncertain-${width}-${theme}.png`) });
           // Recovery reads cannot replay the old write, even if a newer queue appears.
-          canonical.prompt_queue.entries.push({ id: "later", prompt: "Later synthetic entry", source: "user" });
+          canonical.prompt_queue.entries.push({ id: "later", prompt: "Later message", source: "user" });
           await page.locator("[data-review-queue-action]").focus(); await page.keyboard.press("Enter");
           await page.waitForFunction(key => !state.pendingPromptQueueActions.has(key), agentKey);
           assert.equal(writes, 1);
@@ -135,10 +138,12 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           assert.equal(await page.locator('[data-queue-action="process-selected"]').isEnabled(), true);
         }
         if (scenario === "refusal") {
-          assert((await page.locator("[data-prompt-queue]").innerText()).includes("Synthetic native launch refusal"));
+          assert((await page.locator("[data-prompt-queue]").innerText()).includes("Could not process the queue"));
           if (captureDir) await page.screenshot({ path: path.join(captureDir, `queue-refusal-${width}-${theme}.png`) });
         }
         if (scenario !== "navigation") {
+          const productText = await page.locator("[data-prompt-queue]").innerText();
+          assert(!/Synthetic|token-secret|debug-state-sentinel|private\/file/.test(productText));
           const bounds = await page.locator("[data-prompt-queue]").evaluate(node => ({ overflow: node.scrollWidth > node.clientWidth, right: node.getBoundingClientRect().right, viewport: innerWidth }));
           assert(!bounds.overflow && bounds.right <= bounds.viewport);
         }
@@ -158,8 +163,8 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         const observed = await page.evaluate(async () => {
           const key = "peer-fixture/queue";
           state.pendingPromptQueueActions.delete(key);
-          upsertAgent({ key, resource_key: "queue", server_key: "peer-fixture", name: "Peer synthetic queue", running: false,
-            prompt_queue: { entries: [{ id: "peer-entry", source: "user", prompt: "Synthetic" }] } });
+          upsertAgent({ key, resource_key: "queue", server_key: "peer-fixture", name: "Remote queue", running: false,
+            prompt_queue: { entries: [{ id: "peer-entry", source: "user", prompt: "Check the result" }] } });
           state.promptQueueSelections.set(key, new Set(["peer-entry"]));
           await runPromptQueueAction({ dataset: { agentKey: key, queueAction: "process-selected" } });
           return { phase: state.pendingPromptQueueActions.get(key)?.phase, selected: [...promptQueueSelection(key)] };
@@ -171,5 +176,6 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     } finally { held?.release(); await context.close(); }
   }
   if (captureDir) fs.writeFileSync(path.join(captureDir, "queue-result-browser-results.json"), JSON.stringify(results, null, 2));
+  await require("./queue_recovery_smoke")({ browser, baseUrl, agentKey, captureDir });
   console.log(`queue_result_smoke: ${results.length} desktop/mobile Dark/Light cases passed`);
 };

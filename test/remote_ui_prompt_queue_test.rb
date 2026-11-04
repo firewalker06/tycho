@@ -320,7 +320,7 @@ module RemoteUIPromptQueueTest
         }],
       };
       vm.createContext(queueContext);
-      vm.runInContext(`${extractFunction("renderPromptQueueEntry")}\n${extractFunction("parseDelegatedAgentReply")}\n${extractFunction("delegatedAgentReportPayload")}\n${extractFunction("renderPromptQueue")}\nthis.renderPromptQueue = renderPromptQueue;`, queueContext);
+      vm.runInContext(`${extractFunction("renderPromptQueueEntry")}\n${extractFunction("parseDelegatedAgentReply")}\n${extractFunction("delegatedAgentReportPayload")}\n${extractFunction("promptQueueWaitMessage")}\n${extractFunction("promptQueueDiagnostic")}\n${extractFunction("renderPromptQueue")}\nthis.renderPromptQueue = renderPromptQueue;`, queueContext);
       const queueHtml = queueContext.renderPromptQueue({
         key: "queue-agent",
         prompt_queue: { entries: [{
@@ -328,7 +328,7 @@ module RemoteUIPromptQueueTest
         }], unprocessed_reason: "queue not processed since state is failed" },
       });
       if ((queueHtml.match(/data-prompt-queue-entry=/g) || []).length !== 1 || !queueHtml.includes("1 queued") ||
-          !queueHtml.includes("queue not processed since state is failed")) {
+          !queueHtml.includes("Queue paused.") || queueHtml.includes("queue not processed since state is failed")) {
         throw new Error("one accepted queued submission must reconcile with its result explanation");
       }
     JAVASCRIPT

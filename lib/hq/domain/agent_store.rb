@@ -968,10 +968,11 @@ module HQ
       end
     end
 
-    def retry_prompt_queue!(key)
+    def retry_prompt_queue!(key, expected_entry_ids: nil, expected_batch_id: nil)
       mutate do |agents, _events|
         target = agents.find { |agent| agent.key == key.to_s }
         raise ArgumentError, "Unknown agent: #{key}" unless target
+        validate_failed_queue_snapshot!(target, expected_entry_ids, expected_batch_id)
         raise ArgumentError, "No queued dispatch is waiting for retry" unless target.prompt_queue_dispatch_error
         raise ArgumentError, "An inquiry must be resolved before retrying queued work" if target.inquiry_blocking_prompt_queue?
 
@@ -982,15 +983,25 @@ module HQ
       end
     end
 
-    def discard_prompt_queue!(key, reason: nil)
+    def discard_prompt_queue!(key, reason: nil, expected_entry_ids: nil, expected_batch_id: nil)
       mutate do |agents, _events|
         target = agents.find { |agent| agent.key == key.to_s }
         raise ArgumentError, "Unknown agent: #{key}" unless target
+        validate_failed_queue_snapshot!(target, expected_entry_ids, expected_batch_id)
         raise ArgumentError, "An inquiry must be resolved before discarding queued work" if target.inquiry_blocking_prompt_queue?
 
         result = target.discard_failed_prompt_queue!(reason: reason)
         dispatch_prompt_queue!(target, agents)
         result.merge("agent" => target)
+      end
+    end
+
+    def validate_failed_queue_snapshot!(target, expected_entry_ids, expected_batch_id)
+      if expected_entry_ids && Array(expected_entry_ids).map(&:to_s) != target.visible_prompt_queue_entries.map { |entry| entry["id"].to_s }
+        raise ArgumentError, "Queue changed; refresh and try again"
+      end
+      if expected_batch_id && expected_batch_id.to_s != target.active_queue_work&.fetch("id", nil).to_s
+        raise ArgumentError, "Queue changed; refresh and try again"
       end
     end
 
