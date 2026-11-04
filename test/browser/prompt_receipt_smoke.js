@@ -113,7 +113,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
         if(scenario === "input-rejection") await page.evaluate(key => {findAgent(key).suspended_inquiry = {id:"stale"};},key);
         await send(`Synthetic first message ${scenario}`);
         if (["input-rejection","pr-removed","pr-stale"].includes(scenario)) {
-          await page.locator("[data-composer-submission-error]").waitFor();
+          await page.waitForFunction(key => state.composerSubmissionErrors.has(key) && state.promptOutbox.entries.size === 0,key);
           assert.equal(await page.locator("[data-retry-prompt]").count(),0,"Bound rejection allows correction, not uncertain retry");
           assert.equal(await page.locator("#prompt-input").inputValue(),`Synthetic first message ${scenario}`);
           if (scenario === "input-rejection") await page.waitForFunction(key => !findAgent(key).suspended_inquiry,key);
@@ -191,15 +191,17 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
             assert.equal(read.status(),200);
             readGate.release(); holdReads = false;
             await page.reload({waitUntil:"networkidle"});
-            await page.locator("[data-retry-prompt]").waitFor();
+            await page.waitForFunction(() => state.promptOutbox.entries.size === 0);
+            assert.equal(writes,1,"Consumed acceptance is recovered by a read after reload");
           }
-          await page.locator("[data-retry-prompt]").click();
-          await page.waitForFunction(() => state.promptOutbox.entries.size === 0);
-          assert.equal(writes,2);
-          assert.equal(ids[0],ids[1],"Retry must preserve exact request identity");
-          assert.equal(payloads[0],payloads[1],"Retry must preserve the exact message, files and contexts");
-          if (scenario === "lost-processed-reload") assert.equal(outcomes[1],"replayed","Consumed prompt cannot be queued twice");
-          if (scenario === "pr-lost-removed") assert.equal(outcomes[1],"queued","accepted context replays after PR removal");
+          if (scenario !== "lost-processed-reload") {
+            await page.locator("[data-retry-prompt]").click();
+            await page.waitForFunction(() => state.promptOutbox.entries.size === 0);
+            assert.equal(writes,2);
+            assert.equal(ids[0],ids[1],"Retry must preserve exact request identity");
+            assert.equal(payloads[0],payloads[1],"Retry must preserve the exact message, files and contexts");
+            if (scenario === "pr-lost-removed") assert.equal(outcomes[1],"queued","accepted context replays after PR removal");
+          }
           readGate.release();
         }
         if (scenario === "ordered-held-refresh") {

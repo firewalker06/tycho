@@ -4986,6 +4986,12 @@ details.queue-read-block:not([open]) > .queue-read-body {
   line-height: 1.4;
 }
 
+.composer-submission-error[data-state="sending"] {
+  border-color: var(--border);
+  background: var(--panel);
+  color: var(--text);
+}
+
 .message-role {
   display: inline-flex;
   align-items: center;

@@ -85,6 +85,8 @@ module PromptReceiptRecoveryTest
       end
       check(service.send(:find_agent_reference!, key).prompt_receipts.key?("prompt-arrival:client-recovery-interrupted"), "acceptance committed before effect failure")
       check(store.load.fetch("weekday").stopped_for_awaiting_input?, "failed effect leaves original stop")
+      proofs = service.agent(key).fetch(:prompt_acceptances)
+      check(proofs.none? { |proof| proof.dig(:receipt, :client_request_id) == recovery["client_request_id"] }, "read proof cannot skip an incomplete original schedule effect")
       result = service.submit_prompt(key, recovery)
       check(result.dig(:receipt, :replayed) && store.load.fetch("weekday").scheduled?, "retry recovers original effect")
       stop.call
