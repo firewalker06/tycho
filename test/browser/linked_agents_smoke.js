@@ -28,7 +28,8 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         ];
         owner.delegation = { children: mode === "old" ? refs.slice(3, 5) : mode === "empty" ? [] : refs };
         state.agents = state.agents.filter(agent => !agent.key.startsWith("fixture-"));
-        for (const reference of refs.filter(ref => ref.state === "active")) state.agents.push({ ...reference, archived: false, running: reference.status === "running", delegation: { parent: { key: owner.key, owner: reference.owner } } });
+        window.linkedFixtureAgents = refs.filter(ref => ref.state === "active").map(reference => ({ ...reference, archived: false, running: reference.status === "running", delegation: { parent: { key: owner.key, owner: reference.owner } } }));
+        state.agents.push(...structuredClone(window.linkedFixtureAgents));
         state.agentDetails[key] = owner;
         window.linkedFixtureDelegation = owner.delegation;
         window.updateLinkedFixtureReference = (childKey, changes) => {
@@ -36,11 +37,15 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           const reference = delegation.children.find(candidate => candidate.key === childKey);
           Object.assign(reference, changes);
           window.linkedFixtureDelegation = delegation;
+          const agent = window.linkedFixtureAgents.find(candidate => candidate.key === childKey);
+          if (agent && Object.prototype.hasOwnProperty.call(changes, "archived")) agent.archived = changes.archived;
         };
         state.renderedViewHtml = "";
         render();
       };
       window.installLinkedFixture();
+      const originalFindAgent = findAgent;
+      findAgent = lookupKey => originalFindAgent(lookupKey) || window.linkedFixtureAgents.find(agent => agent.key === lookupKey) || null;
       const fixtureResponse = original => async (...args) => {
         const data = await original(...args);
         const patch = value => {
@@ -135,34 +140,46 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       results.push({ device, preference, nativeDisclosure: true, keyboard: true, touch: device === "mobile", renderPreservation: true, actionLabels: true, bounds });
       await page.keyboard.press("Escape");
     }
+    await page.evaluate(() => window.installLinkedFixture());
+    await page.locator("#prompt-input").fill("Keep this live refresh draft");
     await page.locator("[data-toggle-linked-agents]").click();
     const liveFlyout = page.locator("[data-linked-agents-flyout]");
     const liveHistory = liveFlyout.locator(".linked-agent-history > summary");
-    await liveHistory.click();
-    await page.locator("#prompt-input").fill("Keep this live refresh draft");
-    await page.locator("#prompt-input").focus();
+    await page.evaluate(() => { document.querySelector(".linked-agent-history").open = false; });
+    const disconnectAction = liveFlyout.locator("[data-set-delegation-connection='fixture-idle']");
+    await disconnectAction.focus();
+    assert(await disconnectAction.evaluate(element => element === document.activeElement), "disconnect action has focus before refresh");
     await page.evaluate(() => window.updateLinkedFixtureReference("fixture-idle", { connected: false }));
     await page.evaluate(() => refresh({ force: true }));
     await page.waitForFunction(() => document.querySelector(".linked-agents-count")?.textContent === "3");
     assert.equal(await liveHistory.innerText(), "Archived or disconnected (3)", "disconnect moves the link to history during refresh");
-    assert(await liveFlyout.locator("details").evaluate(element => element.open), "history disclosure stays open during refresh");
+    assert(!await liveFlyout.locator("details").evaluate(element => element.open), "disconnect keeps history closed");
+    assert(!await liveFlyout.evaluate(element => element.classList.contains("hidden")), "disconnect keeps the popover open");
+    assert(await liveHistory.evaluate(element => element === document.activeElement), "focus moves to visible history summary after disconnect");
     assert.equal(await page.locator("#prompt-input").inputValue(), "Keep this live refresh draft", "draft survives relationship refresh");
-    assert(await page.locator("#prompt-input").evaluate(element => element === document.activeElement), "composer focus survives relationship refresh");
-    const liveToggle = page.locator("[data-toggle-linked-agents]");
-    await liveToggle.focus();
-    assert(await liveToggle.evaluate(element => element === document.activeElement), "linked-agent toggle can receive focus before refresh");
+    const archiveAction = liveFlyout.locator("[data-set-delegation-connection='fixture-input']");
+    assert.equal(await archiveAction.count(), 1, "active fixture retains its connection action in the current group");
+    await archiveAction.focus();
+    assert(await archiveAction.evaluate(element => element === document.activeElement), "archive action has focus before refresh");
     await page.evaluate(() => window.updateLinkedFixtureReference("fixture-input", { state: "archived", archived: true }));
     await page.evaluate(() => refresh({ force: true }));
     await page.waitForFunction(() => document.querySelector(".linked-agents-count")?.textContent === "2");
     assert.equal(await liveHistory.innerText(), "Archived or disconnected (4)", "archive moves another link to history during refresh");
-    assert(await liveFlyout.locator("details").evaluate(element => element.open), "history disclosure stays open after archive refresh");
+    assert(!await liveFlyout.locator("details").evaluate(element => element.open), "archive keeps history closed");
+    assert(!await liveFlyout.evaluate(element => element.classList.contains("hidden")), "archive keeps the popover open");
+    assert.equal(await liveFlyout.locator("[data-set-delegation-connection='fixture-input']").count(), 0, "archived row has no connection action");
+    assert(await liveHistory.evaluate(element => element === document.activeElement), "focus moves to visible history summary after archive");
     assert.equal(await page.locator("#prompt-input").inputValue(), "Keep this live refresh draft", "draft survives archive refresh");
-    assert(await liveToggle.evaluate(element => element === document.activeElement), "linked-agent toggle focus survives refresh");
     await page.evaluate(() => window.installLinkedFixture("old"));
-    await page.locator("[data-toggle-linked-agents]").click();
+    if (await page.locator("[data-linked-agents-flyout]").evaluate(element => element.classList.contains("hidden"))) {
+      await page.locator("[data-toggle-linked-agents]").click();
+    }
     assert.equal(await page.locator(".linked-agents-count").innerText(), "0", "inactive-only links retain a zero-count badge control");
+    const inactiveHistory = page.locator(".linked-agent-history > summary");
+    assert.equal(await inactiveHistory.innerText(), "Archived or disconnected (2)");
+    assert.equal(await page.locator("[data-linked-agents-flyout] .agent-reference:visible").count(), 0, "inactive history starts collapsed");
+    await inactiveHistory.click();
     assert.equal(await page.locator("[data-linked-agents-flyout] .agent-reference:visible").count(), 2, "inactive linked agents remain visible in the expanded history");
-    assert.equal(await page.locator(".linked-agent-history > summary").innerText(), "Archived or disconnected (2)");
     await page.evaluate(() => window.installLinkedFixture("empty"));
     assert.equal(await page.locator("[data-toggle-linked-agents]").count(), 0);
     // Restore the server-backed fixture and check a real forced refresh.
