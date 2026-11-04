@@ -132,6 +132,20 @@ module RemoteUIQueueResultServiceTest
         end
       end
       assert(prompts.empty?, "a durably discarded instruction must not reach execution")
+      current = service.send(:find_agent_reference!, target.key)
+      previous = Marshal.load(Marshal.dump(current.active_queue_work.fetch("dispositions").fetch("a")))
+      current.enqueue_prompt!(id: "later", prompt: "Later message", source: "user")
+      store.save([current])
+      PromptQueueTest.with_stubbed_start(prompts:) do
+        removed = service.discard_prompt_queue(target.key, "expected_entry_ids" => %w[b later], "expected_batch_id" => batch_id)
+        assert(removed[:discarded] && removed[:batch]["unresolved_entry_ids"].empty?, "discard must resolve only remaining failed work")
+        assert(removed[:batch]["dispositions"]["a"] == previous, "discard must preserve the existing durable outcome")
+        assert(removed[:batch]["dispositions"]["b"]["outcome"] == "declined_with_reason", "remaining work needs a durable discard")
+        assert(removed[:agent][:prompt_queue]["entries"].map { |entry| entry["id"] } == ["later"], "later work must stay queued")
+        assert(!removed[:agent][:running], "guarded discard must not dispatch later work")
+      end
+      assert(prompts.empty?, "guarded discard must cause no execution")
+      assert(service.send(:find_agent_reference!, target.key).prompt_queue_claim.nil?, "discard must retire the partial claim")
     end
     puts "legacy disposed claim guarded retry: ok"
   end

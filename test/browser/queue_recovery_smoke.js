@@ -223,6 +223,31 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       assert.equal(batchWrites,1);assert.equal(subsetWrites,0);
       await page.unroute("**/prompt-queue/remove",denySubset);await page.unroute("**/prompt-queue/discard",discardBatch);
       results.push({width,theme,scenario:"claimed-subset-requires-whole-batch-confirmation",writes:batchWrites,subsetWrites});
+      await page.waitForFunction(()=>!state.refreshInFlight && !state.activityInFlight);
+      canonical=raw();
+      const completed={entry_id:"first",outcome:"completed"};
+      canonical.prompt_queue.queue_work={batch_id:"batch",entry_ids:["first","later"],unresolved_entry_ids:["later"],entries:structuredClone(canonical.prompt_queue.entries),dispositions:{first:completed}};
+      canonical.prompt_queue.entries=[canonical.prompt_queue.entries[1],{id:"newer",prompt:"New message",source:"user",state:"queued"}];
+      await page.evaluate(async key=>{
+        await ensureAgentDetail(key,true);state.renderedViewHtml="";render();clearTimeout(state.timer);clearTimeout(state.activityTimer);
+        document.querySelector("[data-prompt-queue]").open=true;
+      },agentKey);
+      let partialWrites=0;
+      const discardRemaining=async route=>{
+        partialWrites++;assert.deepEqual(route.request().postDataJSON(),{expected_entry_ids:["later","newer"],expected_batch_id:"batch"});
+        canonical.prompt_queue.entries=canonical.prompt_queue.entries.filter(entry=>entry.id==="newer");
+        canonical.prompt_queue.dispatch_error=null;canonical.prompt_queue.queue_work=null;
+        return route.fulfill({json:{discarded:true,agent:canonical,batch:{batch_id:"batch",state:"resolved",unresolved_entry_ids:[],dispositions:{first:completed,later:{entry_id:"later",outcome:"declined_with_reason",reason:"Operator discarded"}}}}});
+      };
+      await page.route("**/prompt-queue/discard",discardRemaining);
+      await page.locator("[data-discard-prompt-queue]").press("Enter");
+      await page.locator("[data-confirmation-accept]").waitFor();
+      assert((await page.locator("#confirmation-description").innerText()).includes("1 queued message?"));
+      await page.locator("[data-confirmation-accept]").press("Enter");
+      await page.waitForFunction(key=>!state.pendingPromptQueueActions.has(key),agentKey);
+      assert.equal(partialWrites,1);assert.deepEqual(canonical.prompt_queue.entries.map(entry=>entry.id),["newer"]);
+      await page.unroute("**/prompt-queue/discard",discardRemaining);
+      results.push({width,theme,scenario:"discard-only-unresolved-with-prior-outcome",writes:partialWrites});
       await Promise.all(diagnosticReads);
       assert(diagnostics.length > 0);
       assert(!/token-secret|prompt-secret|private\/file|debug-.*sentinel|Prepare the summary/.test(diagnostics.join("\n")));

@@ -978,7 +978,8 @@ module HQ
         raise ArgumentError, "Delegated replies cannot be discarded; retry the queue instead"
       end
 
-      dispositions = Array(batch["entries"]).map do |entry|
+      unresolved_ids = QueueWork.unresolved_ids(batch)
+      dispositions = Array(batch["entries"]).select { |entry| unresolved_ids.include?(entry["id"].to_s) }.map do |entry|
         {
           "entry_id" => entry.fetch("id"),
           "outcome" => "declined_with_reason",
