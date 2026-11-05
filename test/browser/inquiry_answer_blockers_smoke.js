@@ -3,7 +3,8 @@ const assert = require("node:assert/strict");
 module.exports = async ({browser, baseUrl}) => {
   const scenario = process.env.TYCHO_REMOTE_UI_INQUIRY_BLOCKER_CASE;
   assert.match(scenario || "", /^blocker-/);
-  const context = await browser.newContext({viewport:{width:1440,height:900}});
+  const viewportWidth = Number(process.env.TYCHO_REMOTE_UI_INQUIRY_BLOCKER_VIEWPORT || 1440);
+  const context = await browser.newContext({viewport:{width:viewportWidth,height:viewportWidth <= 600 ? 844 : 900},isMobile:viewportWidth <= 600,hasTouch:viewportWidth <= 600});
   const page = await context.newPage();
   page.setDefaultTimeout(10000);
   const writes = [];
@@ -36,12 +37,19 @@ module.exports = async ({browser, baseUrl}) => {
         assert.equal(response.status(),200,"server accepts the original answer before its reply is lost");
         return route.abort("connectionreset");
       }
-      if (["blocker-retry-label", "blocker-attachment-correction", "blocker-file-add", "blocker-clear-feedback", "blocker-remove-rejected", "blocker-complete-draft"].includes(scenario) && writes.length === 1) {
+      if (["blocker-retry-label", "blocker-attachment-correction", "blocker-file-add", "blocker-clear-feedback", "blocker-remove-rejected", "blocker-complete-draft", "blocker-rejected-remove-race"].includes(scenario) && writes.length === 1) {
         return route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"Synthetic failure before acceptance"})});
       }
-      if (["blocker-retry-label", "blocker-attachment-correction", "blocker-remove-rejected", "blocker-complete-draft"].includes(scenario) && writes.length === 2) {
+      if (scenario === "blocker-rejected-remove-race" && writes.length === 3) {
+        return route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"Synthetic failure before acceptance"})});
+      }
+      if (["blocker-retry-label", "blocker-attachment-correction", "blocker-remove-rejected", "blocker-complete-draft", "blocker-rejected-remove-race"].includes(scenario) && writes.length === 2) {
         const response = await context.request.post(`${baseUrl}/agents/${key}/inquiries/${inquiryId}/dismiss`,{data:{}});
         assert.equal(response.status(),200,"the same inquiry is dismissed before the retry reaches the server");
+      }
+      if (scenario === "blocker-rejected-remove-race" && writes.length === 4) {
+        const response = await context.request.post(`${baseUrl}/agents/${key}/inquiries/${inquiryId}/dismiss`,{data:{}});
+        assert.equal(response.status(),200,"the second attempt is also rejected for the late-response cancellation check");
       }
       if (["blocker-multiselect-comma", "blocker-durable-rejection-correction"].includes(scenario) && writes.length === 1) {
         return route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"Synthetic failure before acceptance"})});
@@ -57,7 +65,7 @@ module.exports = async ({browser, baseUrl}) => {
     await page.goto(`${baseUrl}/ui#agent/${key}`,{waitUntil:"networkidle"});
     await page.waitForSelector("#inquiry-form",{state:"attached"});
     if (!await page.locator("#inquiry-form").isVisible()) await page.locator("details.mobile-inquiry > summary").click();
-    if (["blocker-multiselect-comma", "blocker-schema-correction", "blocker-attachment-correction", "blocker-file-add", "blocker-remove-rejected", "blocker-complete-draft"].includes(scenario)) {
+    if (["blocker-multiselect-comma", "blocker-schema-correction", "blocker-attachment-correction", "blocker-file-add", "blocker-remove-rejected", "blocker-complete-draft", "blocker-rejected-remove-race"].includes(scenario)) {
       await page.locator('#inquiry-form input[type="checkbox"]').first().check();
       if (scenario !== "blocker-multiselect-comma") {
         await page.locator('#inquiry-form input[name="choice"]').fill("Original answer");
@@ -189,6 +197,92 @@ module.exports = async ({browser, baseUrl}) => {
       assert.equal(writes[2].attachments.length,0,"the corrected request excludes the removed attachment");
       assert.equal(JSON.parse(writes[2].answer).choice,"Corrected before rejection");
       assert.notEqual(writes[2].client_request_id,writes[1].client_request_id);
+      return;
+    }
+
+    if (scenario === "blocker-rejected-remove-race") {
+      await page.waitForFunction(key => inquiryAnswerStore().entries.get(key)?.status === "uncertain",key);
+      await page.locator('#inquiry-form [name="choice"]').fill("Correction before rejection");
+      await page.locator('#inquiry-form [data-retry-inquiry-answer]').click();
+      await page.locator("#confirmation-dialog [data-confirmation-accept]").click();
+      await page.waitForFunction(key => inquiryAnswerStore().entries.get(key)?.status === "rejected",key);
+      assert.equal(writes.length,2);
+      assert.equal((await context.request.post(`${baseUrl}/agents/${key}/inquiries/${inquiryId}/restore`,{data:{}})).status(),200);
+      await page.reload({waitUntil:"networkidle"});
+      const form = page.locator("#inquiry-form");
+      if (!await form.isVisible()) await page.locator("details.mobile-inquiry > summary").click();
+      await form.locator('[name="choice"]').fill("Correction removed before send");
+      await page.waitForFunction(async key => {
+        const store = inquiryAnswerStore();
+        await Promise.all(store.pendingWrites.values());
+        return !store.entries.get(key)?.correctionDraftSavePending;
+      },key);
+      await page.evaluate(key => {
+        const store = inquiryAnswerStore();
+        const saved = store.entries.get(key);
+        const put = store.store.put.bind(store.store);
+        const update = store.updateCorrectionDraft.bind(store);
+        globalThis.__correctedRetryRace = {updates:0,held:false,release:null};
+        const gate = new Promise(resolve => { globalThis.__correctedRetryRace.release = resolve; });
+        store.updateCorrectionDraft = (...args) => { globalThis.__correctedRetryRace.updates += 1; return update(...args); };
+        store.store.put = async entry => {
+          if (entry === saved && !globalThis.__correctedRetryRace.held) {
+            globalThis.__correctedRetryRace.held = true;
+            await gate;
+          }
+          return put(entry);
+        };
+      },key);
+      await form.locator('button[type="submit"]').click();
+      await page.waitForFunction(() => globalThis.__correctedRetryRace?.held);
+      await form.locator('[data-cancel-inquiry-answer]').click();
+      await page.waitForFunction(key => !inquiryAnswerStore().entries.has(key),key);
+      assert.equal(await page.locator(".message.user.inquiry-response").count(),0,"Remove clears the answer block before the saved draft write completes");
+      assert.equal(writes.length,2,"the corrected request has not been sent before the held write is released");
+      await page.evaluate(() => globalThis.__correctedRetryRace.release());
+      await page.waitForFunction(() => !state.pendingInquirySubmissionKeys.size);
+      assert.equal(writes.length,2,"Remove prevents the corrected request after the held draft write completes");
+      assert.equal(await page.evaluate(key => Boolean(findAgent(key)?.latest_inquiry?.id),key),true,"the inquiry remains unanswered");
+      assert.equal(await page.locator(".message.user.inquiry-response").count(),0,"a late completion does not restore the removed answer");
+
+      const unansweredForm = page.locator("#inquiry-form");
+      if (!await unansweredForm.isVisible()) await page.locator("details.mobile-inquiry > summary").click();
+      await unansweredForm.locator('[name="choice"]').fill("Answer for late response test");
+      await unansweredForm.locator('input[name="regions"]').first().check();
+      await unansweredForm.locator('button[type="submit"]').click();
+      await page.waitForFunction(key => inquiryAnswerStore().entries.get(key)?.status === "uncertain",key);
+      await page.locator('#inquiry-form [data-retry-inquiry-answer]').click();
+      await page.waitForFunction(key => inquiryAnswerStore().entries.get(key)?.status === "rejected",key);
+      assert.equal((await context.request.post(`${baseUrl}/agents/${key}/inquiries/${inquiryId}/restore`,{data:{}})).status(),200);
+      await page.reload({waitUntil:"networkidle"});
+      const rejectedForm = page.locator("#inquiry-form");
+      if (!await rejectedForm.isVisible()) await page.locator("details.mobile-inquiry > summary").click();
+      await rejectedForm.locator('[name="choice"]').fill("Edited corrected retry");
+      await page.waitForFunction(async key => {
+        const store = inquiryAnswerStore();
+        await Promise.all(store.pendingWrites.values());
+        return !store.entries.get(key)?.correctionDraftSavePending;
+      },key);
+      await page.evaluate(key => {
+        const store = inquiryAnswerStore();
+        store.send = (entry, signal) => new Promise(resolve => {
+          globalThis.__lateCorrectedAnswer = {entry,signal,resolve};
+        });
+      },key);
+      await rejectedForm.locator('button[type="submit"]').click();
+      await page.waitForFunction(() => Boolean(globalThis.__lateCorrectedAnswer));
+      await page.locator('[data-cancel-inquiry-answer]').click();
+      await page.waitForFunction(key => !inquiryAnswerStore().entries.has(key),key);
+      assert.equal(await page.evaluate(() => globalThis.__lateCorrectedAnswer.signal.aborted),true,"Remove aborts a corrected retry that is in flight");
+      await page.evaluate(() => {
+        const {entry,resolve} = globalThis.__lateCorrectedAnswer;
+        resolve({answer_receipt:{version:1,client_request_id:entry.id,agent_key:entry.destination.agent_key,
+          server_id:entry.destination.server_id,inquiry_id:entry.inquiryId,accepted:true,replayed:false,
+          accepted_at:new Date().toISOString(),authority:null,start_result:"started"}});
+      });
+      await page.waitForFunction(() => !state.pendingInquirySubmissionKeys.size);
+      assert.equal(await page.evaluate(key => Boolean(findAgent(key)?.latest_inquiry?.id),key),true,"late acceptance does not hide the unanswered inquiry");
+      assert.equal(await page.locator(".message.user.inquiry-response").count(),0,"late acceptance does not restore the removed answer block");
       return;
     }
 

@@ -73,7 +73,7 @@ review_fields = if ENV["TYCHO_REMOTE_UI_INQUIRY_BLOCKER_CASE"] == "blocker-multi
                     { "key" => "allowed", "label" => "Allowed", "input_type" => "boolean", "required" => false },
                     { "key" => "ratio", "label" => "Ratio", "input_type" => "number", "required" => false }
                   ]
-                elsif ["blocker-remove-rejected", "blocker-file-add"].include?(ENV["TYCHO_REMOTE_UI_INQUIRY_BLOCKER_CASE"])
+                elsif ["blocker-remove-rejected", "blocker-file-add", "blocker-rejected-remove-race"].include?(ENV["TYCHO_REMOTE_UI_INQUIRY_BLOCKER_CASE"])
                   [
                     { "key" => "choice", "label" => "Your answer", "input_type" => "text", "required" => true },
                     { "key" => "regions", "label" => "Regions", "input_type" => "multi_select", "options" => ["Jakarta, Indonesia", "Tokyo"], "required" => true }
