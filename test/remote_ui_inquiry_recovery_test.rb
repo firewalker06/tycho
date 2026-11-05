@@ -15,26 +15,29 @@ module RemoteUIInquiryRecoveryTest
         const found = app.match(new RegExp(`^(?:async )?function ${name}\\([^]*?^}`,"m"));
         assert(found,`production function ${name}`); return found[0];
       };
-      const original = [{type:"text",value:"OLD answer"},{type:"textarea",value:"OLD feedback"}];
-      const corrected = [{type:"text",value:"NEW answer"},{type:"textarea",value:"NEW feedback"}];
+      const original = [{name:"response",type:"text",value:"OLD answer"},{name:"feedback",type:"textarea",value:"OLD feedback"}];
+      const corrected = {response:"NEW answer",user_feedback:"NEW feedback",attachments:[]};
       for(const inMemorySnapshot of [false,true]) {
         const controls = original.map(value=>({...value}));
         const form = {dataset:{agentKey:"agent",inquiryId:"A"}};
-        let raw = JSON.stringify({controls:Object.fromEntries(corrected.map((value,i)=>[String(i),value]))});
+        let raw = JSON.stringify({controls:Object.fromEntries(original.map((value,i)=>[String(i),{type:value.type,value:corrected.response}]))});
+        form.elements={...Object.fromEntries(controls.map(control=>[control.name,control])),namedItem:name=>controls.find(control=>control.name===name)};
+        const savedEntry={inquiryId:"A",answerFields:[{key:"response",input_type:"text"}],payload:{answer:JSON.stringify({response:"OLD answer"}),feedback:"OLD feedback",attachments:[]},status:"rejected",correctionDraft:corrected};
         const context={els:{view:{querySelectorAll:()=>[form]}},
           state:{pendingInquirySubmissionDrafts:new Map(inMemorySnapshot?[["agent:A",original]]:[])},
-          safeLocalStorageGet:()=>raw,formDraftStorageKey:()=>"draft-A",formDraftControls:()=>controls,
+          safeLocalStorageGet:()=>raw,safeLocalStorageRemove:()=>{},formDraftStorageKey:()=>"draft-A",formDraftControls:()=>controls,
+          normalizeInquiryInputType:type=>type,
           elementStateKey:(_control,i)=>String(i),clearFormDraft:()=>{raw=null;},
-          inquiryAnswerStore:()=>({entries:new Map([["agent",{inquiryId:"A",controls:original,status:"rejected"}]])})};
+          inquiryAnswerStore:()=>({entries:new Map([["agent",savedEntry]]),persist:async()=>{}})};
         vm.createContext(context);
-        for(const name of ["inquirySubmissionKey","restoreInquirySubmissionDraft","restoreFormDrafts"]) vm.runInContext(source(name),context);
+        for(const name of ["inquiryAnswerValues","inquiryAnswerCorrectionChanged","inquirySubmissionKey","ensureCompleteInquiryAnswerDraft","restoreInquirySubmissionDraft","restoreFormDrafts"]) vm.runInContext(source(name),context);
         context.restoreFormDrafts();
         assert.deepEqual(controls.map(control=>control.value),["NEW answer","NEW feedback"],"editable correction wins over immutable retry snapshot");
         raw=null;context.restoreFormDrafts();
-        assert.deepEqual(controls.map(control=>control.value),["OLD answer","OLD feedback"],"snapshot remains a fallback when no editable draft exists");
+        assert.deepEqual(controls.map(control=>control.value),["NEW answer","NEW feedback"],"saved correction remains the only restoration source");
         for(const otherForm of [{dataset:{agentKey:"agent"}},{dataset:{}},null]) {
           assert.doesNotThrow(()=>context.restoreInquirySubmissionDraft(otherForm),"non-inquiry forms never use an inquiry snapshot");
-          assert.deepEqual(controls.map(control=>control.value),["OLD answer","OLD feedback"],"composer restoration leaves inquiry controls alone");
+          assert.deepEqual(controls.map(control=>control.value),["NEW answer","NEW feedback"],"composer restoration leaves inquiry controls alone");
         }
       }
       (async()=>{

@@ -10,7 +10,7 @@ module RemoteUIInquiryReceiptsTest
       const assert = require("node:assert/strict");
       const fs = require("node:fs");
       const vm = require("node:vm");
-      const context = {};
+      const context = {AbortController};
       vm.createContext(context);
       vm.runInContext(fs.readFileSync("lib/hq/remote_ui/assets/inquiry_submissions.js","utf8"),context);
       const {Answers,validate} = context.TychoInquirySubmissions;
