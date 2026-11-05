@@ -105,12 +105,12 @@ module StructuredOutputValidationTest
       with_runner(adapter, "corrected", correction_limit: 2) do |result|
         assert(result[:exit_code].zero?, "expected #{adapter} correction to succeed: #{result[:output]}")
         assert(result[:invocations].length == 2, "expected #{adapter} to make one correction")
-        if adapter == "codex"
+        if %w[codex claude].include?(adapter)
           result[:invocations].each do |entry|
             assert(!(entry["argv"] + entry["environment"].values).any? { |value| value.include?(entry["feedback"]) },
-                   "Codex prompt leaked into child argv or environment")
+                   "#{adapter} prompt leaked into child argv or environment")
           end
-          assert(result[:invocations].first["feedback"] == "initial prompt", "initial stdin changed")
+          assert(result[:invocations].first["feedback"] == "initial prompt", "#{adapter} initial stdin changed")
         end
         follow_up = result[:invocations].last
         assert(follow_up["session_id"] == "#{adapter}-session", "expected #{adapter} native session continuity")
@@ -171,16 +171,17 @@ module StructuredOutputValidationTest
         "resume", HQ::AgentCorrectionRunner::SESSION_PLACEHOLDER,
         HQ::AgentCorrectionRunner::PROMPT_PLACEHOLDER, FIXTURE_ROOT
       ]
-      if adapter == "codex"
-        initial[-2] = "-"
-        correction[-2] = "-"
+      stdin_transport = %w[codex claude].include?(adapter) && scenario != "requires_null_stdin"
+      if stdin_transport
+        initial[-2] = "[stdin]"
+        correction[-2] = "[stdin]"
       end
       output = StringIO.new
       runner = HQ::AgentCorrectionRunner.new(
         {
           "initial_command" => initial,
-          "initial_stdin" => adapter == "codex" ? "initial prompt" : nil,
-          "prompt_transport" => adapter == "codex" ? "stdin" : "argv",
+          "initial_stdin" => stdin_transport ? "initial prompt" : nil,
+          "prompt_transport" => stdin_transport ? "stdin" : "argv",
           "correction_command" => correction,
           "harness_adapter" => adapter,
           "schema_path" => schema_path,
@@ -201,7 +202,7 @@ module StructuredOutputValidationTest
     <<~'RUBY'
       require "json"
       adapter, scenario, state_path, last_message_path, mode, session_id, feedback, fixture_root = ARGV
-      feedback = STDIN.read if adapter == "codex"
+      feedback = STDIN.read if %w[codex claude].include?(adapter)
       count = File.file?(state_path) ? File.readlines(state_path).length : 0
       entry = {
         "mode" => mode,

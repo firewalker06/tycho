@@ -51,6 +51,37 @@ module AgentPromptTransportTest
         end
       end
 
+      # Claude print mode receives the composed prompt through stdin. Check the
+      # fresh and resumed command shapes with a real child process.
+      ["line one\n日本語 🛰️\n\n", "claude-private-812\n" + ("é\n" * 600_000)].each do |prompt|
+        [nil, "claude-session-812"].each do |session|
+          agent = HQ::ManagedAgent.new(key: "claude-transport", name: "Claude Transport", project_key: "test",
+                                       template_key: "custom", workspace: dir, prompt:, agent: "claude",
+                                       session_id: session, log_path: File.join(dir, "claude.raw.log"))
+          execution = agent.send(:build_command, prompt:)
+          assert(execution[:prompt_transport] == "stdin", "Claude must declare stdin")
+          assert(execution[:command].include?("--print") && execution[:command].include?("--output-format") &&
+                 execution[:command].include?("stream-json"), "Claude must keep print stream-json output")
+          assert(!execution[:command].include?(prompt), "Claude prompt leaked into argv")
+          assert(execution[:command].include?("--resume") && execution[:command].include?(session),
+                 "Claude resume arguments missing") if session
+          input = HQ::AgentPromptTransport.input(execution[:stdin_data])
+          reader, writer = IO.pipe
+          pid = Process.spawn(RbConfig.ruby, script, *execution[:command].drop(1), in: input, out: writer)
+          input.close
+          writer.close
+          result = JSON.parse(reader.read)
+          reader.close
+          _, status = Process.wait2(pid)
+          assert(status.success?, "Claude fake child failed")
+          assert(result["digest"] == Digest::SHA256.hexdigest(prompt) && result["size"] == prompt.bytesize,
+                 "Claude prompt bytes changed")
+          assert(!(result["argv"] + result["env"].values).any? { |value| value.include?(prompt) },
+                 "Claude prompt leaked into child argv or environment")
+          assert(!result["process"].include?("claude-private-812"), "Claude prompt leaked into process listing")
+        end
+      end
+
       # Exercise the complete managed launch, including the recorder and correction runner.
       managed_script = File.join(dir, "managed_harness.rb")
       fixture = File.expand_path("fixtures/structured_output/valid.json", __dir__)

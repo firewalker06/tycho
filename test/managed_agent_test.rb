@@ -2462,8 +2462,9 @@ module ManagedAgentTest
       harness = File.join(dir, "direct-harness")
       File.write(harness, <<~SH)
         #!/bin/sh
-        if [ ! -c /dev/stdin ]; then
-          echo "managed child stdin was not the null device"
+        IFS= read -r prompt_line
+        if [ "$prompt_line" != "SYSTEM:" ]; then
+          echo "managed child did not receive the composed prompt on stdin"
           exit 42
         fi
         printf '%s\n' '{"type":"assistant","session_id":"validation-session","message":{"role":"assistant","content":[{"type":"tool_use","name":"StructuredOutput","input":{"status":"success","summary":"Validated through runner.","summary_sections_json":"null","inquiry_json":"null","attachments_json":"null","memory_handoff":null}}]}}'

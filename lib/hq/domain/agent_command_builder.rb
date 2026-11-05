@@ -167,8 +167,7 @@ module HQ
       command.concat(["--print", "--output-format", "stream-json", "--verbose"])
       command.concat(claude_session_arguments)
       command.concat(["--json-schema", @claude_result_schema]) if @claude_result_schema
-      command << @prompt
-      execution(command)
+      execution(command).merge(prompt_transport: "stdin", stdin_data: @prompt)
     end
 
     def harness_command_prefix
