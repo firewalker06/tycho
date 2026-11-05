@@ -2090,7 +2090,7 @@ module HQ
     end
 
     def agents
-      all_agents = load_all_agents
+      all_agents = read_all_agents.reject(&:archived?)
       context = delegation_reference_context(all_agents)
       relationships = delegation_relationship_context
       visible_agents(all_agents).map do |agent|
