@@ -86,14 +86,14 @@ module RemoteServerTest
     assert_remote_project_payloads_include_status_and_detail
     assert_remote_project_reads_use_cached_git_metadata
     assert_remote_project_git_refresh_keeps_last_good_metadata
-    assert_remote_project_metadata_refreshes_in_background
+    assert_remote_project_metadata_refreshes_on_demand
     assert_remote_project_partial_git_failure_keeps_last_good_metadata
     assert_remote_project_unborn_branch_reports_no_commit
     assert_remote_project_hung_git_refresh_is_bounded
     assert_remote_server_accepts_requests_while_git_hangs
     assert_remote_project_first_failed_read_is_unknown
     assert_warm_schedule_setup_and_project_reads_do_bounded_work
-    assert_remote_project_reload_refreshes_only_uncached_visible_projects
+    assert_remote_project_reload_does_not_refresh_metadata
     assert_remote_project_git_diff_payload
     assert_remote_project_workspace_routes
     assert_remote_project_update_route_edits_metadata
@@ -461,6 +461,20 @@ module RemoteServerTest
       project_archive_index = service.archived_agents("q" => "Web")
       assert(project_archive_index.dig(:pagination, :total) == 1,
              "expected archive query to search project display names")
+      metadata_cache = service.instance_variable_get(:@project_metadata_cache)
+      assert(service.archived_agents("q" => "feature/cache-only").dig(:pagination, :total).zero?,
+             "expected no branch match for a cold project")
+      cached_project = service.instance_variable_get(:@projects).first
+      cached_project.define_singleton_method(:refresh_metadata!) do
+        { branch: "feature/cache-only", commit_hash: "abc1234", dirty_files: 0 }
+      end
+      metadata_cache.refresh(cached_project)
+      branch_search = HQ::RemoteService.new(registry: registry, project_metadata_cache: metadata_cache)
+      branch_search.instance_variable_get(:@projects).each do |project|
+        project.define_singleton_method(:refresh_metadata!) { raise "archive search must not run Git" }
+      end
+      assert(branch_search.archived_agents("q" => "feature/cache-only").dig(:pagination, :total) == 1,
+             "expected archived search to match the last observed branch without Git")
       indexed = archive_index.fetch(:agents).fetch(0)
       assert(indexed[:key] == child[:key] && indexed[:archived] && indexed[:archived_at],
              "expected read-only archived identity in the archive index")
@@ -4807,7 +4821,7 @@ module RemoteServerTest
       registry = registry_for_project(dir, workspace)
       cache = HQ::ProjectGitMetadataCache.new
       refresher = HQ::RemoteService.new(registry: registry, project_metadata_cache: cache)
-      refresher.refresh_project_metadata!
+      cache.refresh(refresher.instance_variable_get(:@projects).find { |item| item.key == "web" })
       warm = project_detail_from_cache(registry, cache)
       assert(warm[:branch] == "main" && warm[:commit_hash].to_s.length >= 7 && warm[:dirty_files] == 0,
              "expected refresh to populate git metadata, got #{warm.slice(:branch, :commit_hash, :dirty_files)}")
@@ -4829,7 +4843,7 @@ module RemoteServerTest
       assert(detail[:branch] == "main" && detail[:dirty] == false && detail[:dirty_files].zero?,
              "expected project read to serve cached git metadata, got #{detail.slice(:branch, :dirty, :dirty_files)}")
 
-      refresher.refresh_project_metadata!
+      cache.refresh(refresher.instance_variable_get(:@projects).find { |item| item.key == "web" })
       refreshed = project_detail_from_cache(registry, cache)
       assert(refreshed[:branch] == "feature/cached" && refreshed[:dirty] == true && refreshed[:dirty_files] == 1,
              "expected refresh to pick up the new branch and dirty file, got #{refreshed.slice(:branch, :dirty, :dirty_files)}")
@@ -4844,7 +4858,7 @@ module RemoteServerTest
       registry = registry_for_project(dir, workspace)
       cache = HQ::ProjectGitMetadataCache.new
       refresher = HQ::RemoteService.new(registry: registry, project_metadata_cache: cache)
-      refresher.refresh_project_metadata!
+      cache.refresh(refresher.instance_variable_get(:@projects).find { |item| item.key == "web" })
       good = project_detail_from_cache(registry, cache)
       assert(good[:branch] == "main" && good[:dirty_files] == 1, "expected a good git refresh first")
 
@@ -4853,7 +4867,7 @@ module RemoteServerTest
       FileUtils.mv(git_dir, saved_git_dir)
       File.write(git_dir, "not a git directory\n")
       begin
-        refresher.refresh_project_metadata!
+        cache.refresh(refresher.instance_variable_get(:@projects).find { |item| item.key == "web" })
       ensure
         File.delete(git_dir)
         FileUtils.mv(saved_git_dir, git_dir)
@@ -4864,7 +4878,7 @@ module RemoteServerTest
 
       project = refresher.instance_variable_get(:@projects).find { |item| item.key == "web" }
       project.define_singleton_method(:refresh_metadata!) { raise "simulated refresh crash" }
-      refresher.refresh_project_metadata!
+      cache.refresh(refresher.instance_variable_get(:@projects).find { |item| item.key == "web" })
       assert(HQ::RemoteService.new(registry: registry, project_metadata_cache: cache).projects.any? { |item| item[:key] == "web" },
              "expected project list to keep working after a refresh failure")
       after_crash = project_detail_from_cache(registry, cache)
@@ -4873,27 +4887,20 @@ module RemoteServerTest
     end
   end
 
-  def assert_remote_project_metadata_refreshes_in_background
+  def assert_remote_project_metadata_refreshes_on_demand
     with_remote_temp_store do |dir|
       workspace = File.join(dir, "workspace")
       init_project_git_workspace(workspace)
       registry = registry_for_project(dir, workspace)
       cache = HQ::ProjectGitMetadataCache.new
-      old_interval = replace_constant(HQ::RemoteServer, :PROJECT_METADATA_REFRESH_INTERVAL, 0.1)
-      server = HQ::RemoteServer.new(registry: registry, project_metadata_cache: cache)
-      thread = server.send(:start_project_metadata_thread)
-      begin
-        assert(wait_for_cached_project_branch(registry, cache, "main"),
-               "expected the first background tick to cache the branch without a request")
-        git!(workspace, "checkout", "-q", "-b", "feature/background")
-        assert(wait_for_cached_project_branch(registry, cache, "feature/background"),
-               "expected a later background tick to pick up the new branch")
-      ensure
-        server.shutdown
-        thread.join(5)
-        replace_constant(HQ::RemoteServer, :PROJECT_METADATA_REFRESH_INTERVAL, old_interval)
-      end
-      assert(!thread.alive?, "expected the project metadata thread to stop on shutdown")
+      service = HQ::RemoteService.new(registry: registry, project_metadata_cache: cache)
+      service.projects
+      project = service.instance_variable_get(:@projects).first
+      assert(!cache.known?(project), "expected list-only reads to leave metadata cold")
+      detail = service.project("web")
+      assert(detail[:git_metadata_refreshing], "expected a detail request to schedule background work")
+      assert(wait_for_cached_project_branch(registry, cache, "main"), "expected demand to warm metadata")
+      cache.close
     end
   end
 
@@ -4905,7 +4912,7 @@ module RemoteServerTest
       registry = registry_for_project(dir, workspace)
       cache = HQ::ProjectGitMetadataCache.new
       refresher = HQ::RemoteService.new(registry: registry, project_metadata_cache: cache)
-      refresher.refresh_project_metadata!
+      cache.refresh(refresher.instance_variable_get(:@projects).find { |item| item.key == "web" })
       good = project_detail_from_cache(registry, cache)
       assert(good[:branch] == "main" && good[:commit_hash] && good[:dirty_files] == 1,
              "expected a good git refresh first, got #{good.slice(:branch, :commit_hash, :dirty_files)}")
@@ -4917,7 +4924,7 @@ module RemoteServerTest
 
         HQ::CommandRunner::Result.new(stdout: "", stderr: "", status: failed_status, timed_out: false)
       end
-      refresher.refresh_project_metadata!
+      cache.refresh(refresher.instance_variable_get(:@projects).find { |item| item.key == "web" })
       after = project_detail_from_cache(registry, cache)
       assert(after[:branch] == "main" && after[:commit_hash] == good[:commit_hash] && after[:dirty_files] == 1,
              "expected a failed branch read to keep every cached value, got #{after.slice(:branch, :commit_hash, :dirty_files)}")
@@ -4931,14 +4938,14 @@ module RemoteServerTest
       git!(workspace, "init", "-q", "-b", "main")
       registry = registry_for_project(dir, workspace)
       cache = HQ::ProjectGitMetadataCache.new
-      HQ::RemoteService.new(registry: registry, project_metadata_cache: cache).refresh_project_metadata!
+      cache.refresh(HQ::Project.new(registry.projects.find { |item| item.key == "web" }))
       detail = project_detail_from_cache(registry, cache)
       assert(detail[:commit_hash].nil? && detail[:branch] == "main" && detail[:dirty_files].zero?,
              "expected an unborn branch to report no commit, got #{detail.slice(:branch, :commit_hash, :dirty_files)}")
     end
   end
 
-  def assert_remote_project_reload_refreshes_only_uncached_visible_projects
+  def assert_remote_project_reload_does_not_refresh_metadata
     with_remote_temp_store do |dir|
       web = File.join(dir, "web")
       api = File.join(dir, "api")
@@ -4968,9 +4975,8 @@ module RemoteServerTest
       service = HQ::RemoteService.new(registry: registry, project_metadata_cache: cache)
       service.send(:reload_projects_from_registry!)
 
-      assert(project_detail_from_cache(registry, cache)[:branch] == "main", "expected reload to warm visible web")
-      api_detail = HQ::RemoteService.new(registry: registry, project_metadata_cache: cache).project("api")
-      assert(api_detail[:branch] == "main", "expected reload to warm visible api, got #{api_detail.slice(:branch)}")
+      assert(service.instance_variable_get(:@projects).all? { |item| !cache.known?(item) },
+             "expected registry reload to leave all projects cold without Git reads")
       hidden = service.instance_variable_get(:@projects).find { |item| item.key == "secret" }
       assert(!cache.known?(hidden), "expected hidden projects to stay out of the git refresh")
     end
@@ -4985,7 +4991,7 @@ module RemoteServerTest
       cache = HQ::ProjectGitMetadataCache.new
       with_hung_git(dir) do |pid_file|
         started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-        HQ::RemoteService.new(registry: registry, project_metadata_cache: cache).refresh_project_metadata!
+        cache.refresh(HQ::Project.new(registry.projects.find { |item| item.key == "web" }))
         elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
         assert(elapsed < 5, "expected a hung git to stop after its timeout, took #{elapsed.round(2)}s")
         assert_hung_git_children_gone(pid_file)
@@ -5010,11 +5016,16 @@ module RemoteServerTest
         thread = Thread.new { server.start }
         begin
           wait_for_remote_port(port)
-          wait_for_hung_git_start(git.pid_file)
+          assert(get_while_git_hangs(port, "/projects").code == "200", "expected list-only startup to answer")
+          assert(!File.exist?(git.pid_file), "startup and project lists must not launch metadata Git")
           response = get_while_git_hangs(port, "/projects/web")
+          wait_for_hung_git_start(git.pid_file)
           assert(response.code == "200", "expected /projects/web to answer while git hangs, got #{response.code}")
           project = JSON.parse(response.body).fetch("project")
-          assert(project["git_metadata_known"] == false, "expected unknown git state while git hangs")
+          assert(project["git_metadata_known"] == false && project["dirty"].nil?, "expected unknown git state while git hangs")
+          readers = Array.new(8) { Thread.new { get_while_git_hangs(port, "/projects/web") } }
+          assert(readers.map(&:value).all? { |reply| reply.code == "200" }, "concurrent detail reads must not wait for Git")
+          assert(File.readlines(git.pid_file).length == 1, "concurrent HTTP detail reads must share one Git refresh")
         ensure
           File.write(git.release_file, "")
           server.shutdown
@@ -5109,7 +5120,7 @@ module RemoteServerTest
       File.write(git_file, "not a git directory\n")
       registry = registry_for_project(dir, workspace)
       cache = HQ::ProjectGitMetadataCache.new
-      HQ::RemoteService.new(registry: registry, project_metadata_cache: cache).refresh_project_metadata!
+      cache.refresh(HQ::Project.new(registry.projects.find { |item| item.key == "web" }))
       failed = project_detail_from_cache(registry, cache)
       assert(failed[:git_metadata_known] == false, "expected a failed first read to report unknown git state")
       failed_list = HQ::RemoteService.new(registry: registry, project_metadata_cache: cache).projects.find { |item| item[:key] == "web" }
@@ -5118,7 +5129,7 @@ module RemoteServerTest
 
       File.delete(git_file)
       init_project_git_workspace(workspace)
-      HQ::RemoteService.new(registry: registry, project_metadata_cache: cache).refresh_project_metadata!
+      cache.refresh(HQ::Project.new(registry.projects.find { |item| item.key == "web" }))
       recovered = project_detail_from_cache(registry, cache)
       assert(recovered[:git_metadata_known] == true && recovered[:branch] == "main",
              "expected a later successful read to report known git state, got #{recovered.slice(:git_metadata_known, :branch)}")
@@ -7333,9 +7344,12 @@ module RemoteServerTest
       agent = HQ::ManagedAgent.new(key: "cached-1", name: "Cached", project_key: "web", template_key: "default",
                                    workspace: workspace, prompt: "Work.")
       HQ::AgentStore.new([]).save([agent])
+      metadata_cache = HQ::ProjectGitMetadataCache.new
+      metadata_cache.refresh(HQ::Project.new(registry.projects.first))
       build = lambda do |max_age|
         HQ::RemoteService.new(registry: registry, web_push_notifier: RecordingPushNotifier.new,
-                              agent_list_cache: HQ::AgentListCache.new(max_age: max_age))
+                              agent_list_cache: HQ::AgentListCache.new(max_age: max_age),
+                              project_metadata_cache: metadata_cache)
       end
       reads = lambda do |service|
         [service.schedules, service.setup_summary.except(:logs), service.project("web").except(:recent_agent_summary)]

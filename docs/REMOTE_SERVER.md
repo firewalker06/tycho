@@ -1284,7 +1284,11 @@ Sends a test notification to an enabled subscription. Automatic agent-transition
 
 ### `GET /projects`
 
-Returns active projects from cached state. Reads never run git. A background pass refreshes git metadata (branch, commit, dirty count) at startup, about every 30 seconds, and when a visible project has no complete cached value after a configuration write. Each metadata git call has a 5-second limit, and a timed-out call is stopped with its process group. The live git routes under `/projects/{key}/git/` are not covered by this limit. Each field is read on its own, so a failed field keeps its last valid value. Before a project has a valid value for every field, `git_metadata_known` is `false`. Clients must show that state as unknown, not as clean. Requests never wait for git, even when git hangs:
+Returns active projects from cached state. Startup, compact project lists, and registry reloads do not refresh Git metadata. A project detail request schedules background work for that project. Requests from tabs and peers share one server cache, with a 10-second freshness/retry window and at most two Git workers. Workers leave when demand drains; queued demand older than 10 seconds is discarded. The UI requests completed work only while the same detail view is visible and focused. An inactive view does not schedule periodic Git work.
+
+Each metadata Git call has a 5-second limit. A timed-out command is stopped with its process group. The live diff/status routes under `/projects/{key}/git/` keep their separate reads. Each successful field replaces its cached value. Failed fields retain their last good values. Detail responses include `git_metadata_state` (`unknown`, `fresh`, `stale`, or `failed`) and `git_metadata_refreshing`. `git_metadata_known` is true only for a fresh, complete successful attempt. Cold dirty values are null. Clients must show Loading, Stale, Unavailable, or Unknown instead of Clean when metadata is not current. Revision values kept from an earlier attempt carry the same state label. Requests never wait for metadata Git, even when Git hangs.
+
+Archived-agent branch search is **cache-only**. It matches the last observed branch, including a stale value. A cold project has no branch match until a detail view loads it. Search never warms projects or scans their repositories. Project names, groups, and archived agent fields remain searchable on a cold server. Cache values do not survive a server restart. TUI and CLI consumers still call `Project#refresh_metadata!` directly.
 
 ```json
 {

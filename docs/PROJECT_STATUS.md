@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-11-04
+2026-11-05
 
 ## Message acceptance and background reads
 
@@ -60,6 +60,10 @@ Shell completion preserves the current route, draft, focus, and scroll; shell
 failures still use the authentication and retry flow. Setup responses use their
 own request order, so a late summary cannot erase newer detailed Settings data. See
 [Remote Sessions](REMOTE_SERVER.md) for snapshot and timing details.
+
+## Project Git metadata demand
+
+Remote Sessions refreshes Git metadata only when a detail view requests it. The server shares a 10-second cache and at most two background workers. Startup, list browsing, registry reloads, and archived-agent search do not start a metadata sweep. Cold, stale, and failed values are not shown as Clean. Failed fields retain their last good values. Archived branch search uses only the last branch observed by this server; cold branches have no match. TUI and CLI refresh behavior is unchanged. See [Remote Sessions API](/Users/didik/Code/personal/tycho/docs/REMOTE_SERVER.md).
 
 ## Remote UI appearance
 
