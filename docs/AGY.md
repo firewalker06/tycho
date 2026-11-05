@@ -28,7 +28,8 @@ as an agy conversation ID.
 
 ## Behavior
 
-- Managed prompts use `--output-format stream-json --print` and a 120-second
+- Managed prompts use `--print --input-format text` and send the exact prompt
+  bytes on stdin. Output uses `--output-format stream-json` with a 120-second
   print timeout. Model and JSON Schema use agy's native flags. Saved
   reasoning effort is deliberately ignored; agy receives no `--effort`
   flag and uses its native default.
@@ -39,6 +40,11 @@ as an agy conversation ID.
   model selects preselect this default; operators can still pick any
   `agy models` entry or leave "Default" for agy's native choice.
 - Tycho stores the emitted `conversation_id` and resumes with `--conversation`.
+- Supported version range starts at agy CLI 1.5.1, the release validated with
+  real `agy --version` and `agy --help`. Later versions must keep print-mode
+  text stdin, `--conversation` resume, `--json-schema`, and stream-json output.
+  Earlier versions are not verified. Check `agy --help` when changing this
+  baseline.
 - Tool calls/results project into the conversation as events arrive.
 - Assistant text appears once from the terminal result. Step deltas stay in
   the raw log because they can contain incomplete structured JSON.
@@ -82,7 +88,10 @@ not an agy skill directory and is not written or discovered for agy.
 ## Verification
 
 Run `bundle exec ruby -r ./test/support/push_safety.rb test/agy_harness_test.rb`
-for process-level synthetic native protocol checks without a provider.
+for process-level synthetic native protocol checks without a provider. The
+prompt transport regression checks also use a real child process to check
+argv, environment, process listing, exact Unicode/multiline bytes, and prompts
+above 1 MB. Structured-output checks cover correction retries and resume.
 Run `bin/test` for the full suite.
 
 For live acceptance, start an isolated Remote UI on a spare loopback port.
