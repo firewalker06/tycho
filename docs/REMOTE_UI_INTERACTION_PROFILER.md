@@ -6,9 +6,9 @@ Run it when you need evidence for an interaction change, such as immediate butto
 
 ## Tools and setup
 
-Run commands from the repository root. The runner is `bin/remote-ui-interaction-report`. It needs Node.js, Google Chrome, and Playwright. Use the [profiler reference](/Users/didik/Code/personal/tycho/docs/REMOTE_UI_INTERACTION_PROBE.md) for installation, all configuration fields, authentication, and the Console probe.
+Run commands from the repository root. The runner is `bin/remote-ui-interaction-report`. It needs Node.js, Google Chrome, and Playwright. Use the [profiler reference](REMOTE_UI_INTERACTION_PROBE.md) for installation, all configuration fields, authentication, and the Console probe.
 
-The existing [route performance profiler](/Users/didik/Code/personal/tycho/docs/REMOTE_UI_PROFILING.md) measures page loading across Remote UI routes. Use the Interaction Profiler to measure a selected action and its expected state.
+The existing [route performance profiler](REMOTE_UI_PROFILING.md) measures page loading across Remote UI routes. Use the Interaction Profiler to measure a selected action and its expected state.
 
 ## Verification process
 
@@ -34,8 +34,9 @@ Prepare the initial state before each run. Actions stay in effect after a run; t
 
 ### 3. Create the scenario
 
-Copy the [schedule example](/Users/didik/Code/personal/tycho/config/interaction-tests/schedule-resume.json) to a file for the feature:
+Copy the [schedule example](../config/interaction-tests/schedule-resume.json) to a file for the feature:
 
+<!-- local-path-example: Sample command or API data. -->
 ```sh
 cp config/interaction-tests/schedule-resume.json /tmp/interaction-scenario.json
 ```
@@ -55,12 +56,13 @@ For a page with panel controls, a measurement can be:
 }
 ```
 
-Replace these selectors with selectors from the target page. Expectations can check exact text, visibility, or an attribute. Use a unique selector for each control and target. The screenshot container must remain visible before and after the action. The expectation must be false before the measured click. See the [JSON format](/Users/didik/Code/personal/tycho/docs/REMOTE_UI_INTERACTION_PROBE.md) for a complete scenario and condition rules.
+Replace these selectors with selectors from the target page. Expectations can check exact text, visibility, or an attribute. Use a unique selector for each control and target. The screenshot container must remain visible before and after the action. The expectation must be false before the measured click. See the [JSON format](REMOTE_UI_INTERACTION_PROBE.md) for a complete scenario and condition rules.
 
 ### 4. Run the profile
 
 Set `TYCHO_PLAYWRIGHT_PATH` if Playwright is outside the local module path. If the target requires authentication, set `TYCHO_REMOTE_TOKEN` in the shell. Keep tokens out of scenario files, URLs, and command arguments.
 
+<!-- local-path-example: Sample command or API data. -->
 ```sh
 bin/remote-ui-interaction-report \
   --config /tmp/interaction-scenario.json \
@@ -89,7 +91,7 @@ Use repeated samples to assess repeatability. For a before/after comparison, use
 
 Keep the scenario JSON and HTML report with the verification notes or PR evidence. State the initial condition, expectation, timing limit, result, and relevant limits. Reports embed their screenshots and can be read offline. Review screenshot content and target values before sharing; a screenshot can show a filled value.
 
-The profiling result supports the feature review. It does not replace regression tests or change the required [local CI signoff](/Users/didik/Code/personal/tycho/docs/LOCAL_CI.md).
+The profiling result supports the feature review. It does not replace regression tests or change the required [local CI signoff](LOCAL_CI.md).
 
 ## Inquiry Dismiss fixture
 
@@ -123,6 +125,7 @@ outside the repository.
 
 Run the optional Chrome smoke check when changing the profiler or checking its setup:
 
+<!-- local-path-example: Sample command or API data. -->
 ```sh
 TYCHO_REMOTE_UI_CAPTURE_DIR=/tmp/tycho-interaction-profiler-check \
   node test/browser/interaction_report_smoke.js

@@ -496,6 +496,7 @@ Time not listed in a stage (routing, socket writes) is the difference between th
 
 Agent responses use this shape:
 
+<!-- local-path-example: Sample command or API data. -->
 ```json
 {
   "key": "web-charlie-agent-8",
@@ -635,6 +636,7 @@ content-derived revision so clients can skip unchanged updates.
 
 Requests a Remote server self-restart. The endpoint is authenticated like other JSON API endpoints. When restart is available, the response is sent before the server exits:
 
+<!-- local-path-example: Sample command or API data. -->
 ```json
 {
   "restarting": true,
@@ -671,6 +673,7 @@ Agent list/detail payloads expose `delegation.parent` and `delegation.children`.
 
 Request:
 
+<!-- local-path-example: Sample command or API data. -->
 ```json
 {
   "project_key": "web",
@@ -854,6 +857,7 @@ curl http://127.0.0.1:7373/attachments/att_abc123
 
 Response:
 
+<!-- local-path-example: Sample command or API data. -->
 ```json
 {
   "attachment": {
@@ -1005,7 +1009,7 @@ retry cases with and without notifications, both dispatch/cancel transaction
 orders and concurrent races, cancellation during file preparation, and desktop/
 mobile Dark/Nord Light two-tab composer preservation. Optional
 `TYCHO_REMOTE_UI_PROMPT_CONCURRENCY_CASE=lane|tabs` selects the focused cases;
-`TYCHO_REMOTE_UI_PROMPT_OUTBOX_BASELINE=/absolute/path/prompt_submissions.js`
+`TYCHO_REMOTE_UI_PROMPT_OUTBOX_BASELINE=/absolute/path/prompt_submissions.js` <!-- local-path-example: Sample temporary or placeholder path. -->
 serves a pinned module for before checks. Use an outside-checkout capture path.
 
 For delivery-proof and local cancellation checks, run
@@ -1015,7 +1019,7 @@ read/auth errors, same-text distinct IDs, multiple ordered intents, cancellation
 late replies, reload/navigation, and local/synthetic peer routes in desktop/mobile
 Dark and Nord Light. Set `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the checkout to
 save screenshots and request-count evidence. For a before comparison,
-`TYCHO_REMOTE_UI_PROMPT_RETRY_BASELINE=/absolute/path/ui.js` serves the pinned
+`TYCHO_REMOTE_UI_PROMPT_RETRY_BASELINE=/absolute/path/ui.js` serves the pinned <!-- local-path-example: Sample temporary or placeholder path. -->
 full UI bundle (prompt submissions, inquiry submissions, then app).
 For a focused repeat of a timing case, set
 `TYCHO_REMOTE_UI_PROMPT_RETRY_CASE=1440:dark:peer:immediate` and optional
@@ -1149,6 +1153,7 @@ curl -X DELETE http://127.0.0.1:7373/agents/web-charlie-agent-8
 
 Response:
 
+<!-- local-path-example: Sample command or API data. -->
 ```json
 {
   "archived": true,
@@ -1182,6 +1187,7 @@ curl -X POST http://127.0.0.1:7373/agents/archive \
 
 Response:
 
+<!-- local-path-example: Sample command or API data. -->
 ```json
 {
   "archived": [

@@ -111,6 +111,7 @@ or Project form field was redesigned.
 
 Run the new Chrome checks from the repository root:
 
+<!-- local-path-example: Sample command or API data. -->
 ```sh
 TYCHO_REMOTE_UI_OPTIMISTIC_CREATE_ONLY=1 \
 TYCHO_REMOTE_UI_CAPTURE_DIR=/tmp/tycho-card-750-browser bin/remote-ui-smoke
@@ -130,7 +131,7 @@ a new service instance retry, one run only, conflicting
 options, archived receipts, concurrent requests, and failure after persistence.
 
 Local profiling evidence is retained outside the checkout in
-`/tmp/tycho-card-750/`: `baseline.json`, `stages.jsonl`, `scaled.json`,
+`/tmp/tycho-card-750/`: `baseline.json`, `stages.jsonl`, `scaled.json`, <!-- local-path-example: Sample temporary or placeholder path. -->
 `scaled-stages.jsonl`, `comparison.json`, and the fixture/profiling scripts.
 Chrome receipts and screenshots are in its `browser/` directory. The tables
 above retain the main measurements even after temporary files are removed.

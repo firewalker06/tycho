@@ -1,11 +1,12 @@
 # Interaction Profiler reference
 
-The **Interaction Profiler** provides optional verification when adding or changing an interaction. Read the [verification process](/Users/didik/Code/personal/tycho/docs/REMOTE_UI_INTERACTION_PROFILER.md) for when to use it, how to review evidence, and what to keep with a feature review. Profiler runs and the Chrome smoke check are not compulsory CI tests. This page describes the commands, configuration, and timing limits.
+The **Interaction Profiler** provides optional verification when adding or changing an interaction. Read the [verification process](REMOTE_UI_INTERACTION_PROFILER.md) for when to use it, how to review evidence, and what to keep with a feature review. Profiler runs and the Chrome smoke check are not compulsory CI tests. This page describes the commands, configuration, and timing limits.
 
 ## Configure the interaction
 
 Use a JSON file to define the page, actions, expected state, screenshot area, and timing limit. Run it from the repository root:
 
+<!-- local-path-example: Sample command or API data. -->
 ```sh
 bin/remote-ui-interaction-report \
   --config config/interaction-tests/schedule-resume.json \
@@ -70,6 +71,7 @@ The configuration and report checks run in `bin/test` through `test/remote_ui_in
 
 Run the optional Chrome checks with the Playwright module configured as described below:
 
+<!-- local-path-example: Sample command or API data. -->
 ```sh
 TYCHO_REMOTE_UI_CAPTURE_DIR=/tmp/tycho-configured-interaction-check \
   node test/browser/interaction_report_smoke.js
@@ -83,6 +85,7 @@ Run `bin/remote-ui-interaction-report` from the repository root. With `--config`
 
 Install the tested Playwright version outside the repository if needed. Google Chrome and Node.js must be installed.
 
+<!-- local-path-example: Sample command or API data. -->
 ```sh
 npm install --prefix /tmp/tycho-interaction-tools --no-audit --no-fund playwright@1.64.1
 export TYCHO_PLAYWRIGHT_PATH=/tmp/tycho-interaction-tools/node_modules/playwright
@@ -90,6 +93,7 @@ export TYCHO_PLAYWRIGHT_PATH=/tmp/tycho-interaction-tools/node_modules/playwrigh
 
 Set `TYCHO_REMOTE_TOKEN` in the shell before the command if the server needs a token. Do not put the token in the URL or command arguments. The script uses a new browser context and removes it when Chrome closes. It does not read the Tycho credential store.
 
+<!-- local-path-example: Sample command or API data. -->
 ```sh
 bin/remote-ui-interaction-report \
   --url https://macbookpro-gi041.tail952bf7.ts.net/ \
@@ -157,7 +161,7 @@ At [Tycho on MacBook Pro](https://macbookpro-gi041.tail952bf7.ts.net/), open Sch
 
 The immediate expectation failed: the label took 12.59 seconds. It changed about 1.98 seconds after the action response. This is one sample. It does not isolate server processing time from network time. The schedule was left resumed, as requested. The application behavior was not changed.
 
-The redacted timing data is saved in [schedule resume timing](/Users/didik/Code/personal/tycho/docs/research/schedule-resume-timing.json).
+The redacted timing data is saved in [schedule resume timing](research/schedule-resume-timing.json).
 
 The current checkout's `runScheduleAction` waits for `apiPost` inside `mutate`. It does not change the label before that response. This agrees with the observed delay, but it does not establish the deployed source revision or explain all server latency.
 

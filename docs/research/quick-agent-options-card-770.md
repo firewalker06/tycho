@@ -2,7 +2,7 @@
 
 [Card 770](https://fizzy.startkit.tech/1/cards/770) covers the Quick form fix and a
 separate completed inventory. The inventory and its original fixtures are in
-[the inventory report](/Users/didik/Code/personal/pull-request-reviews/firewalker06/tycho/agent-create-archive-inventory-770.md).
+the external inventory report.
 This change covers Quick opening, options, and the two footer create actions. Clone, archive, schedules,
 TUI, CLI, and creation receipt/store transitions keep their existing behavior.
 
@@ -91,6 +91,7 @@ disabled states. X, Escape, and overlay close preserve the page draft.
 
 Run from the repository root:
 
+<!-- local-path-example: Sample command or API data. -->
 ```sh
 TYCHO_REMOTE_UI_QUICK_OPTIONS_ONLY=1 TYCHO_REMOTE_UI_CAPTURE_DIR=/tmp/tycho-770-options bin/remote-ui-smoke
 TYCHO_REMOTE_UI_AUTO_NAME_ONLY=1 bin/remote-ui-smoke

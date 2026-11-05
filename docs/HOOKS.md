@@ -17,6 +17,7 @@ Tycho fires events at key points in its runtime. External code can subscribe to 
 
 Override the global hooks file with `TYCHO_HOOKS_PATH`.
 
+<!-- local-path-example: Sample command or API data. -->
 ```yaml
 hooks:
   agent.run.started:
@@ -34,6 +35,7 @@ hooks:
 
 ### Per-project — `~/.tycho/config/hq.yml`
 
+<!-- local-path-example: Sample command or API data. -->
 ```yaml
 projects:
   - key: web
@@ -59,6 +61,7 @@ Per-project hooks only fire when the event payload carries the matching `project
 
 Drop `.rb` files into `~/.claude/hq-hooks/` (global) or `<project_path>/.hq/hooks/` (per-project):
 
+<!-- local-path-example: Sample command or API data. -->
 ```ruby
 # ~/.claude/hq-hooks/log_agent_runs.rb
 HQ::Hooks.on("agent.run.finalized") do |payload|

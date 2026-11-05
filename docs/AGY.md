@@ -9,6 +9,7 @@ mapping is used. Claude and Pi parser behavior is unchanged.
 Install and authenticate `agy` independently. Choose a model using `agy models`.
 Start with disposable Tycho state and a scratch workspace:
 
+<!-- local-path-example: Sample command or API data. -->
 ```yaml
 projects:
   - key: agy-poc

@@ -34,6 +34,7 @@ The last run's inferred estimate is $2.1019894, subject to consecutive session a
 
 Run from the repository root:
 
+<!-- local-path-example: Sample command or API data. -->
 ```sh
 TYCHO_REMOTE_UI_CLAUDE_COST_ONLY=1 TYCHO_REMOTE_UI_CAPTURE_DIR=/tmp/tycho-claude-cost bin/remote-ui-smoke
 ```

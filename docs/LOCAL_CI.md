@@ -6,7 +6,22 @@ GitHub's enforced `signoff` ruleset on the default branch requires the
 force pushes and branch deletion. This is a trusted-maintainer workflow, not a
 replacement for independent review where that is needed.
 
-The [Interaction Profiler](/Users/didik/Code/personal/tycho/docs/REMOTE_UI_INTERACTION_PROFILER.md) is optional verification for interaction feature work. Its profiling runs and Chrome smoke check are outside `bin/test`, normal CI, and the required signoff. Lightweight configuration and report-code checks remain in `bin/test`; they do not launch Chrome or run feature profiles.
+The [Interaction Profiler](REMOTE_UI_INTERACTION_PROFILER.md) is optional verification for interaction feature work. Its profiling runs and Chrome smoke check are outside `bin/test`, normal CI, and the required signoff. Lightweight configuration and report-code checks remain in `bin/test`; they do not launch Chrome or run feature profiles.
+
+## Markdown path check
+
+`bin/test` first checks all tracked Markdown files, including root files and
+`docs/`. Use repository-relative links, resolved from the file that contains
+the link. Absolute local Markdown links, reference links, and HTML link or
+image targets fail the check, including targets in marked examples.
+
+The check also rejects local path text with common Unix directory roots,
+Windows drive paths, or a file URI scheme. Remote URLs and home-relative
+runtime paths remain valid. For a required command example or API sample,
+put `<!-- local-path-example: REASON -->` on the same line, or immediately
+before its fenced code block. Use a specific reason. This exception permits
+sample path text only; do not use it to retain machine-specific links.
+The check prints each failed file and line and stops before the test suite.
 
 ## Test notification safety
 
@@ -20,7 +35,7 @@ fixtures inject fake notifiers. Push delivery contract tests must install
 their own explicit transport fake. Do not remove these boundaries when
 adding a scheduler or notification fixture. The guard records denied transport
 attempts and fails at process exit even if production code catches the exception.
-Set `TYCHO_TEST_PUSH_AUDIT_FILE=/absolute/temp/path.jsonl` to capture redacted
+Set `TYCHO_TEST_PUSH_AUDIT_FILE=/absolute/temp/path.jsonl` to capture redacted <!-- local-path-example: Sample temporary or placeholder path. -->
 per-process attempt counts. An intentional guard probe clears only its own
 expected denial. For standalone tests not already requiring the helper, use
 `bundle exec ruby -r ./test/support/push_safety.rb test/NAME_test.rb`.

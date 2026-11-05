@@ -49,6 +49,7 @@ optional integrations, and environment overrides.
 Tycho stores project definitions in `~/.tycho/config/hq.yml`. A minimal project
 looks like this:
 
+<!-- local-path-example: Sample command or API data. -->
 ```yaml
 projects:
   - key: my-workspace
@@ -131,7 +132,7 @@ Source-checkout users can replace `tycho` with `bin/tycho` in these examples.
 
 ## Documentation
 
-- [Interaction Profiler](/Users/didik/Code/personal/tycho/docs/REMOTE_UI_INTERACTION_PROFILER.md) — optional interaction verification with timing and screenshot reports during feature work; outside normal CI.
+- [Interaction Profiler](docs/REMOTE_UI_INTERACTION_PROFILER.md) — optional interaction verification with timing and screenshot reports during feature work; outside normal CI.
 
 - [Setup requirements](docs/SETUP_REQUIREMENTS.md) — dependencies, setup
   profiles, paths, and environment overrides.

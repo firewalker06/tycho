@@ -260,7 +260,7 @@ The canonical schema is `schemas/agent_result.json` for managed agents.
 
 ## OpenCode Capability Inventory
 
-Local versions inspected: `opencode 1.15.13` at `/opt/homebrew/bin/opencode` during initial research, `opencode 1.17.10` during parser fixture capture, and `opencode 1.18.4` for the sleep-circuit-breaker pre-execution probe.
+Local versions inspected: `opencode 1.15.13` during initial research, `opencode 1.17.10` during parser fixture capture, and `opencode 1.18.4` for the sleep-circuit-breaker pre-execution probe.
 
 Primary docs inspected: OpenCode CLI, config, agents, permissions, MCP servers, commands, and skills docs at `https://opencode.ai/docs/`.
 
@@ -268,7 +268,7 @@ Primary docs inspected: OpenCode CLI, config, agents, permissions, MCP servers, 
 
 | Capability | Local/official fact | Tycho implication |
 | --- | --- | --- |
-| Executable | `opencode --version` prints `1.15.13`; command is available at `/opt/homebrew/bin/opencode` | Add built-in harness `opencode`, resolver env `TYCHO_OPENCODE_BIN`, fallback paths, and version command `opencode --version` |
+| Executable | `opencode --version` prints `1.15.13`; command is available as `opencode` | Add built-in harness `opencode`, resolver env `TYCHO_OPENCODE_BIN`, fallback paths, and version command `opencode --version` |
 | Non-interactive run | `opencode run [message..]` sends a prompt from argv | Implement headless command around `opencode run`; consider prompt length limits because there is no documented prompt-file flag |
 | Raw output | `opencode run --format json` is documented locally as raw JSON events | Add `HQ::Parser::OpenCode`; first implementation needs real NDJSON fixtures before treating parser mapping as stable |
 | Tool start timing | A live 1.18.4 `bash` probe emitted one `tool_use` record only after completion, with `state.status: completed`; no pending/running record appeared | Keep the sleep circuit breaker disabled for OpenCode until a real pre-execution fixture proves an earlier stable signal |
