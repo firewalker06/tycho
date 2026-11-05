@@ -21,30 +21,100 @@ module.exports = async function attachmentPreviewSmoke({ browser, baseUrl, agent
   }
   await page.goto(summaryUrl, { waitUntil: "networkidle" });
   await previewButton("Release review").waitFor();
-  const inquiryControl = await page.evaluate(() => {
-    const agent = { key: "fixture-agent", server_key: "local", project_key: "fixture", latest_inquiry: { id: "fixture-inquiry", message: "Choose a review action.", fields: [] } };
-    const originalMatchMedia = window.matchMedia;
-    state.summaryAttachmentPreview = { id: "fixture-attachment" };
-    const split = renderInquiryForm(agent);
-    state.summaryAttachmentPreview = null;
-    const regular = renderInquiryForm(agent);
-    window.matchMedia = originalMatchMedia;
-    return { split, regular };
+  await open("Release review");
+  await page.evaluate((key) => {
+    const agent = findAgent(key);
+    agent.latest_inquiry = {
+      id: "attachment-preview-height-fixture",
+      message: "Choose a review action. The attachment remains open beside this form.",
+      fields: [{ key: "response", label: "Response", input_type: "multiline", required: true }],
+    };
+    agent.status = "input_required";
+    agent.awaiting_input = true;
+    render();
+  }, agentKey);
+  const fullHeightButton = page.locator(".agent-dock [data-toggle-inquiry-full-screen]");
+  await fullHeightButton.waitFor();
+  await assert(await fullHeightButton.getAttribute("aria-label") === "Full height" &&
+    await fullHeightButton.getAttribute("title") === "Full height" &&
+    await fullHeightButton.locator("svg").evaluate((svg) => svg.querySelector('path[d="m8 18 4 4 4-4"]') !== null),
+    "Wide split inquiry control did not show the full-height icon and label");
+  const focusBeforeButton = async (button) => {
+    await button.evaluate((target) => {
+      const before = document.createElement("button");
+      before.type = "button";
+      before.textContent = "Focus start";
+      before.style.cssText = "position:absolute;left:-10000px;";
+      before.dataset.inquiryFocusStart = "";
+      target.before(before);
+      before.focus();
+    });
+    await page.keyboard.press("Tab");
+  };
+  await focusBeforeButton(fullHeightButton);
+  await assert(await fullHeightButton.evaluate((button) => button === document.activeElement), "Keyboard focus did not reach the full-height control");
+  const fullHeightControlPosition = await page.evaluate(() => {
+    const button = document.querySelector(".agent-dock [data-toggle-inquiry-full-screen]").getBoundingClientRect();
+    const banner = document.querySelector(".agent-dock .inquiry-banner").getBoundingClientRect();
+    return { topInset: button.top - banner.top, rightInset: banner.right - button.right, bottomInset: banner.bottom - button.bottom };
   });
-  await assert(inquiryControl.split.includes('aria-label="Full height"') && inquiryControl.split.includes('title="Full height"') && inquiryControl.split.includes('m8 18 4 4 4-4'), "Wide split inquiry control did not use the full-height label and icon");
-  await assert(inquiryControl.regular.includes('aria-label="Open full-screen inquiry"') && inquiryControl.regular.includes('title="Full-screen inquiry"') && inquiryControl.regular.includes('M15 3h6v6'), "Non-split inquiry control changed its full-screen label or icon");
-  await page.evaluate((html) => {
-    const fixture = document.createElement("div");
-    fixture.id = "inquiry-control-browser-fixture";
-    fixture.innerHTML = '<button type="button">Before</button>' + html;
-    document.body.append(fixture);
-  }, inquiryControl.split);
-  const fullHeightButton = page.locator("#inquiry-control-browser-fixture [data-toggle-inquiry-full-screen]");
-  await page.locator("#inquiry-control-browser-fixture").locator("button").first().focus();
-  await page.keyboard.press("Tab");
-  await assert(await fullHeightButton.getAttribute("aria-label") === "Full height", "Full-height control did not receive keyboard focus or expose its accessible name");
-  await assert(await fullHeightButton.evaluate((button) => button === document.activeElement), "Keyboard Tab did not focus the full-height control");
-  await page.locator("#inquiry-control-browser-fixture").evaluate((node) => node.remove());
+  await assert(fullHeightControlPosition.topInset >= 10 && fullHeightControlPosition.rightInset >= 10,
+    `Full-height control or focus ring is too close to the inquiry card edge: ${JSON.stringify(fullHeightControlPosition)}`);
+  await assert(await page.evaluate(() => {
+    const button = document.querySelector(".agent-dock [data-toggle-inquiry-full-screen]");
+    const style = getComputedStyle(button);
+    return style.outlineStyle !== "none" && style.outlineOffset === "2px";
+  }), "Full-height control must keep its visible keyboard focus ring");
+  await capture("inquiry-normal-split");
+  if (captureDir) {
+    const clip = await page.evaluate(() => {
+      const button = document.querySelector(".agent-dock [data-toggle-inquiry-full-screen]").getBoundingClientRect();
+      const banner = document.querySelector(".agent-dock .inquiry-banner").getBoundingClientRect();
+      const y = Math.max(0, banner.y - 8);
+      return { x: Math.max(0, button.right - 112), y, width: 120, height: Math.min(100, innerHeight - y) };
+    });
+    await page.screenshot({ path: path.join(captureDir, "inquiry-button-before.png"), clip });
+  }
+  await page.locator("[data-inquiry-focus-start]").evaluate((node) => node.remove());
+  await fullHeightButton.click();
+  await page.locator(".inquiry-form-full-height").waitFor();
+  await assert(await pane.isVisible(), "Full-height inquiry closed the split attachment preview");
+  const fullHeightLayout = await page.evaluate(() => {
+    const box = (selector) => {
+      const rect = document.querySelector(selector).getBoundingClientRect();
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height, right: rect.right, bottom: rect.bottom };
+    };
+    return { dock: box(".agent-dock"), inquiry: box(".inquiry-form-full-height"), preview: box(".summary-attachment-preview-pane"), viewport: { width: innerWidth, height: innerHeight } };
+  });
+  await assert(fullHeightLayout.inquiry.height > 0.85 * fullHeightLayout.viewport.height &&
+    fullHeightLayout.inquiry.x < fullHeightLayout.preview.x && fullHeightLayout.inquiry.right <= fullHeightLayout.preview.x,
+    `Full-height inquiry did not fill the left pane beside the attachment: ${JSON.stringify(fullHeightLayout)}`);
+  if (captureDir) await page.screenshot({ path: path.join(captureDir, "inquiry-full-height-split.png"), fullPage: false });
+  await fullHeightButton.click();
+  await page.locator(".inquiry-form-full-height").waitFor({ state: "detached" });
+  await assert(await pane.isVisible(), "Exiting full-height inquiry closed the split attachment preview");
+  await page.evaluate(() => {
+    state.summaryAttachmentPreview = null;
+    render();
+  });
+  const fullScreenButton = page.locator(".agent-dock [data-toggle-inquiry-full-screen]");
+  await assert(await fullScreenButton.getAttribute("aria-label") === "Open full-screen inquiry" &&
+    await fullScreenButton.locator("svg").evaluate((svg) => svg.querySelector('path[d="M15 3h6v6"]') !== null),
+    "Regular layout did not keep the full-screen icon and label");
+  const fullScreenPosition = await page.evaluate(() => {
+    const button = document.querySelector(".agent-dock [data-toggle-inquiry-full-screen]").getBoundingClientRect();
+    const banner = document.querySelector(".agent-dock .inquiry-banner").getBoundingClientRect();
+    return { topInset: button.top - banner.top, rightInset: banner.right - button.right, bottomInset: banner.bottom - button.bottom };
+  });
+  await assert(fullScreenPosition.topInset >= 10 && fullScreenPosition.rightInset >= 10,
+    `Regular full-screen control or focus ring is too close to the inquiry card edge: ${JSON.stringify(fullScreenPosition)}`);
+  await focusBeforeButton(fullScreenButton);
+  await assert(await fullScreenButton.evaluate((button) => button === document.activeElement), "Keyboard focus did not reach the regular full-screen control");
+  await assert(await fullScreenButton.evaluate((button) => {
+    const style = getComputedStyle(button);
+    return style.outlineStyle !== "none" && style.outlineOffset === "2px";
+  }), "Regular full-screen control must keep its visible keyboard focus ring");
+  await page.locator("[data-inquiry-focus-start]").evaluate((node) => node.remove());
   await previewButton("Release review").focus();
   await page.keyboard.press("Enter");
   await page.waitForFunction(() => document.querySelector(".summary-attachment-preview-scroll")?.getAttribute("aria-busy") === "false");
