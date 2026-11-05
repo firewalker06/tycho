@@ -8,7 +8,9 @@ module.exports = async ({browser, baseUrl, captureDir, waitForInquiryRuns}) => {
   const results=[];
   const gate=()=>{let release;const promise=new Promise(resolve=>{release=resolve;});return {promise,release};};
   let index=0;
-  for(const width of (selected?[1440]:[1440,390])) for(const theme of (selected?["dark"]:["dark","light"])) for(const peer of (selected?[false]:[false,true])) for(const scenario of (selected?[selected]:["detail","activity","mutation","retire"])) {
+  const viewport=process.env.TYCHO_REMOTE_UI_INQUIRY_DELAYED_VIEWPORT;
+  const widths=selected?[viewport==="mobile"?390:1440]:[1440,390];
+  for(const width of widths) for(const theme of (selected?[width<500?"light":"dark"]:["dark","light"])) for(const peer of (selected?[false]:[false,true])) for(const scenario of (selected?[selected]:["detail","activity","mutation","retire"])) {
     const rawKey=`web-inquiry-recovery-${index++}`,key=peer?`fixture-peer/${rawKey}`:rawKey;
     const context=await browser.newContext({viewport:{width,height:900},isMobile:width<500,hasTouch:width<500});
     const page=await context.newPage();page.setDefaultTimeout(10000);
@@ -51,6 +53,14 @@ module.exports = async ({browser, baseUrl, captureDir, waitForInquiryRuns}) => {
       await page.evaluate(()=>{clearTimeout(state.timer);clearTimeout(state.activityTimer);const original=refresh;globalThis.__answerRefreshes=0;refresh=async(...args)=>{globalThis.__answerRefreshes++;return original(...args);};});
       await page.locator('#inquiry-form input[type="text"]').fill("Synthetic delayed answer");
       await page.locator('#inquiry-form button[type="submit"]').click();await captured.promise;
+      assert.match(page.url(), /#agent\//, "answer submission should open the conversation before the POST returns");
+      assert.equal(await page.locator("#inquiry-form").count(),0,"inquiry review form closes while the answer is pending");
+      assert.match(await page.locator("[data-inquiry-answer-recovery]").innerText(),/Sending answer[\s\S]*Synthetic delayed answer/,
+        "conversation should show the submitted answer while the POST is held");
+      assert.equal(await page.locator("[data-inquiry-answer-recovery] details").evaluate(node=>node.open),true,"submitted answer stays visible while sending");
+      await page.keyboard.press("Tab");
+      assert.equal(await page.evaluate(()=>document.activeElement !== document.body),true,"conversation keeps keyboard focus available after navigation");
+      if(captureDir && !peer && scenario==="detail") await page.screenshot({path:path.join(captureDir,`pending-${width}-${theme}.png`)});
       if(waitForInquiryRuns) console.log(waitForInquiryRuns());
       if(scenario==="retire") {
         const response=await context.request.post(`${baseUrl}/agents/${rawKey}/archive`,{data:{}});assert.equal(response.status(),200);
@@ -85,7 +95,6 @@ module.exports = async ({browser, baseUrl, captureDir, waitForInquiryRuns}) => {
       const persisted=(await (await context.request.get(`${baseUrl}/agents/${rawKey}`)).json()).agent;
       assert.equal(persisted.archived,scenario==="retire");
       assert.equal(after.name,persisted.name);assert.equal(after.running,persisted.running);
-      if(captureDir && !peer && scenario==="detail") await page.screenshot({path:path.join(captureDir,`delayed-${width}-${theme}.png`)});
       reads.release();await page.waitForFunction(()=>!state.refreshInFlight);
       assert.deepEqual(errors,[]);results.push({width,theme,peer,scenario,before,projection:{name:projection.name,status:projection.status,running:projection.running,archived:projection.archived},after,writes,passed:true});
     } catch(error) {
