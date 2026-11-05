@@ -76,6 +76,14 @@ own request order, so a late summary cannot erase newer detailed Settings data. 
 
 Remote Sessions refreshes Git metadata only when a detail view requests it. The server shares a 10-second cache and at most two background workers. Startup, list browsing, registry reloads, and archived-agent search do not start a metadata sweep. Cold, stale, and failed values are not shown as Clean. Failed fields retain their last good values. Archived branch search uses only the last branch observed by this server; cold branches have no match. Metadata reads and completion polls belong to a view token. Navigation, blur, hide, and close cancel the token and pending reads; late replies cannot restart work. Closed HTTP requests cannot add new demand. TUI and CLI refresh behavior is unchanged. See [Remote Sessions API](/Users/didik/Code/personal/tycho/docs/REMOTE_SERVER.md).
 
+## Remote connection admission
+
+Remote Sessions keeps 32 workers and limits each TCP peer address to 24 open
+worker connections by default. Extra connections get a prompt HTTP 429 or close.
+Headers have a separate 1-second total deadline. Bodies retain a 10-second read
+budget; response lifetimes are unchanged. Shared brokers can configure up to 31
+connections per address. See [Remote connection limits](/Users/didik/Code/personal/tycho-charlie/docs/REMOTE_SERVER.md#connection-limits).
+
 ## Remote UI appearance
 
 Card 772 selects Nord Light alongside the existing default Dark appearance.

@@ -34,6 +34,9 @@ module RemoteServerTest
     assert_write_http_omits_server_timing_outside_a_request
     assert_stalled_clients_time_out_without_blocking_requests
     assert_client_worker_cap_recovers_after_stalled_clients
+    assert_connection_limits_and_recovery
+    assert_header_deadline_is_separate_from_body_and_response
+    assert_connection_limit_configuration
     assert_shutdown_closes_stalled_client_sockets
     assert_remote_agent_delegation_lifecycle
     assert_remote_conversation_persists_agent_system_context_once
@@ -801,13 +804,14 @@ module RemoteServerTest
     end
   end
 
-  def with_running_remote_server(read_timeout: nil, max_workers: nil)
+  def with_running_remote_server(read_timeout: nil, max_workers: nil, **options)
     with_remote_temp_store do |dir|
       workspace = File.join(dir, "workspace")
       write_project_workspace(workspace)
       registry = registry_for_project(dir, workspace)
       port = TCPServer.open("127.0.0.1", 0) { |probe| probe.addr[1] }
-      server = HQ::RemoteServer.new(host: "127.0.0.1", port: port, registry: registry, token: "", output: StringIO.new)
+      server = HQ::RemoteServer.new(host: "127.0.0.1", port: port, registry: registry, token: "", output: StringIO.new, **options)
+      server.instance_variable_set(:@client_header_timeout, read_timeout) if read_timeout
       server.instance_variable_set(:@client_read_timeout, read_timeout) if read_timeout
       server.instance_variable_set(:@max_client_workers, max_workers) if max_workers
       thread = Thread.new { server.start }
@@ -862,6 +866,112 @@ module RemoteServerTest
       assert(admission >= 400, "expected accepted socket admission wait, got #{admission}")
 
       stalled.each(&:close)
+    end
+  end
+
+  def assert_connection_limits_and_recovery
+    with_running_remote_server(header_timeout: 2) do |server, port|
+      sockets = []
+      begin
+        24.times do
+          socket = TCPSocket.new("127.0.0.1", port)
+          socket.write("GET /ui HTTP/1.1\r\nHost: localhost\r\n")
+          sockets << socket
+        end
+        extra = TCPSocket.new("127.0.0.1", port)
+        sockets << extra
+        assert(IO.select([extra], nil, nil, 1), "expected prompt rejection before header deadline")
+        response = extra.read
+        assert(response.start_with?("HTTP/1.1 429 Too Many Requests"), "expected address limit status")
+        assert(response.include?("Retry-After: 1") && response.include?("Too many open connections"),
+               "expected clear retry guidance")
+        assert(server.instance_variable_get(:@client_workers).size == 24, "expected eight free worker slots")
+
+        mapped, mapped_reader = Socket.pair(:UNIX, :STREAM, 0)
+        mapped.define_singleton_method(:peeraddr) { |_lookup| ["AF_INET6", 0, "", "::ffff:127.0.0.1"] }
+        server.send(:spawn_client_worker, mapped)
+        assert(mapped_reader.read.start_with?("HTTP/1.1 429"), "expected mapped IPv4 to share its address limit")
+        mapped_reader.close
+
+        # Simulate a different accepted transport peer without OS loopback aliases.
+        accepted, reader = Socket.pair(:UNIX, :STREAM, 0)
+        accepted.define_singleton_method(:peeraddr) { |_lookup| ["AF_INET6", 0, "", "::ffff:192.0.2.1"] }
+        reader.write("GET /ui HTTP/1.1\r\n\r\n")
+        server.send(:spawn_client_worker, accepted)
+        assert(IO.select([reader], nil, nil, 1), "expected another address to use a reserved slot")
+        assert(reader.read.start_with?("HTTP/1.1 200"), "expected another address to remain available")
+        reader.close
+
+        sockets.each { |socket| socket.close unless socket.closed? }
+        server.send(:drain_client_workers)
+        recovered = Net::HTTP.get_response(URI("http://127.0.0.1:#{port}/diagnostics/serve"))
+        data = JSON.parse(recovered.body)
+        assert(recovered.code == "200", "expected capacity release after EOF")
+        assert(data["rejected_connections"] == 2 && data["connections_per_address"] == 24,
+               "expected diagnostic rejection count and configured limit")
+        assert(server.instance_variable_get(:@client_addresses).size <= 1, "expected address entries to be released")
+      ensure
+        sockets.each { |socket| socket.close unless socket.closed? }
+        reader&.close unless reader&.closed?
+        mapped_reader&.close unless mapped_reader&.closed?
+      end
+    end
+  end
+
+  def assert_header_deadline_is_separate_from_body_and_response
+    server = HQ::RemoteServer.new(header_timeout: 0.1, output: StringIO.new)
+    server.instance_variable_set(:@client_read_timeout, 1)
+    server.define_singleton_method(:route_ui) do |_path|
+      # A response may remain open beyond the header deadline.
+      IO.select(nil, nil, nil, 0.2)
+      { status: 200, body: "y" * (2 * 1024 * 1024) + "complete", content_type: "text/plain" }
+    end
+    accepted, client = Socket.pair(:UNIX, :STREAM, 0)
+    worker = Thread.new { server.send(:handle_client, accepted) }
+    body = "x" * (2 * 1024 * 1024)
+    client.write("GET /ui HTTP/1.1\r\nContent-Length: #{body.bytesize}\r\n\r\n")
+    IO.select(nil, nil, nil, 0.2)
+    client.write(body)
+    assert(IO.select([client], nil, nil, 3), "expected upload response")
+    IO.select(nil, nil, nil, 0.2)
+    assert(worker.alive?, "expected response write to remain open beyond header deadline")
+    assert(client.read.end_with?("complete"), "expected body and response to outlive header deadline")
+    assert(worker.join(3), "expected upload worker to finish")
+    client.close
+
+    accepted, client = Socket.pair(:UNIX, :STREAM, 0)
+    worker = Thread.new { server.send(:handle_client, accepted) }
+    started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    client.write("GET /ui HTTP/1.1\r\n")
+    IO.select(nil, nil, nil, 0.06)
+    client.write("Host: localhost\r\n")
+    assert(IO.select([client], nil, nil, 0.3), "expected total header deadline despite progress")
+    assert(client.read.start_with?("HTTP/1.1 408"), "expected header timeout status")
+    assert(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started < 0.35, "expected short total header deadline")
+    assert(worker.join(1), "expected timed-out worker to finish")
+  ensure
+    client&.close unless client&.closed?
+    accepted&.close unless accepted&.closed?
+    worker&.join(3)
+  end
+
+  def assert_connection_limit_configuration
+    with_env_values("TYCHO_REMOTE_HEADER_TIMEOUT" => "0.8", "TYCHO_REMOTE_CONNECTIONS_PER_ADDRESS" => "28") do
+      configured = HQ::RemoteServer.new
+      assert(configured.instance_variable_get(:@client_header_timeout) == 0.8, "expected header environment override")
+      assert(configured.instance_variable_get(:@connections_per_address) == 28, "expected address environment override")
+    end
+    server = HQ::RemoteServer.new(header_timeout: "0.75", connections_per_address: "31")
+    assert(server.instance_variable_get(:@client_header_timeout) == 0.75, "expected fractional header seconds")
+    assert(server.instance_variable_get(:@connections_per_address) == 31, "expected shared-address override")
+    [{ header_timeout: 0 }, { header_timeout: Float::INFINITY }, { header_timeout: "bad" },
+     { connections_per_address: 0 }, { connections_per_address: 32 }, { connections_per_address: "2.5" }].each do |options|
+      begin
+        HQ::RemoteServer.new(**options)
+        raise "expected invalid connection configuration to fail: #{options}"
+      rescue ArgumentError
+        nil
+      end
     end
   end
 

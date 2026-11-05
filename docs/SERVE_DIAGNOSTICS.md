@@ -5,9 +5,14 @@ uses the normal Remote API bearer-token policy. It does not read agent state.
 The endpoint shares the same 32 worker slots as other requests.
 
 - `accepted_sockets`: cumulative accepted sockets, including the socket waiting
-  for a worker slot.
+  for a worker slot, and connections rejected by the address limit.
 - `active_worker_slots` and `worker_limit`: current occupied slots and the
   unchanged limit of 32. The diagnostic request occupies a slot.
+- `rejected_connections`: cumulative address-limit rejections (HTTP 429 or an
+  immediate close if the nonblocking response write cannot finish). These
+  connections use no worker and do not add completed request samples.
+- `connections_per_address` and `header_timeout_seconds`: effective connection
+  limit and total header-read deadline. No client addresses enter diagnostics.
 - `samples`: the latest 1,024 completed requests, oldest first. Labels group
   requests by HTTP method, fixed resource and fixed action words. Variable
   segments become `:id`; labels stop at eight segments. Unknown resources and
@@ -37,5 +42,7 @@ fields. The existing `total` starts at worker execution and includes parsing;
 the header total ends before writing. Admission, route, and lock hold are elapsed
 observations and overlap other stages. Do not add them to exclusive stage times.
 
-The worker limit, slot wait, file-lock scope, and process model are unchanged.
+The worker limit, global slot wait, file-lock scope, and process model are unchanged.
+Per-address admission now rejects extra connections before the global slot wait.
+Headers have a separate 1-second default deadline; bodies retain 10 seconds.
 Project metadata still uses the on-demand cache from Card 809.

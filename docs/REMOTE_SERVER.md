@@ -2,6 +2,43 @@
 
 The Remote Sessions server is HQ's local JSON API for inspecting and controlling managed agents without opening the Bubbletea TUI. It is intentionally small and local-first: the API reuses the same `AgentStore` and `ManagedAgent` domain objects as the TUI, so agent state continues to live in `~/.tycho/logs/managed_agents.json` and per-agent artifacts under `~/.tycho/logs/agents/`.
 
+## Connection limits
+
+The server has 32 worker slots. `TYCHO_REMOTE_HEADER_TIMEOUT` sets the total
+header-read deadline in seconds (default `1.0`). It accepts a finite positive
+number. Header bytes must finish within this deadline; partial progress does
+not reset it. An admitted connection that misses it gets HTTP 408 and closes.
+After headers finish, the body has its own 10-second read deadline. Header
+settings do not limit response writes, long-lived responses, or harness event
+streams. Large uploads with complete headers retain the body read budget.
+
+`TYCHO_REMOTE_CONNECTIONS_PER_ADDRESS` sets the maximum open worker connections
+for one TCP peer address (default `24`, range `1`–`31`). This includes requests
+that read bodies or write responses. Completed, failed, timed-out, and closed
+requests release their count. The default leaves eight slots for other
+addresses. IPv4 and IPv4-mapped IPv6 addresses use the same count. The server
+uses the socket address, never forwarded-address headers.
+
+The limit applies before the listener waits for a global worker slot. Extra
+connections get HTTP 429, a JSON error, `Retry-After: 1`, and `Connection: close`.
+The rejection uses one small nonblocking write. If the client cannot receive it,
+the server closes the socket immediately. An address at its limit can also get
+429 for a normal request. Reads can retry after capacity returns. Retry a
+mutation only with its existing receipt/retry contract.
+
+Browsers, NAT gateways, and a broker that proxies many tabs can share one
+address. The default allows 24 simultaneous requests, not 24 tabs: polling,
+assets, peer requests, and long responses all share this budget. The server
+closes each response instead of retaining idle keep-alive sockets. For a busy
+trusted broker, set `TYCHO_REMOTE_CONNECTIONS_PER_ADDRESS=31` on the receiving
+server, or limit proxy concurrency. This leaves one slot for other addresses.
+No setting can let one address occupy all 32 slots. Existing admitted responses
+are never evicted to make room. Multiple addresses can still fill the global
+limit; this change does not replace the worker pool or global admission policy.
+
+[Serve diagnostics](/Users/didik/Code/personal/tycho-charlie/docs/SERVE_DIAGNOSTICS.md)
+reports the effective settings and rejection count without recording addresses.
+
 ## Agent read snapshots
 
 Agent detail and conversation GETs reuse the shared agent cache while its file
