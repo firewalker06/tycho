@@ -28,6 +28,7 @@ module RemoteServerTest
     assert_accepted_creation_retry_stays_uncertain
     assert_creation_receipt_preserves_hidden_archive_visibility
     assert_slow_request_does_not_block_activity
+    assert_store_lock_hold_is_recorded_on_failure
     assert_remote_responses_include_server_timing_stages
     assert_slow_requests_log_stage_split
     assert_write_http_omits_server_timing_outside_a_request
@@ -665,6 +666,25 @@ module RemoteServerTest
     end
   end
 
+  def assert_store_lock_hold_is_recorded_on_failure
+    with_remote_temp_store do
+      timing = HQ::RequestTiming.start
+      begin
+        HQ::AgentStore.new([]).send(:with_exclusive_lock) { raise ArgumentError, "fixture" }
+      rescue ArgumentError
+        nil
+      end
+      assert(timing.stages_ms.key?("store_lock_wait"), "expected lock wait on failure")
+      assert(timing.stages_ms.key?("store_lock_hold"), "expected lock hold on failure")
+      File.open("#{HQ::AGENTS_FILE}.lock", File::RDWR) do |file|
+        assert(file.flock(File::LOCK_EX | File::LOCK_NB), "expected lock release after failure")
+        file.flock(File::LOCK_UN)
+      end
+    ensure
+      HQ::RequestTiming.clear
+    end
+  end
+
   def assert_remote_responses_include_server_timing_stages
     with_remote_temp_store do |dir|
       workspace = File.join(dir, "workspace")
@@ -699,6 +719,14 @@ module RemoteServerTest
         cached = Net::HTTP.get_response(URI("http://127.0.0.1:#{port}/servers/activity"))
         assert(server_timing_metrics(cached["Server-Timing"]).key?("total"),
                "expected cached reads to report a total, got #{cached["Server-Timing"].inspect}")
+        diagnostic = Net::HTTP.get_response(URI("http://127.0.0.1:#{port}/diagnostics/serve"))
+        data = JSON.parse(diagnostic.body)
+        assert(data["worker_limit"] == 32 && data["active_worker_slots"].between?(1, 32), "expected worker counts")
+        assert(data["accepted_sockets"] >= 5, "expected accepted sockets")
+        sample = data["samples"].find { |item| item["route"] == "GET /agents/:id/conversation" }
+        assert(sample && sample["response_bytes"].positive? && sample["write_ms"] >= 0, "expected completed write measurements")
+        assert(!diagnostic.body.include?(created[:key]), "diagnostics must not contain agent keys")
+        assert(%w[admission route].all? { |name| stages.key?(name) }, "expected admission and route timing")
         assert(!log.string.include?("slow "), "expected no slow-request line below the threshold: #{log.string}")
       end
     end
@@ -726,7 +754,7 @@ module RemoteServerTest
                "expected the header to carry the slow stage, got #{slow["Server-Timing"].inspect}")
         slow_lines = log.string.lines.grep(/slow GET \/slow-timing-test 200 /)
         assert(slow_lines.length == 1, "expected one slow-request log line, got #{log.string.inspect}")
-        assert(slow_lines.first.include?("WARN") && slow_lines.first.match?(/\[agent_load=1\d\d\.\dms json_encode=/),
+        assert(slow_lines.first.include?("WARN") && slow_lines.first.match?(/agent_load=1\d\d\.\dms json_encode=/),
                "expected a warning with the stage split, got #{slow_lines.first.inspect}")
         assert(output.string.include?("slow GET /slow-timing-test"), "expected the daemon output to include the line")
         assert(!log.string.include?("slow GET /servers/activity"), "expected fast requests not to be reported as slow")
@@ -830,6 +858,9 @@ module RemoteServerTest
       elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
       assert(response.code == "200", "expected a request queued at the cap to be served after stalled clients time out")
       assert(elapsed >= 0.5, "expected the request to wait while the cap was full")
+      admission = server_timing_metrics(response["Server-Timing"])["admission"]
+      assert(admission >= 400, "expected accepted socket admission wait, got #{admission}")
+
       stalled.each(&:close)
     end
   end

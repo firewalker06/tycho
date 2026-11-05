@@ -1834,8 +1834,12 @@ module HQ
       FileUtils.mkdir_p(File.dirname(AGENTS_FILE))
       File.open("#{AGENTS_FILE}.lock", File::RDWR | File::CREAT, 0o600) do |file|
         RequestTiming.measure("store_lock_wait") { file.flock(File::LOCK_EX) }
+        held_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
         yield
       ensure
+        if held_at
+          RequestTiming.current&.record("store_lock_hold", (Process.clock_gettime(Process::CLOCK_MONOTONIC) - held_at) * 1000)
+        end
         file.flock(File::LOCK_UN)
       end
     end

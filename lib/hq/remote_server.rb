@@ -31,6 +31,7 @@ require_relative "domain/context_handoff"
 require_relative "domain/conversation_blocks_cache"
 require_relative "domain/delegation_actor"
 require_relative "domain/request_timing"
+require_relative "domain/serve_diagnostics"
 require_relative "domain/agent_archive_store"
 require_relative "domain/executable_resolver"
 require_relative "domain/file_store"
@@ -114,6 +115,7 @@ module HQ
       @project_metadata_cache = project_metadata_cache || ProjectGitMetadataCache.new
       @registry = registry
       @clock = clock
+      @serve_diagnostics = ServeDiagnostics.new
       @client_workers = {}
       @max_client_workers = MAX_CLIENT_WORKERS
       @client_read_timeout = CLIENT_READ_TIMEOUT
@@ -202,12 +204,15 @@ module HQ
     # bounds the fan-out; at the cap we stop accepting and clients wait in the
     # kernel backlog.
     def spawn_client_worker(client)
+      accepted_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      @serve_diagnostics.accept
       wait_for_client_slot
       @client_workers_mutex.synchronize do
         worker = Thread.new do
           Thread.current.report_on_exception = false
           begin
-            handle_client(client)
+            admission_ms = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - accepted_at) * 1000
+            handle_client(client, admission_ms: admission_ms)
           rescue StandardError => e
             @logger.error("Remote") { "client worker failed: #{e.class} - #{e.message}" }
           ensure
@@ -259,8 +264,9 @@ module HQ
       end
     end
 
-    def handle_client(client)
+    def handle_client(client, admission_ms: 0.0)
       timing = RequestTiming.start
+      timing.record("admission", admission_ms)
       status = nil
       request = read_request(client)
       unless request
@@ -269,6 +275,7 @@ module HQ
         return
       end
 
+      timing.route_started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       if ui_request?(request)
         result = route_ui(request.path)
         status = result.fetch(:status, 200)
@@ -280,6 +287,15 @@ module HQ
       unless authorized?(request)
         status = 401
         write_http(client, status, error: "Unauthorized")
+        return
+      end
+
+      if request.method == "GET" && request.path == "/diagnostics/serve"
+        status = 200
+        snapshot = @serve_diagnostics.snapshot
+        snapshot[:active_worker_slots] = @client_workers_mutex.synchronize { @client_workers.size }
+        snapshot[:worker_limit] = MAX_CLIENT_WORKERS
+        write_http(client, status, snapshot)
         return
       end
 
@@ -330,6 +346,7 @@ module HQ
       @logger.error("Remote") { "#{label}: #{e.class} - #{e.message}" }
       write_http(client, status, error: "Internal server error")
     ensure
+      @serve_diagnostics.record(request, timing) if timing
       log_request(request, status || 500, timing) if timing
       RequestTiming.clear
       client&.close
@@ -984,6 +1001,11 @@ module HQ
       content = RequestTiming.measure("json_encode") do
         raw_body || !content_type.start_with?("application/json") ? body.to_s : JSON.pretty_generate(body)
       end
+      if (timing = RequestTiming.current)
+        timing.record("route", (Process.clock_gettime(Process::CLOCK_MONOTONIC) - timing.route_started_at) * 1000) if timing.route_started_at
+        timing.response_bytes = content.bytesize
+      end
+      write_started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       reason = reason_phrase(status)
       response_headers = headers
       timing_header = RequestTiming.current&.server_timing_header
@@ -997,6 +1019,10 @@ module HQ
       client.write content
     rescue IOError, SystemCallError
       nil
+    ensure
+      if write_started
+        RequestTiming.current&.record("write", (Process.clock_gettime(Process::CLOCK_MONOTONIC) - write_started) * 1000)
+      end
     end
 
     def log_request(request, status, timing)
