@@ -5387,16 +5387,28 @@ module RemoteServerTest
     File.chmod(0o755, git_path)
     old_path = ENV["PATH"]
     old_timeout = replace_constant(HQ::Project, :GIT_COMMAND_TIMEOUT, 0.5)
+    original_wait = HQ::CommandRunner.method(:wait_for)
+    # Start the short hang deadline only after the shell has recorded its PID.
+    # Under load spawn can return before the child gets CPU time. Keep the real
+    # runner's timeout, process-group termination and reap path under test.
+    HQ::CommandRunner.define_singleton_method(:wait_for) do |pid, timeout|
+      RemoteServerTest.wait_for_hung_git_start(pid_file) if timeout == 0.5
+      original_wait.call(pid, timeout)
+    end
+    HQ::CommandRunner.singleton_class.send(:private, :wait_for)
     ENV["PATH"] = "#{fake_bin}#{File::PATH_SEPARATOR}#{old_path}"
     yield pid_file
   ensure
     ENV["PATH"] = old_path if old_path
     replace_constant(HQ::Project, :GIT_COMMAND_TIMEOUT, old_timeout) if old_timeout
+    HQ::CommandRunner.define_singleton_method(:wait_for, original_wait) if original_wait
+    HQ::CommandRunner.singleton_class.send(:private, :wait_for) if original_wait
+    kill_owned_fixture_pids(pid_file) if pid_file
   end
 
   def wait_for_hung_git_start(pid_file)
     deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
-    until File.file?(pid_file)
+    until File.file?(pid_file) && !File.read(pid_file).strip.empty?
       raise "fake git did not start" if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
 
       sleep(0.02)
