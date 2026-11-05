@@ -308,6 +308,7 @@ module HQ
         conversation_blocks_cache: @conversation_blocks_cache,
         agent_list_cache: @agent_list_cache,
         project_metadata_cache: @project_metadata_cache,
+        project_metadata_demand: -> { metadata_request_open?(client) },
         queue_processor_active: -> { queue_processor_active? }
       )
       result = route(service, request.method, request.path, json_body(request), request)
@@ -332,6 +333,17 @@ module HQ
       log_request(request, status || 500, timing) if timing
       RequestTiming.clear
       client&.close
+    end
+
+    # Metadata demand is read-only and optional. A disconnected request may still
+    # finish building a cached response, but must not start new background Git.
+    def metadata_request_open?(client)
+      return false if @shutdown || client.closed?
+
+      available = client.recv_nonblock(1, Socket::MSG_PEEK, exception: false)
+      available == :wait_readable || (available.is_a?(String) && !available.empty?)
+    rescue IOError, SystemCallError
+      false
     end
 
     def daemonize_after_startup!
@@ -1918,12 +1930,14 @@ module HQ
                    conversation_blocks_cache: ConversationBlocksCache.new,
                    agent_list_cache: AgentListCache.new,
                    project_metadata_cache: ProjectGitMetadataCache.new,
+                   project_metadata_demand: nil,
                    queue_processor_active: nil,
                    clock: -> { Time.now })
       @registry = registry
       @queue_processor_active = queue_processor_active
       @clock = clock
       @project_metadata_cache = project_metadata_cache
+      @project_metadata_demand = project_metadata_demand
       @projects = registry.projects.map { |config| @project_metadata_cache.apply(Project.new(config)) }
       @agent_store = AgentStore.new(@projects)
       @agent_archive_store = AgentArchiveStore.new
@@ -4994,7 +5008,7 @@ module HQ
     end
 
     def project_detail_payload(project, agents:)
-      snapshot = @project_metadata_cache.request(project)
+      snapshot = @project_metadata_cache.request(project, demand: @project_metadata_demand)
       metadata = snapshot[:metadata]
       branch = metadata[:branch]
       commit_hash = metadata[:commit_hash]

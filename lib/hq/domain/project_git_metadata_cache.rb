@@ -24,12 +24,13 @@ module HQ
 
     # Return a consistent snapshot, and coalesce demand from tabs and peer requests.
     # Failed attempts also have a retry window, to avoid retry bursts on broken mounts.
-    def request(project)
+    def request(project, demand: nil)
       @mutex.synchronize do
         key = cache_key(project)
         entry = @entries[key] ||= { metadata: {}.freeze }
         now = @clock.call
-        unless @closed || entry[:refreshing] || (entry[:attempted_at] && now - entry[:attempted_at] < FRESHNESS_WINDOW)
+        unless @closed || entry[:refreshing] || (entry[:attempted_at] && now - entry[:attempted_at] < FRESHNESS_WINDOW) ||
+               (demand && !demand.call)
           entry[:refreshing] = true
           @pending[key] = [project, now]
           start_workers

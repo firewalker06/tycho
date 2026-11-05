@@ -91,6 +91,7 @@ module RemoteServerTest
     assert_remote_project_unborn_branch_reports_no_commit
     assert_remote_project_hung_git_refresh_is_bounded
     assert_remote_server_accepts_requests_while_git_hangs
+    assert_closed_project_request_does_not_enqueue_git
     assert_remote_project_first_failed_read_is_unknown
     assert_warm_schedule_setup_and_project_reads_do_bounded_work
     assert_remote_project_reload_does_not_refresh_metadata
@@ -5033,6 +5034,54 @@ module RemoteServerTest
         end
         assert(!thread.alive?, "expected the remote server to stop on shutdown")
         assert_hung_git_children_gone(git.pid_file)
+      end
+    end
+  end
+
+  def assert_closed_project_request_does_not_enqueue_git
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      init_project_git_workspace(workspace)
+      cache = HQ::ProjectGitMetadataCache.new
+      snapshots = Queue.new
+      git_commands = Queue.new
+      cache.define_singleton_method(:request) do |*args, **kwargs|
+        snapshot = super(*args, **kwargs)
+        snapshots << snapshot
+        snapshot
+      end
+      server = HQ::RemoteServer.new(registry: registry_for_project(dir, workspace), token: "",
+                                    project_metadata_cache: cache, output: StringIO.new)
+      entered = Queue.new
+      release = Queue.new
+      server.define_singleton_method(:route) do |service, *args|
+        service.instance_variable_get(:@projects).each do |project|
+          project.define_singleton_method(:git_command) do |*command|
+            git_commands << command
+            super(*command)
+          end
+        end
+        entered << true
+        release.pop
+        super(service, *args)
+      end
+      client, peer = Socket.pair(:UNIX, :STREAM, 0)
+      worker = Thread.new { server.send(:handle_client, client) }
+      begin
+        peer.write("GET /projects/web HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        Timeout.timeout(5) { entered.pop }
+        peer.close
+        release << true
+        assert(worker.join(5), "expected a disconnected detail request to finish")
+        cache.close
+        snapshot = Timeout.timeout(5) { snapshots.pop }
+        assert(!snapshot[:refreshing], "closed HTTP requests must not enqueue new metadata demand")
+        assert(git_commands.empty?, "closed HTTP requests must start zero metadata Git commands")
+      ensure
+        release << true
+        peer.close unless peer.closed?
+        worker.join(5)
+        cache.close
       end
     end
   end

@@ -32,6 +32,7 @@ module ProjectGitMetadataCacheTest
   end
 
   def run!
+
     now = 0.0
     cache = HQ::ProjectGitMetadataCache.new(clock: -> { now })
     started = Queue.new
@@ -81,6 +82,23 @@ module ProjectGitMetadataCacheTest
       gate << {}
       cache.close
     end
+
+    release = Queue.new
+    cache = HQ::ProjectGitMetadataCache.new(clock: -> { now })
+    begin
+      cache.refresh(FakeProject.new("web", project.path, -> { values }))
+      now += HQ::ProjectGitMetadataCache::FRESHNESS_WINDOW + 1
+      canceled = cache.request(project, demand: -> { false })
+      assert(canceled[:state] == "stale" && !canceled[:refreshing], "closed demand must not start Git")
+      assert(canceled[:metadata] == values, "closed demand must preserve the cached response")
+      live = cache.request(project, demand: -> { true })
+      assert(live[:refreshing], "closed demand must not consume the next live request's retry window")
+      take(started)
+    ensure
+      release << values
+      cache.close
+    end
+
 
     now = 0.0
     cache = HQ::ProjectGitMetadataCache.new(clock: -> { now })
