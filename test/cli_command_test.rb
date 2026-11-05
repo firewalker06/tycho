@@ -21,6 +21,7 @@ module CLICommandTest
   module_function
 
   def run!
+    assert_fixture_waits_for_finalizer_process_exit
     assert_harness_list_catalogs
     assert_version_output
     assert_project_commands_manage_full_lifecycle
@@ -35,6 +36,53 @@ module CLICommandTest
     assert_metrics_commands_are_listed_in_usage
     assert_debug_claude_run_agent_uses_claude_defaults
     puts "cli_command_test: ok"
+  end
+
+  def assert_fixture_waits_for_finalizer_process_exit
+    ready_reader, ready_writer = IO.pipe
+    release_reader, release_writer = IO.pipe
+    done_reader, done_writer = IO.pipe
+    fixture_ready = Queue.new
+    thread = Thread.new do
+      with_cli_agent_directory("hq-cli-finalizer-test") do |dir|
+        script = <<~RUBY
+          dir = ARGV.fetch(0)
+          fork do
+            File.write(File.join(dir, "run.status"), "0")
+            IO.new(3).tap { |io| io.write("ready"); io.close }
+            IO.new(4).read
+            File.write(File.join(dir, "finalizer.log"), "finished")
+            IO.new(5).write("done")
+          end
+        RUBY
+        pid = Process.spawn(RbConfig.ruby, "-e", script, dir, pgroup: true,
+                            3 => ready_writer, 4 => release_reader, 5 => done_writer,
+                            out: File::NULL, err: File::NULL)
+        @cli_agent_pids << pid
+        Process.wait(pid)
+        ready_writer.close
+        release_reader.close
+        done_writer.close
+        assert(ready_reader.read(5) == "ready", "expected a finalizer with a terminal harness status")
+        assert(File.read(File.join(dir, "run.status")) == "0", "expected the status before finalizer exit")
+        fixture_ready << dir
+      end
+    end
+    dir = fixture_ready.pop(timeout: 10)
+    assert(dir, "expected the finalizer fixture to start")
+    returned_before_exit = thread.join(0.1)
+    assert(!returned_before_exit && File.directory?(dir),
+           "fixture cleanup must wait for the finalizer even after the runner exits and status is terminal")
+    release_writer.close
+    assert(done_reader.read == "done", "expected the finalizer to write before fixture cleanup")
+    thread.value
+    assert(!File.exist?(dir), "expected fixture cleanup after all process groups exit")
+  ensure
+    release_writer&.close unless release_writer&.closed?
+    thread&.join
+    [ready_reader, ready_writer, release_reader, done_reader, done_writer].compact.each do |io|
+      io.close unless io.closed?
+    end
   end
 
   def assert_harness_list_catalogs
@@ -96,7 +144,7 @@ module CLICommandTest
   end
 
   def assert_local_parent_send_conversation_events
-    Dir.mktmpdir("hq-cli-parent-send-events") do |dir|
+    with_cli_agent_directory("hq-cli-parent-send-events") do |dir|
       workspace = File.join(dir, "workspace")
       logs_root = File.join(dir, "logs")
       parent_workspace = File.join(dir, "coordinator")
@@ -191,7 +239,12 @@ module CLICommandTest
       assert(visible.none? { |block| block.metadata["event"] == "agent_created" } &&
              visible.count { |block| block.metadata["event"] == "agent_started" } == 4,
              "expected Conversation to show only actual starts while audit records keep creation attribution")
-      run_tycho(env, "agent", "stop", parent.fetch("key"), "--json")
+      # Read pending child reports so stopping the parent does not start another run.
+      read = run_tycho(env, "queue", parent.fetch("key"), "--json")
+      assert(read.fetch(:status).success?, "expected pending parent reports to be consumed: #{read}")
+      stopped = run_tycho(env, "agent", "stop", parent.fetch("key"), "--json")
+      assert(stopped.fetch(:status).success? && !JSON.parse(stopped.fetch(:stdout)).fetch("running"),
+             "expected the parent to stop without dispatching another run")
     end
   end
 
@@ -282,7 +335,7 @@ module CLICommandTest
   end
 
   def assert_remote_server_commands_manage_full_agent_lifecycle
-    Dir.mktmpdir("hq-cli-remote-test") do |dir|
+    with_cli_agent_directory("hq-cli-remote-test") do |dir|
       port = available_port
       token = "remote-cli-test-token"
       target_dir = File.join(dir, "target")
@@ -1262,7 +1315,56 @@ module CLICommandTest
     env = { "TYCHO_AGENT_KEY" => nil }.merge(env)
     stdout, stderr, status = Open3.capture3(env, RbConfig.ruby, EXECUTABLE, *args,
                                             chdir: ROOT, stdin_data: stdin_data)
+    if @cli_agent_pids
+      payload = JSON.parse(stdout) rescue nil
+      @cli_agent_pids << payload["pid"] if payload.is_a?(Hash) && payload["pid"].is_a?(Integer)
+    end
     { stdout: stdout, stderr: stderr, status: status }
+  end
+
+  def with_cli_agent_directory(prefix)
+    Dir.mktmpdir(prefix) do |dir|
+      previous_pids = @cli_agent_pids
+      @cli_agent_pids = []
+      begin
+        yield dir
+      ensure
+        # A terminal status describes the harness. The runner can still be
+        # executing `agent finalize`, which writes into this directory.
+        @cli_agent_pids.uniq.each { |pid| signal_cli_agent_group(pid, "TERM") } if $!
+        wait_for_cli_agent_processes(@cli_agent_pids)
+        @cli_agent_pids = previous_pids
+      end
+    end
+  end
+
+  def cli_agent_group_alive?(pid)
+    Process.kill(0, -pid)
+    true
+  rescue Errno::ESRCH
+    false
+  rescue Errno::EPERM
+    true
+  end
+
+  def signal_cli_agent_group(pid, signal)
+    Process.kill(signal, -pid)
+  rescue Errno::ESRCH
+    nil
+  end
+
+  def wait_for_cli_agent_processes(pids, timeout: 10)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
+    loop do
+      remaining = pids.uniq.select { |pid| cli_agent_group_alive?(pid) }
+      return if remaining.empty?
+
+      if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+        remaining.each { |pid| signal_cli_agent_group(pid, "KILL") }
+        raise "CLI agent process groups did not exit before fixture cleanup: #{remaining.join(", ")}"
+      end
+      IO.select(nil, nil, nil, 0.01)
+    end
   end
 
   def available_port
