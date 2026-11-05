@@ -27,7 +27,7 @@ module RemoteUIInquiryRecoveryTest
           elementStateKey:(_control,i)=>String(i),clearFormDraft:()=>{raw=null;},
           inquiryAnswerStore:()=>({entries:new Map([["agent",{inquiryId:"A",controls:original,status:"rejected"}]])})};
         vm.createContext(context);
-        for(const name of ["inquirySubmissionKey","restoreInquirySubmissionDraft","restoreFormDrafts"]) vm.runInContext(source(name),context);
+        for(const name of ["inquiryAnswerValues","inquiryAnswerCorrectionChanged","inquirySubmissionKey","restoreInquirySubmissionDraft","restoreFormDrafts"]) vm.runInContext(source(name),context);
         context.restoreFormDrafts();
         assert.deepEqual(controls.map(control=>control.value),["NEW answer","NEW feedback"],"editable correction wins over immutable retry snapshot");
         raw=null;context.restoreFormDrafts();

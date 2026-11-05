@@ -105,10 +105,12 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForIn
               const editor = page.locator("[data-edit-inquiry-answer]").first();
               assert.equal(await editor.inputValue(), "Synthetic answer retained");
               await editor.fill("Edited synthetic answer");
+              assert.match(await page.locator("[data-inquiry-correction-notice]").innerText(),/original saved answer/i);
               if (scenario === "failed-reload-edit") {
                 await page.reload({waitUntil:"networkidle"});
                 await page.waitForSelector("[data-edit-inquiry-answer]");
                 assert.equal(await page.locator("[data-edit-inquiry-answer]").first().inputValue(), "Edited synthetic answer");
+                assert.match(await page.locator("[data-inquiry-correction-notice]").innerText(),/not sent/i);
               }
             }
             if (scenario === "failed-cancel") {
@@ -127,6 +129,11 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForIn
               await page.screenshot({path:path.join(captureDir,`inquiry-failure-${width}.png`),fullPage:true});
             }
             const retryClick = page.locator("[data-retry-inquiry-answer]").click();
+            if (scenario === "failed-edit-retry" || scenario === "failed-reload-edit") {
+              const confirmation = page.locator("#confirmation-dialog");
+              await confirmation.waitFor({state:"visible"});
+              await confirmation.locator("[data-confirmation-accept]").click();
+            }
             await retryDispatched;
             const response = await context.request.get(`${baseUrl}/agents/${agent.key}/conversation?limit=100`);
             assert.equal(response.status(),200);
@@ -138,7 +145,7 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForIn
               render();
             },{key:agent.key,conversation});
             assert.equal(await page.locator(".message.user.inquiry-response").count(),1,"server copy replaces the restored answer block once");
-            const visibleAnswer = scenario === "failed-edit-retry" || scenario === "failed-reload-edit" ? "Edited synthetic answer" : "Synthetic answer retained";
+            const visibleAnswer = "Synthetic answer retained";
             assert.equal((await page.locator(".message-list").innerText()).split(visibleAnswer).length-1,1,"answer text appears once when the server copy arrives");
             releaseRetryResponse();
             await retryClick;
@@ -147,18 +154,16 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForIn
             assert.equal(payloads.length,2);
             assert.equal(JSON.parse(payloads[0]).client_request_id,JSON.parse(payloads[1]).client_request_id,"edited retry keeps the original request ID");
             if (scenario === "failed-edit-retry" || scenario === "failed-reload-edit") {
-              const editedPayload = JSON.parse(payloads[1]);
-              assert.equal(JSON.parse(editedPayload.answer).choice, "Edited synthetic answer");
-              assert.equal(editedPayload.feedback, "Synthetic feedback retained");
-              assert.equal(payloads.length, 2, "edited retry sends once");
+              assert.equal(payloads[0],payloads[1],"an edited correction does not change the immutable retry payload");
+              assert.equal(await page.locator(".message.user.inquiry-response").innerText().then(text=>text.includes("Edited synthetic answer")),false,"only the server-confirmed original appears in the answer block");
             } else assert.equal(payloads[0],payloads[1],"retry after reload uses the exact saved request");
             evidence.push({width,theme,scenario,writes:payloads.length,exactRetry:true,outcome:receipts.at(-1)?.accepted});
             continue;
           }
-          await page.locator("[data-inquiry-answer-recovery] summary").click();
+          if (await page.locator("[data-inquiry-answer-recovery] summary").count()) await page.locator("[data-inquiry-answer-recovery] summary").click();
           const text = await page.locator("[data-inquiry-answer-recovery]").innerText();
           assert.match(text,/Your answer/);
-          assert.match(text,/Synthetic answer retained/);
+          assert((await page.locator("[data-edit-inquiry-answer]").first().inputValue()).includes("Synthetic answer retained"));
           assert(!text.includes("user_feedback"),"saved preview uses field labels instead of serialized payload keys");
           assert.match(text,/Synthetic feedback retained/);
           assert.match(text,/synthetic.txt/);
