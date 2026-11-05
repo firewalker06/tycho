@@ -135,10 +135,10 @@ module.exports = async ({browser, baseUrl}) => {
 
     if (scenario === "blocker-durable-rejection-correction") {
       await page.waitForFunction(key => inquiryAnswerStore().entries.get(key)?.status === "uncertain",key);
-      await page.locator('[data-edit-inquiry-answer][data-answer-field="choice"]').fill("Corrected answer after failure");
-      const recovery = page.locator("[data-inquiry-answer-recovery]");
-      await recovery.locator('input[type="checkbox"]').nth(0).uncheck();
-      await recovery.locator('input[type="checkbox"]').nth(1).check();
+      const form = page.locator("#inquiry-form");
+      await form.locator('[name="choice"]').fill("Corrected answer after failure");
+      await form.locator('input[name="regions"]').nth(0).uncheck();
+      await form.locator('input[name="regions"]').nth(1).check();
       await page.locator("[data-retry-inquiry-answer]").click();
       const confirmation = page.locator("#confirmation-dialog");
       await confirmation.waitFor({state:"visible"});
@@ -149,14 +149,14 @@ module.exports = async ({browser, baseUrl}) => {
       assert.equal(restored.status(),200,"the rejected inquiry can return to the answer form");
       await page.reload({waitUntil:"networkidle"});
       await page.waitForSelector("#inquiry-form",{state:"attached"});
-      const form = page.locator("#inquiry-form");
-      assert.equal(await form.locator('input[type="text"]').inputValue(),"Corrected answer after failure");
-      assert.equal(await form.locator('input[type="checkbox"]').nth(0).isChecked(),false);
-      assert.equal(await form.locator('input[type="checkbox"]').nth(1).isChecked(),true);
-      assert.equal(await form.locator('[name="feedback"]').inputValue(),"Original feedback");
-      assert.equal(await form.locator("[data-remove-prompt-attachment]").count(),1,"the original attachment remains available after rejection");
+      const restoredForm = page.locator("#inquiry-form");
+      assert.equal(await restoredForm.locator('input[type="text"]').inputValue(),"Corrected answer after failure");
+      assert.equal(await restoredForm.locator('input[type="checkbox"]').nth(0).isChecked(),false);
+      assert.equal(await restoredForm.locator('input[type="checkbox"]').nth(1).isChecked(),true);
+      assert.equal(await restoredForm.locator('[name="feedback"]').inputValue(),"Original feedback");
+      assert.equal(await restoredForm.locator("[data-remove-prompt-attachment]").count(),1,"the original attachment remains available after rejection");
 
-      await form.locator('button[type="submit"]').click();
+      await restoredForm.locator('button[type="submit"]').click();
       await page.waitForFunction(() => inquiryAnswerStore().entries.size === 0);
       assert.equal(writes.length,3,"corrected fields submit as one new answer");
       assert.notEqual(writes[2].client_request_id,writes[1].client_request_id,"the correction uses a new intent after durable rejection");
@@ -174,10 +174,10 @@ module.exports = async ({browser, baseUrl}) => {
     if (scenario === "blocker-lost-edited" || scenario === "blocker-refresh-fields") {
       await page.waitForFunction(key => inquiryAnswerStore().entries.get(key)?.status === "uncertain",key);
       await page.reload({waitUntil:"networkidle"});
-      await page.waitForSelector("[data-edit-inquiry-answer]");
-      const editor = page.locator("[data-edit-inquiry-answer]").first();
+      await page.waitForSelector('#inquiry-form [name="choice"]');
+      const editor = page.locator('#inquiry-form [name="choice"]');
       if (scenario === "blocker-refresh-fields") {
-        assert.equal(await editor.getAttribute("data-answer-field"),"choice","saved inquiry fields define the recovery editor");
+        assert.equal(await editor.getAttribute("name"),"choice","saved inquiry fields define the normal answer form");
         assert.equal(await editor.inputValue(),"Original answer","saved answer stays editable after the server accepted it");
         return;
       }
@@ -200,15 +200,15 @@ module.exports = async ({browser, baseUrl}) => {
     assert.equal(scenario,"blocker-multiselect-comma");
     await page.waitForFunction(key => inquiryAnswerStore().entries.get(key)?.status === "uncertain",key);
     await page.reload({waitUntil:"networkidle"});
-    await page.waitForSelector("[data-edit-inquiry-answer]");
-    const recovery = page.locator("[data-inquiry-answer-recovery]");
-    assert.equal(await recovery.locator('input[type="checkbox"]').count(),2,"multi-select recovery uses its saved choices, not a text area");
-    assert.equal(await recovery.locator('input[type="checkbox"]').nth(0).inputValue(),"Jakarta, Indonesia");
-    assert.equal(await recovery.locator('input[type="checkbox"]').nth(0).isChecked(),true);
-    await recovery.locator('input[type="checkbox"]').nth(1).check();
+    await page.waitForSelector('#inquiry-form input[name="regions"]');
+    const recovery = page.locator("#inquiry-form");
+    assert.equal(await recovery.locator('input[name="regions"]').count(),2,"multi-select failure uses the normal choice controls, not text");
+    assert.equal(await recovery.locator('input[name="regions"]').nth(0).inputValue(),"Jakarta, Indonesia");
+    assert.equal(await recovery.locator('input[name="regions"]').nth(0).isChecked(),true);
+    await recovery.locator('input[name="regions"]').nth(1).check();
     await page.waitForFunction(key => inquiryAnswerStore().entries.get(key)?.correctionDraft?.regions?.length === 2 && !inquiryAnswerStore().pendingWrites.has(key),key);
     await page.reload({waitUntil:"networkidle"});
-    await page.waitForSelector('[data-inquiry-answer-recovery] input[type="checkbox"]');
+    await page.waitForSelector('#inquiry-form input[type="checkbox"][name="regions"]');
     const entry = await page.evaluate(key => {
       const entry = inquiryAnswerStore().entries.get(key);
       return {payload:JSON.parse(entry.payload.answer),correctionDraft:entry.correctionDraft,feedback:entry.payload.feedback,

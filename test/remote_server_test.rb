@@ -10272,7 +10272,8 @@ module RemoteServerTest
            js[:body].include?("data-project-key=\"${escapeAttr(agent.project_key || \"\")}\"") &&
            js[:body].include?("if (!hasValue && form.id !== \"inquiry-form\")") &&
            js[:body].include?("if (value.type !== type) return;") &&
-           js[:body].include?("saveFormDraft(event.target.closest(\"#inquiry-form\"));"),
+           js[:body].include?("const form = event.target.closest(\"#inquiry-form\");") &&
+           js[:body].include?("saveInquiryAnswerCorrectionFromForm(form);"),
            "expected inquiry drafts to persist all current form control types without crossing form identities")
     assert(js[:body].include?('els.view.addEventListener("focusout"'),
            "expected Remote UI to save text form drafts on blur")

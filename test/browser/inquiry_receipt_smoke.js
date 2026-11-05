@@ -59,6 +59,10 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForIn
         await page.goto(`${baseUrl}/ui#agent/${agent.key}`,{waitUntil:"networkidle"});
         await page.waitForSelector("#inquiry-form",{state:"attached"});
         if (!await page.locator("#inquiry-form").isVisible()) await page.locator("details.mobile-inquiry > summary").click();
+        if (captureDir && scenario === "failed-edit-retry") {
+          fs.mkdirSync(captureDir,{recursive:true});
+          await page.screenshot({path:path.join(captureDir,`inquiry-required-${width}.png`),fullPage:true});
+        }
         await page.locator('#inquiry-form input[type="text"]').fill("Synthetic answer retained");
         await page.locator('#inquiry-form [name="feedback"]').fill("Synthetic feedback retained");
         // Use the actual attachment picker. File bytes must survive exact retry and reload.
@@ -84,12 +88,17 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForIn
           assert.notEqual(JSON.parse(payloads[0]).client_request_id,JSON.parse(payloads[1]).client_request_id);
         } else {
           if (scenario.startsWith("failed-")) {
+            await page.waitForSelector('#inquiry-form [name="choice"]');
             await page.reload({waitUntil:"networkidle"});
           } else {
             await page.evaluate(()=>navigate({type:"tab",tab:"agents"}));
             await page.goto(`${baseUrl}/ui#agent/${agent.key}`,{waitUntil:"networkidle"});
           }
-          await page.waitForSelector("[data-retry-inquiry-answer]");
+          await page.waitForSelector('[data-retry-inquiry-answer]', {state:"attached"});
+          if (!await page.locator('#inquiry-form [data-retry-inquiry-answer]').isVisible() &&
+              await page.locator("details.mobile-inquiry > summary").count()) {
+            await page.locator("details.mobile-inquiry > summary").click();
+          }
           assert.equal(payloads.length,1,"reload/navigation does not write automatically");
           if (scenario.startsWith("failed-")) {
             const recovered = await page.evaluate(key=>({
@@ -100,21 +109,33 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForIn
             assert.deepEqual(recovered.pending.map(block=>block.intent),[JSON.parse(payloads[0]).client_request_id],"saved entry restores its original inquiry intent block");
             assert.equal(await page.locator(".message.user.inquiry-response").count(),1,"failed answer is restored to the conversation after reload");
             assert.match(await page.locator(".message.user.inquiry-response").innerText(),/Synthetic answer retained/);
-            assert.equal(await page.locator("[data-inquiry-answer-recovery] > p").first().innerText(),"Failed to submit answer, retry or remove");
+            assert.equal(await page.locator("[data-inquiry-answer-recovery]").innerText(),"Failed to submit answer, retry or remove");
             assert.equal(await page.locator(".message-send-status").count(),0,"failed answer block has no extra status message");
             assert.equal(await page.locator(".message.user.inquiry-response").getAttribute("aria-label"),"Failed answer");
-            assert.equal(await page.locator("[data-inquiry-answer-recovery]").getByText("Edit your answer. Retry checks the saved answer.").count(),0);
+            assert.equal(await page.locator("[data-edit-inquiry-answer]").count(),0,"failure uses normal inquiry controls, not a custom recovery editor");
+            assert.equal(await page.locator('#inquiry-form [name="choice"]').count(),1);
             if (scenario === "failed-edit-retry" || scenario === "failed-reload-edit") {
-              const editor = page.locator("[data-edit-inquiry-answer]").first();
+              const editor = page.locator('#inquiry-form [name="choice"]');
               assert.equal(await editor.inputValue(), "Synthetic answer retained");
-              assert.equal(await page.locator(`label[for="${await editor.getAttribute("id")}"]`).innerText(),"Your answer","the editor keeps an accessible field label");
+              assert.equal(await page.locator(`label[for="${await editor.getAttribute("id")}"]`).innerText().then(text=>text.includes("Your answer")),true,"the normal form keeps its accessible field label");
               await editor.fill("Edited synthetic answer");
               if (scenario === "failed-reload-edit") {
                 await page.reload({waitUntil:"networkidle"});
-                await page.waitForSelector("[data-edit-inquiry-answer]");
-                assert.equal(await page.locator("[data-edit-inquiry-answer]").first().inputValue(), "Edited synthetic answer");
-                assert.equal(await page.locator("[data-inquiry-answer-recovery] > p").first().innerText(),"Failed to submit answer, retry or remove");
+                await page.waitForSelector('#inquiry-form [name="choice"]');
+                assert.equal(await page.locator('#inquiry-form [name="choice"]').inputValue(), "Edited synthetic answer");
+                assert.equal(await page.locator("[data-inquiry-answer-recovery]").innerText(),"Failed to submit answer, retry or remove");
               }
+            }
+            if (captureDir && scenario === "failed-edit-retry") {
+              const formCapture = page.locator("#inquiry-form");
+              if (await formCapture.locator('input[name="choice"]').count()) {
+                await formCapture.locator('input[name="choice"]').fill("Synthetic answer retained");
+                await formCapture.locator('[name="feedback"]').fill("Synthetic feedback retained");
+              }
+              await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+              await page.waitForTimeout(100);
+              fs.mkdirSync(captureDir,{recursive:true});
+              await page.screenshot({path:path.join(captureDir,`inquiry-failure-${width}.png`),fullPage:true});
             }
             if (scenario === "failed-cancel") {
               await page.locator("[data-cancel-inquiry-answer]").click();
@@ -127,11 +148,11 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForIn
               evidence.push({width,theme,scenario,writes:payloads.length,cancelled:true});
               continue;
             }
-            if (captureDir && scenario === "failed-edit-retry") {
-              fs.mkdirSync(captureDir,{recursive:true});
-              await page.screenshot({path:path.join(captureDir,`inquiry-failure-${width}.png`),fullPage:true});
+            if (scenario === "failed-edit-retry" || scenario === "failed-reload-edit") {
+              const editor = page.locator('#inquiry-form [name="choice"]');
+              if (await editor.count()) await editor.fill("Edited synthetic answer");
             }
-            const retryClick = page.locator("[data-retry-inquiry-answer]").click();
+            const retryClick = page.locator('#inquiry-form [data-retry-inquiry-answer]').click();
             if (scenario === "failed-edit-retry" || scenario === "failed-reload-edit") {
               const confirmation = page.locator("#confirmation-dialog");
               await confirmation.waitFor({state:"visible"});
@@ -163,13 +184,13 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForIn
             evidence.push({width,theme,scenario,writes:payloads.length,exactRetry:true,outcome:receipts.at(-1)?.accepted});
             continue;
           }
-          if (await page.locator("[data-inquiry-answer-recovery] summary").count()) await page.locator("[data-inquiry-answer-recovery] summary").click();
-          const text = await page.locator("[data-inquiry-answer-recovery]").innerText();
-          assert.match(text,/Your answer/);
-          assert((await page.locator("[data-edit-inquiry-answer]").first().inputValue()).includes("Synthetic answer retained"));
-          assert(!text.includes("user_feedback"),"saved preview uses field labels instead of serialized payload keys");
-          assert.match(text,/Synthetic feedback retained/);
-          assert.match(text,/synthetic.txt/);
+          const formText = await page.locator("#inquiry-form").innerText();
+          assert.match(formText,/Your answer/);
+          assert((await page.locator('#inquiry-form [name="choice"]').inputValue()).includes("Synthetic answer retained"));
+          assert(!formText.includes("user_feedback"),"normal form uses field labels instead of serialized payload keys");
+          assert.equal(await page.locator('#inquiry-form [name="feedback"]').inputValue(),"Synthetic feedback retained");
+          assert.match(formText,/Leave feedback/);
+          assert.equal(await page.locator("#inquiry-form [data-remove-prompt-attachment]").count(),1);
           assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),"no horizontal overflow");
           if(scenario==="lost" && captureDir) {
             fs.mkdirSync(captureDir,{recursive:true});
