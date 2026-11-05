@@ -2850,15 +2850,17 @@ module RenderingTest
       )
       agent.add_user_message!("Use only this follow-up.")
 
-      command = agent.send(:build_command).fetch(:command)
+      execution = agent.send(:build_command)
+      command = execution.fetch(:command)
       assert(command.include?("--resume"), "expected Claude to resume known native session")
       assert(command[command.index("--resume") + 1] == session_id, "expected Claude resume to use persisted session id")
-      assert(command.last.start_with?("Use only this follow-up."),
-             "expected resumed run to start with latest user message")
-      assert(command.last.end_with?(HQ::ManagedAgent::FINAL_OUTPUT_CHECKLIST),
-             "expected resumed run to append final output checklist")
-      assert(!command.last.include?("Base system prompt."),
-             "expected resumed run to avoid replaying full memory prompt")
+      assert(execution[:prompt_transport] == "stdin", "expected resumed Claude prompt to use stdin")
+      assert(execution[:stdin_data].start_with?("Use only this follow-up."),
+             "expected resumed run stdin to start with latest user message")
+      assert(execution[:stdin_data].end_with?(HQ::ManagedAgent::FINAL_OUTPUT_CHECKLIST),
+             "expected resumed run stdin to append final output checklist")
+      assert(!execution[:stdin_data].include?("Base system prompt."),
+             "expected resumed run stdin to avoid replaying full memory prompt")
     end
   end
 
