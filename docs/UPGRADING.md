@@ -275,7 +275,7 @@ not report support remain unchanged; use Git and `bin/setup` there.
 
 v0.11.0 is the last Tycho Intel macOS Homebrew bottle. v0.11.1 ships no Intel
 macOS bottle; Apple Silicon macOS and Linux bottles remain available. Move the
-installation and its `~/.tycho` data to an Apple Silicon Mac, or run Tycho from
+installation and its `<home>/.tycho` data to an Apple Silicon Mac, or run Tycho from
 source. This does not change source checkout support or non-macOS environments.
 
 ## 0.11.0

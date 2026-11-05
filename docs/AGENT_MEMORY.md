@@ -9,7 +9,7 @@ For an agent with key `<key>`:
 
 | Store | Path | Written by | Read by |
 |---|---|---|---|
-| **Raw log** | `~/.tycho/logs/agents/<project-key>-<created-at>-<nonce>.raw.log` for new agents; legacy agents may still use `<key>.raw.log` | `AgentStreamRecorder` tees unchanged harness stdout/stderr after the run marker | Recovery, diagnostics, and `AgentChatLog#rebuild_memory_from_raw_log!` |
+| **Raw log** | `<home>/.tycho/logs/agents/<project-key>-<created-at>-<nonce>.raw.log` for new agents; legacy agents may still use `<key>.raw.log` | `AgentStreamRecorder` tees unchanged harness stdout/stderr after the run marker | Recovery, diagnostics, and `AgentChatLog#rebuild_memory_from_raw_log!` |
 | **Memory** | Same stem as the raw log, with `.memory.jsonl` | `AgentEventJournal` for harness, user, delegation, callback, attachment, and run events | The chat viewport, prompt composition, and finalization reconciliation |
 | **Attachments** | Same stem as the raw log, with `.attachments.json` | `ManagedAgent#capture_run_memory!` when structured output includes attachments | The chat attachment summary and floating `ctrl+a` panel |
 | **Conversation/system snapshots** | Same stem as the raw log, with `.conversation.log` and `.system.log` | `AgentChatLog#ensure_generated` | External tools / human inspection only |

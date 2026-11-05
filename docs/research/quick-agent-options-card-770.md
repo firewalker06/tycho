@@ -13,7 +13,7 @@ project detail before drawing the form. A selected peer added its detail read.
 Background peer refresh did not block a local open in these fixtures. These
 controlled tests do not prove the cause or delay size in the live app.
 
-The form now opens synchronously. `GET /quick-agent/options` returns local
+The form now opens synchronously. `GET /quick-agent/options` returns local <!-- local-path-ok -->
 eligibility, saved default, project/template defaults, and shared offline
 harness/model/effort catalogs. It does not run executable, skill, tool, provider,
 or peer discovery. Server create validation remains authoritative. Create stays
@@ -91,9 +91,8 @@ disabled states. X, Escape, and overlay close preserve the page draft.
 
 Run from the repository root:
 
-<!-- local-path-example: Sample command or API data. -->
 ```sh
-TYCHO_REMOTE_UI_QUICK_OPTIONS_ONLY=1 TYCHO_REMOTE_UI_CAPTURE_DIR=/tmp/tycho-770-options bin/remote-ui-smoke
+TYCHO_REMOTE_UI_QUICK_OPTIONS_ONLY=1 TYCHO_REMOTE_UI_CAPTURE_DIR=/path/to/temp/tycho-770-options bin/remote-ui-smoke
 TYCHO_REMOTE_UI_AUTO_NAME_ONLY=1 bin/remote-ui-smoke
 TYCHO_REMOTE_UI_OPTIMISTIC_CREATE_ONLY=1 bin/remote-ui-smoke
 bundle exec ruby test/remote_server_test.rb

@@ -5,9 +5,8 @@ require "json"
 require "open3"
 
 module MarkdownPaths
-  LOCAL_PATH = %r{(?<![\w.~\\/\}])(?:~/|/(?!/)(?:[A-Za-z0-9._~-]+/|[A-Za-z0-9._~-]*\.[A-Za-z0-9])|file://|[A-Za-z]:[\\/])}i
+  LOCAL_PATH = %r{(?<![\w.~\\/\}])(?:~/|/(?!/|path/to/)(?:[A-Za-z0-9._~-]+/|[A-Za-z0-9._~-]*\.[A-Za-z0-9])|file://|[A-Za-z]:[\\/])}i
   URL = /\b([a-z][a-z0-9+.-]*):(?:[^\s<>"'`|()\[\]]|\([^()\s]*\)|\[[^\]\s]*\])+/i
-  INLINE_CODE = /(?<![\\`])(`+)(?!`)(.*?)\1(?!`)/m
   # HTML5 named references from Python's html.entities.html5, which follows
   # https://html.spec.whatwg.org/multipage/named-characters.html
   NAMED_ENTITIES = JSON.parse(File.read(File.join(__dir__, "html_named_entities.json"))).freeze
@@ -30,28 +29,11 @@ module MarkdownPaths
     end
   end
 
-  def without_code(source)
-    fence = nil
-    text = source.lines.map do |line|
-      # Container prefixes do not affect the scan or code-fence detection.
-      content = line.sub(/\A(?:[ \t]+|>[ \t]?|[-+*][ \t]+|\d+[.)][ \t]+)*/, "")
-      delimiter = content[/\A(`{3,}|~{3,})/, 1]
-      if fence
-        fence = nil if content.match?(/\A#{Regexp.escape(fence[0])}{#{fence.length},}[ \t]*(?:\r?\n)?\z/)
-        line.gsub(/[^\n]/, " ")
-      elsif delimiter
-        fence = delimiter
-        line.gsub(/[^\n]/, " ")
-      else
-        line
-      end
-    end.join
-    text.gsub(INLINE_CODE) { |code| code.gsub(/[^\n]/, " ") }
-  end
-
   def invalid_lines(source)
-    without_code(source).lines.each_with_index.filter_map do |line, index|
-      text = decode_text(line).gsub(URL) do |url|
+    source.lines.each_with_index.filter_map do |line, index|
+      next if line.match?(/<!-- local-path-ok -->[ \t]*(?:\r?\n)?\z/)
+
+      text = decode_text(line).gsub(%r{<home>(?:/[^\s"'`|)\]]*)?}, " ").gsub(URL) do |url|
         scheme = Regexp.last_match(1)
         scheme.casecmp?("file") || scheme.length == 1 ? url : " "
       end

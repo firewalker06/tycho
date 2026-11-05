@@ -4,8 +4,7 @@ require "fileutils"
 require "tmpdir"
 require_relative "support/markdown_paths"
 
-# Review reproductions plus the current line-scan policy. Three older
-# link-parser expectations change with the explicit code/text policy.
+# Review reproductions plus strict scanning of every line, including code.
 cases = [
   ["relative_link", "[Guide](docs/guide.md)\n", true],
   ["remote_home", "[Remote](https://example.test/home/user)\n", true],
@@ -13,11 +12,11 @@ cases = [
   ["remote_dash_home", "[Remote](https://example.test/-/home/user)\n", true],
   ["remote_query_home", "[Remote](https://example.test/find?path=/home/user)\n", true],
   ["remote_hash_route", "[Remote](https://example.test/#/home/user)\n", true],
-  ["home_relative", "`~/.tycho/logs/`\n", true],
-  ["marked_inline", "`/home/example/notes` <!-- local-path-example: Placeholder path. -->\n", true],
-  ["marked_backtick_block", "<!-- local-path-example: Placeholder command. -->\n```sh\ncat /home/example/notes\n```\n", true],
-  ["marked_tilde_block", "<!-- local-path-example: Placeholder command. -->\n~~~sh\ncat /home/example/notes\n~~~\n", true],
-  ["marked_long_fence", "<!-- local-path-example: Fence example. -->\n````text\n```\n/home/example/notes\n````\n", true],
+  ["home_relative", "`~/.tycho/logs/`\n", false],
+  ["marked_inline", "`/home/example/notes` <!-- local-path-example: Placeholder path. -->\n", false],
+  ["marked_backtick_block", "<!-- local-path-example: Placeholder command. -->\n```sh\ncat /home/example/notes\n```\n", false],
+  ["marked_tilde_block", "<!-- local-path-example: Placeholder command. -->\n~~~sh\ncat /home/example/notes\n~~~\n", false],
+  ["marked_long_fence", "<!-- local-path-example: Fence example. -->\n````text\n```\n/home/example/notes\n````\n", false],
   ["fence_boundary", "<!-- local-path-example: Placeholder command. -->\n```sh\ncat /home/example/notes\n```\n/home/alice/real-notes\n", false],
   ["users_plain", "/Users/alice/notes.md\n", false],
   ["home_plain", "/home/alice/notes.md\n", false],
@@ -51,13 +50,13 @@ cases = [
   ["remote image", "<img SRC=https://example.test/find?path=/Users/alice>", true],
   ["remote attribute text", "<a title='https://example.test/-/home/alice' href='notes.md'>Notes</a>", true],
   ["marked HTML", "<a HREF = '/data/notes.md'>Notes</a> <!-- local-path-example: Target. -->", false],
-  ["marked link block", "<!-- local-path-example: Target. -->\n```html\n<a href='/data/notes.md'>Notes</a>\n```", true],
+  ["marked link block", "<!-- local-path-example: Target. -->\n```html\n<a href='/data/notes.md'>Notes</a>\n```", false],
   ["angle Markdown", "[Notes](</data/notes with spaces.md>)", false],
   ["angle reference", "[Notes]: </data/notes with spaces.md>", false],
   ["Windows target", "[Notes](C:/data/notes.md) <!-- local-path-example: Target. -->", false],
   ["file target", "<a href='file:///data/notes.md'>Notes</a>", false],
-  ["home runtime", "`~/.tycho/logs/`", true],
-  ["API route", "`GET /projects/{key}/workspace/preview`", true],
+  ["home runtime", "`~/.tycho/logs/`", false],
+  ["API route", "`GET /projects/{key}/workspace/preview`", false],
   ["review escaped inline", "[Notes](\\/data/notes.md)\n", false],
   ["review escaped reference", "[Notes]: \\/data/notes.md\n\n[Notes]\n", false],
   ["review named HTML", "<a href=\"&sol;data/notes.md\">Notes</a>", false],
@@ -90,20 +89,39 @@ cases = [
   ["relative dot path", "[Notes](./docs/notes.md)", true],
   ["relative parent path", "[Notes](../../../docs/notes.md)", true],
   ["quoted relative path", "> [Notes]: ../docs/notes.md", true],
-  ["inline code token", "Notes: `/Users/alice/notes.md`", true],
-  ["inline home token", "Notes: `~/notes.md`", true],
-  ["inline code links", "Notes: `<a href='/data/notes.md'>Notes</a>`", true],
-  ["unmarked fenced code", "```sh\ncat /Users/alice/notes.md\n```", true],
-  ["quoted fenced code", "> ```sh\n> cat /Users/alice/notes.md\n> ```", true],
-  ["nested list fenced code", "- Parent\n  - ```sh\n    cat /Users/alice/notes.md\n    ```", true],
-  ["long inline code", "Notes: ``/Users/alice/notes`here``", true],
-  ["multiline inline code", "Notes: `cat\n /Users/alice/notes.md`", true],
+  ["inline code token", "Notes: `/Users/alice/notes.md`", false],
+  ["inline home token", "Notes: `~/notes.md`", false],
+  ["inline code links", "Notes: `<a href='/data/notes.md'>Notes</a>`", false],
+  ["unmarked fenced code", "```sh\ncat /Users/alice/notes.md\n```", false],
+  ["quoted fenced code", "> ```sh\n> cat /Users/alice/notes.md\n> ```", false],
+  ["nested list fenced code", "- Parent\n  - ```sh\n    cat /Users/alice/notes.md\n    ```", false],
+  ["long inline code", "Notes: ``/Users/alice/notes`here``", false],
+  ["multiline inline code", "Notes: `cat\n /Users/alice/notes.md`", false],
   ["unclosed inline code", "Notes: `cat /Users/alice/notes.md", false],
   ["code followed by path", "`/Users/alice/code.md` /home/alice/notes.md", false],
   ["quoted fence boundary", "> ```sh\n> cat /Users/alice/notes.md\n> ```\n> /home/alice/notes.md", false],
   ["remote parentheses", "[Remote](https://example.test/a(b)/home/alice)", true],
   ["URL next to local link", "[Remote](https://example.test/notes)[Notes](/data/notes.md)", false],
-  ["table URL next to local", "| https://example.test/#/home/alice | /data/notes.md |", false]
+  ["table URL next to local", "| https://example.test/#/home/alice | /data/notes.md |", false],
+  ["review quoted code end", "> ```sh\n> cat notes\n\n[Notes](/data/notes.md)\n", false],
+  ["review listed code end", "- ```sh\n  cat notes\n\n[Notes](/data/notes.md)\n", false],
+  ["path placeholder", "Notes: /path/to/workspace/notes.md", true],
+  ["home placeholder", "Notes: <home>/.tycho/logs/agents/<key>/run.log", true],
+  ["inline placeholder", "Notes: `/path/to/workspace/notes.md`", true],
+  ["fenced placeholder", "```sh\ncat /path/to/workspace/notes.md\n```", true],
+  ["placeholder followed by local", "<home>/.tycho /Users/alice/notes.md", false],
+  ["path placeholder followed by local", "/path/to/workspace /Users/alice/notes.md", false],
+  ["similar prefix is real", "/path/together/notes.md", false],
+  ["marker allows literal", "/Users/alice/notes.md <!-- local-path-ok -->", true],
+  ["marker allows code literal", "`/Users/alice/notes.md` <!-- local-path-ok -->", true],
+  ["marker allows route", "`GET /projects/{key}/workspace/preview` <!-- local-path-ok -->", true],
+  ["marker trailing spaces", "/Users/alice/notes.md <!-- local-path-ok --> \t\r\n", true],
+  ["marker is line scoped", "Example <!-- local-path-ok -->\n/Users/alice/notes.md", false],
+  ["marker must end line", "/Users/alice/notes.md <!-- local-path-ok --> More text", false],
+  ["marker in code is not end marker", "`/Users/alice/notes.md <!-- local-path-ok -->`", false],
+  ["encoded marker is not approval", "/Users/alice/notes.md &lt;!-- local-path-ok --&gt;", false],
+  ["old marker is not approval", "/Users/alice/notes.md <!-- local-path-example: Sample. -->", false],
+  ["marked fence does not exempt body", "```sh <!-- local-path-ok -->\ncat /Users/alice/notes.md\n```", false]
 ]
 
 %w[&sol; &#47; &#x2f; &#X2F;].each do |slash|
@@ -116,6 +134,10 @@ end
 cases.each do |name, input, allowed|
   actual = MarkdownPaths.invalid_lines(input)
   raise "#{name}: expected allowed=#{allowed}, got #{actual.inspect}" unless actual.empty? == allowed
+end
+["review quoted code end", "review listed code end"].each do |name|
+  input = cases.find { |item| item[0] == name }[1]
+  raise "#{name}: expected line 4" unless MarkdownPaths.invalid_lines(input) == [4]
 end
 raise "expected attribute line number" unless MarkdownPaths.invalid_lines("<a\n href='/data/notes.md'>Notes</a>\n") == [2]
 raise "do not unescape entity output" unless MarkdownPaths.decode_text("&#92;/data") == "\\/data"

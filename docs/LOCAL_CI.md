@@ -10,32 +10,39 @@ The [Interaction Profiler](REMOTE_UI_INTERACTION_PROFILER.md) is optional verifi
 
 ## Markdown path check
 
-`bin/test` first scans every tracked Markdown file, including root files and
-`docs/`. Use repository-relative links, resolved from the file that contains
-the link.
+`bin/test` first scans every line of every tracked Markdown file, including
+root files, `docs/`, and bundled skill Markdown. There are no fenced-code,
+inline-code, HTML, quote, list, or table exemptions. Use repository-relative
+links, resolved from the file that contains the link.
 
-The guard scans lines rather than parsing link forms. It removes fenced code
-blocks and inline code, then decodes backslash punctuation escapes and HTML
-named, decimal, and hexadecimal character references in one pass. The named
-reference table is local test data; no network request is needed. Escaped
-ampersands and generated character references are not decoded again.
+The guard decodes backslash punctuation escapes and HTML named, decimal,
+and hexadecimal character references once. It removes scheme URLs, including
+their paths, queries, and fragments. File URIs and Windows drive paths remain
+subject to the check. The named-reference table is local test data; no network
+request is needed. Escaped ampersands and generated references are not decoded
+again.
 
-The scan removes scheme URLs, including their paths, queries, and fragments.
-File URIs and Windows drive paths remain subject to the local path check.
-It rejects remaining absolute local path tokens anywhere on a line, including
-quotes, nested lists, tables, reference definitions, and HTML attributes.
-Tokens include slash-rooted paths with a directory separator or filename
-extension, home-relative paths, file URIs, and Windows drive paths. Relative
-repository paths do not count as absolute tokens.
+Remaining absolute local path tokens fail, including home-relative paths,
+file URIs, Windows drive paths, and slash-rooted paths with a directory
+separator or filename extension. Code formatting never exempts a token.
 
-Use fenced or inline code for required path examples. Code examples are
-excluded even when they contain link syntax. A `local-path-example` comment
-does not exempt path text outside code. The check prints each failed file,
-line, and source text, then stops before the regression suite.
-`test/markdown_paths_test.rb` covers the line-scan policy and all review
-reproductions. The three older expectations that depended on link parsing
-now follow this policy: fenced link examples pass, while local path text in
-HTML attribute text and backslash-escaped HTML paths fail.
+For deliberate examples, use `/path/to/...` or `<home>` followed by the sample
+suffix. Replace these placeholders before running a command. A placeholder
+exempts only its token; another real local path on the same line still fails.
+Runtime shell examples can use the home environment variable instead of a
+literal home path.
+
+If an exact literal is required, put `<!-- local-path-ok -->` at the end of
+that source line. This is an explicit, line-only exception. Use it for a
+required path literal, API route, or sample log route; it also works inside a
+code block. Only trailing spaces or tabs may follow it. A marker on an earlier
+line, a marker followed by more text, an encoded marker, or the old
+`local-path-example` comment does not grant an exception.
+
+The check prints each failed file, original line number, and source text,
+then stops before the regression suite. `test/markdown_paths_test.rb` covers
+the strict policy, marker scope, placeholders, URLs, decoding, and all review
+reproductions, including code containers that end without a closing fence.
 
 ## Test notification safety
 
@@ -49,7 +56,7 @@ fixtures inject fake notifiers. Push delivery contract tests must install
 their own explicit transport fake. Do not remove these boundaries when
 adding a scheduler or notification fixture. The guard records denied transport
 attempts and fails at process exit even if production code catches the exception.
-Set `TYCHO_TEST_PUSH_AUDIT_FILE=/absolute/temp/path.jsonl` to capture redacted <!-- local-path-example: Sample temporary or placeholder path. -->
+Set `TYCHO_TEST_PUSH_AUDIT_FILE=/path/to/temp/path.jsonl` to capture redacted
 per-process attempt counts. An intentional guard probe clears only its own
 expected denial. For standalone tests not already requiring the helper, use
 `bundle exec ruby -r ./test/support/push_safety.rb test/NAME_test.rb`.

@@ -9,12 +9,11 @@ mapping is used. Claude and Pi parser behavior is unchanged.
 Install and authenticate `agy` independently. Choose a model using `agy models`.
 Start with disposable Tycho state and a scratch workspace:
 
-<!-- local-path-example: Sample command or API data. -->
 ```yaml
 projects:
   - key: agy-poc
     name: agy PoC
-    path: /absolute/path/to/disposable/workspace
+    path: /path/to/path/to/disposable/workspace
     agent: agy
     model: gemini-3.8-flash-medium
 ```
@@ -75,15 +74,15 @@ Tycho state isolation does not isolate agy's credentials, global extensions,
 tools, or conversation store. Tool output may be a size summary rather than
 the actual file contents. Interactive launch, permission inquiries,
 delegation, and scheduling are not covered by the live acceptance check.
-Tycho discovers existing agy skills in `~/.gemini/config/skills` (the
-documented global scope), the legacy `~/.gemini/antigravity-cli/skills`,
+Tycho discovers existing agy skills in `<home>/.gemini/config/skills` (the
+documented global scope), the legacy `<home>/.gemini/antigravity-cli/skills`,
 and the project's `.agents/skills`.
 Discovery follows a symlinked skill directory to its target and deduplicates
 skill names, with project skills
 taking precedence. Tycho installs its bundled skills for agy into
-`~/.gemini/config/skills` using the same checksummed, marker-verified
+`<home>/.gemini/config/skills` using the same checksummed, marker-verified
 installer as codex; `agy` 1.4.7 was verified live to load skills from both
-that directory and the workspace `.agents/skills`. Home `~/.agents/skills` is
+that directory and the workspace `.agents/skills`. Home `<home>/.agents/skills` is
 not an agy skill directory and is not written or discovered for agy.
 
 ## Verification

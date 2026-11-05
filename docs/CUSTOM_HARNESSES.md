@@ -7,7 +7,6 @@ stream parser, native-session resume, structured-result handling, metrics,
 catalog probing, permissions, readiness, and skill installation for the
 declared adapter.
 
-<!-- local-path-example: Sample command or API data. -->
 ```yaml
 custom_harnesses:
   - key: company-codex
@@ -15,7 +14,7 @@ custom_harnesses:
     execution_command:
       - env
       - COMPANY_GATEWAY=work
-      - /Users/you/bin/company-codex
+      - <home>/bin/company-codex
       - --profile
       - work
 ```
@@ -47,12 +46,11 @@ than adding a Tycho-specific adapter template.
 
 The old Claude-compatible configuration remains valid without changes:
 
-<!-- local-path-example: Sample command or API data. -->
 ```yaml
 custom_harnesses:
   - key: claude-wrapper
     adapter: claude
-    execution_command: /Users/you/bin/claude-wrapper
+    execution_command: <home>/bin/claude-wrapper
 ```
 
 ## Environment and security

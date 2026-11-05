@@ -10,7 +10,7 @@ Tycho writes one normalized record when a managed run finalizes. The public entr
 
 ## Storage and identity
 
-The owner-readable store is `~/.tycho/logs/usage_metrics.json`. Its root schema is versioned:
+The owner-readable store is `<home>/.tycho/logs/usage_metrics.json`. Its root schema is versioned:
 
 ```json
 {
@@ -54,7 +54,7 @@ tycho metrics query --server vps --from 2026-07-06 --to 2026-08-07 --timezone UT
 
 `from` is inclusive and `to` is exclusive. Offset-free dates/times require the named IANA timezone; values with `Z` or an explicit numeric offset are absolute. Filters accept comma-separated values for group, project, agent, harness, configured/observed model, and status.
 
-The Remote API equivalents are `GET /metrics` with the same query parameters and `POST /metrics/backfill`.
+The Remote API equivalents are `GET /metrics` with the same query parameters and `POST /metrics/backfill`. <!-- local-path-ok -->
 
 Metrics are maintained during managed runs. Query the current normalized records with:
 

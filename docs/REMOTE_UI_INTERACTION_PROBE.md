@@ -6,11 +6,10 @@ The **Interaction Profiler** provides optional verification when adding or chang
 
 Use a JSON file to define the page, actions, expected state, screenshot area, and timing limit. Run it from the repository root:
 
-<!-- local-path-example: Sample command or API data. -->
 ```sh
 bin/remote-ui-interaction-report \
   --config config/interaction-tests/schedule-resume.json \
-  --output /tmp/tycho-schedule-report.html
+  --output /path/to/temp/tycho-schedule-report.html
 ```
 
 The checked-in example uses the original live schedule. Change the URL and schedule selectors before you run it on another target. The schedule must show Resume. Actions change application state and are not undone.
@@ -71,9 +70,8 @@ The configuration and report checks run in `bin/test` through `test/remote_ui_in
 
 Run the optional Chrome checks with the Playwright module configured as described below:
 
-<!-- local-path-example: Sample command or API data. -->
 ```sh
-TYCHO_REMOTE_UI_CAPTURE_DIR=/tmp/tycho-configured-interaction-check \
+TYCHO_REMOTE_UI_CAPTURE_DIR=/path/to/temp/tycho-configured-interaction-check \
   node test/browser/interaction_report_smoke.js
 ```
 
@@ -85,20 +83,18 @@ Run `bin/remote-ui-interaction-report` from the repository root. With `--config`
 
 Install the tested Playwright version outside the repository if needed. Google Chrome and Node.js must be installed.
 
-<!-- local-path-example: Sample command or API data. -->
 ```sh
-npm install --prefix /tmp/tycho-interaction-tools --no-audit --no-fund playwright@1.64.1
-export TYCHO_PLAYWRIGHT_PATH=/tmp/tycho-interaction-tools/node_modules/playwright
+npm install --prefix /path/to/temp/tycho-interaction-tools --no-audit --no-fund playwright@1.64.1
+export TYCHO_PLAYWRIGHT_PATH=/path/to/temp/tycho-interaction-tools/node_modules/playwright
 ```
 
 Set `TYCHO_REMOTE_TOKEN` in the shell before the command if the server needs a token. Do not put the token in the URL or command arguments. The script uses a new browser context and removes it when Chrome closes. It does not read the Tycho credential store.
 
-<!-- local-path-example: Sample command or API data. -->
 ```sh
 bin/remote-ui-interaction-report \
   --url https://macbookpro-gi041.tail952bf7.ts.net/ \
   --schedule secondbrain-memory-reconciliation \
-  --output /tmp/tycho-schedule-report.html
+  --output /path/to/temp/tycho-schedule-report.html
 ```
 
 The selected schedule must show Resume. If it already shows Pause, the script stops without clicking. The first live measurement below left this schedule resumed, so select a schedule that currently shows Resume for a new measurement. A successful click leaves the schedule resumed. Use a temporary server for repeated checks.

@@ -17,16 +17,16 @@ HQ is a local-first operations cockpit for a developer's projects. It combines:
 
 ### Projects
 
-Projects are configured in `~/.tycho/config/hq.yml` and represent local workspaces for managed agents.
+Projects are configured in `<home>/.tycho/config/hq.yml` and represent local workspaces for managed agents.
 
 Project data includes:
 
 - Key, name, group, and local path.
 - Default managed-agent backend.
-- Agent prompt templates loaded from `~/.tycho/config/system_prompts.yml`.
+- Agent prompt templates loaded from `<home>/.tycho/config/system_prompts.yml`.
 - Optional pull request URL metadata.
 - Git metadata: branch, commit hash, dirty-file count, and related GitHub links when a PR URL exists.
-- Per-project logs under `~/.tycho/logs/projects/{project}/`.
+- Per-project logs under `<home>/.tycho/logs/projects/{project}/`.
 
 ### Managed Agents
 
@@ -41,7 +41,7 @@ Agent data includes:
 - Unread state when a background run finishes outside the open chat.
 - Summary and structured result from the latest run.
 - Skills discovered from the workspace and agent type.
-- Logs and transcript artifacts under `~/.tycho/logs/agents/`.
+- Logs and transcript artifacts under `<home>/.tycho/logs/agents/`.
 
 ## Main TUI Features
 
@@ -54,7 +54,7 @@ Agent data includes:
 - Full-screen detail overlay for the selected agent or project.
 - Footer hints that change by screen and overlay state.
 - Startup loading screen with HQ logotype, progress bar, and recent refresh activity.
-- Configuration error screen when `~/.tycho/config/hq.yml` cannot be loaded.
+- Configuration error screen when `<home>/.tycho/config/hq.yml` cannot be loaded.
 - Global refresh and restart flows.
 - Quit confirmation.
 
@@ -103,15 +103,15 @@ The selected project detail panel shows:
 - Group autocomplete from existing project groups.
 - Key/name prefill from selected path.
 - Validation for required fields and existing local path.
-- Saves to `~/.tycho/config/hq.yml`.
+- Saves to `<home>/.tycho/config/hq.yml`.
 - Starts asynchronous project metadata refresh after creation.
 
 ### Project Archiving
 
 - Confirmation dialog before archiving.
 - Blocks archive while related agents are running.
-- Moves config from `~/.tycho/config/hq.yml` to `~/.tycho/config/hq.archived.yml`.
-- Moves project logs to `~/.tycho/logs/projects/archived/YYYY-MM-DD_project-name/`.
+- Moves config from `<home>/.tycho/config/hq.yml` to `<home>/.tycho/config/hq.archived.yml`.
+- Moves project logs to `<home>/.tycho/logs/projects/archived/YYYY-MM-DD_project-name/`.
 - Archives related managed-agent logs.
 - Removes related active agents from the dashboard.
 
@@ -199,8 +199,8 @@ The selected agent detail panel shows:
 ### Skill Picker
 
 - Discovers skills from agent-appropriate locations:
-  - Claude-compatible harnesses: `~/.claude/skills` and workspace `.claude/skills`.
-  - Codex: `~/.codex/skills`, `~/.agents/skills`, and workspace `.agents/skills`.
+  - Claude-compatible harnesses: `<home>/.claude/skills` and workspace `.claude/skills`.
+  - Codex: `<home>/.codex/skills`, `<home>/.agents/skills`, and workspace `.agents/skills`.
 - Uses the correct trigger for each harness.
 - Opens from an empty composer when the trigger character is typed.
 - Filters and autocompletes available skills.
@@ -213,7 +213,7 @@ The selected agent detail panel shows:
 - Log viewers support scrolling, horizontal panning, reload, and close.
 - Log content is UTF-8 normalized and can be tailed/truncated for large files.
 - Detail views expose clickable terminal OSC 8 links for local paths where supported.
-- Central app logger writes lifecycle and error events to `~/.tycho/logs/hq.log`.
+- Central app logger writes lifecycle and error events to `<home>/.tycho/logs/hq.log`.
 
 ### Terminal Integration
 
@@ -282,21 +282,21 @@ Runtime features:
 - MagicDNS URL display.
 - Compact terminal QR code for the Remote UI URL.
 - Graceful shutdown on `INT` and `TERM`.
-- Request logs to stdout and `~/.tycho/logs/hq.log`.
+- Request logs to stdout and `<home>/.tycho/logs/hq.log`.
 
 API endpoints:
 
 - `GET /agents`.
 - `POST /agents`.
-- `GET /agents/{key}`.
-- `PATCH /agents/{key}` and `PUT /agents/{key}`.
-- `DELETE /agents/{key}`.
-- `GET /agents/{key}/conversation`.
-- `POST /agents/{key}/messages`.
-- `POST /agents/{key}/prompt`.
-- `POST /agents/{key}/start`.
-- `POST /agents/{key}/stop`.
-- `POST /agents/{key}/archive`.
+- `GET /agents/{key}`. <!-- local-path-ok -->
+- `PATCH /agents/{key}` and `PUT /agents/{key}`. <!-- local-path-ok -->
+- `DELETE /agents/{key}`. <!-- local-path-ok -->
+- `GET /agents/{key}/conversation`. <!-- local-path-ok -->
+- `POST /agents/{key}/messages`. <!-- local-path-ok -->
+- `POST /agents/{key}/prompt`. <!-- local-path-ok -->
+- `POST /agents/{key}/start`. <!-- local-path-ok -->
+- `POST /agents/{key}/stop`. <!-- local-path-ok -->
+- `POST /agents/{key}/archive`. <!-- local-path-ok -->
 
 ## CLI Features
 
@@ -318,15 +318,15 @@ HQ publishes events to configured shell or Ruby hooks.
 
 Hook features:
 
-- Global hooks in `~/.tycho/config/hooks.yml`.
-- Per-project hooks in `~/.tycho/config/hq.yml`.
-- Global Ruby handlers under `~/.claude/hq-hooks/`.
-- Per-project Ruby handlers under `<project>/.hq/hooks/`.
+- Global hooks in `<home>/.tycho/config/hooks.yml`.
+- Per-project hooks in `<home>/.tycho/config/hq.yml`.
+- Global Ruby handlers under `<home>/.claude/hq-hooks/`.
+- Per-project Ruby handlers under `/path/to/project/.hq/hooks/`.
 - Async event dispatch through a background worker.
 - Blocking hook support for `agent.inquiry.available`.
 - Wildcard event patterns.
 - SIGHUP reload for hook config and Ruby handlers.
-- Hook stdout/stderr tee to `~/.tycho/logs/hooks.log`.
+- Hook stdout/stderr tee to `<home>/.tycho/logs/hooks.log`.
 
 Important event groups:
 
@@ -342,20 +342,20 @@ Important event groups:
 
 Configuration:
 
-- Active projects: `~/.tycho/config/hq.yml`.
-- Archived projects: `~/.tycho/config/hq.archived.yml`.
-- Agent prompt templates: `~/.tycho/config/system_prompts.yml`.
-- Ordinary agent structured result schema: `~/.tycho/config/schemas/agent_result.json`.
-- Optional hooks: `~/.tycho/config/hooks.yml`.
+- Active projects: `<home>/.tycho/config/hq.yml`.
+- Archived projects: `<home>/.tycho/config/hq.archived.yml`.
+- Agent prompt templates: `<home>/.tycho/config/system_prompts.yml`.
+- Ordinary agent structured result schema: `<home>/.tycho/config/schemas/agent_result.json`.
+- Optional hooks: `<home>/.tycho/config/hooks.yml`.
 
 Runtime state:
 
-- Managed agents: `~/.tycho/logs/managed_agents.json`.
-- App log: `~/.tycho/logs/hq.log`.
-- Hook log: `~/.tycho/logs/hooks.log`.
-- Project logs: `~/.tycho/logs/projects/{project}/`.
-- Archived project logs: `~/.tycho/logs/projects/archived/`.
-- Agent raw logs, conversation logs, system logs, memory logs, status files, and result files: `~/.tycho/logs/agents/`.
+- Managed agents: `<home>/.tycho/logs/managed_agents.json`.
+- App log: `<home>/.tycho/logs/hq.log`.
+- Hook log: `<home>/.tycho/logs/hooks.log`.
+- Project logs: `<home>/.tycho/logs/projects/{project}/`.
+- Archived project logs: `<home>/.tycho/logs/projects/archived/`.
+- Agent raw logs, conversation logs, system logs, memory logs, status files, and result files: `<home>/.tycho/logs/agents/`.
 
 ## Design Brief Notes For Remote UI
 

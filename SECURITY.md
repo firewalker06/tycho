@@ -41,10 +41,10 @@ paths, project names, PR URLs, and agent transcripts.
 Do not commit:
 
 - `.env`
-- `~/.tycho/config/hq.yml`
-- `~/.tycho/config/system_prompts.yml`
-- `~/.tycho/config/hooks.yml`
-- `~/.tycho/logs/`
+- `<home>/.tycho/config/hq.yml`
+- `<home>/.tycho/config/system_prompts.yml`
+- `<home>/.tycho/config/hooks.yml`
+- `<home>/.tycho/logs/`
 - `tmp/`
 - Agent raw logs, memory files, status files, or attachments
 - Provider account IDs or model profile ARNs
