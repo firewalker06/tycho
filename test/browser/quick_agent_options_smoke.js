@@ -5,7 +5,7 @@ const path = require("node:path");
 module.exports = async ({ browser, baseUrl, captureDir }) => {
   await require("./quick_agent_create_actions_smoke")({ browser, baseUrl, captureDir });
   const results = [];
-  for (const width of [1440, 390]) {
+  for (const width of [1440, 390, 320]) {
     const context = await browser.newContext({ viewport: { width, height: 900 } });
     const page = await context.newPage();
     const errors = [];
@@ -162,6 +162,9 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     assert(await page.locator('#quick-agent-form button[value=create-run]').isDisabled());
     assert.equal(await page.locator("[data-quick-agent-peers]").evaluate(el => el.closest("#quick-agent-options") !== null), true);
     assert.equal(await page.locator('[data-quick-agent-peer-retry="fixture-peer0"]').count(), 1);
+    assert.equal(await page.locator('[data-quick-agent-peer-retry="fixture-peer0"]').evaluate(el =>
+      el.closest(".quick-agent-peer-row")?.querySelector(".quick-agent-peer-name")?.textContent === "Peer 0"), true,
+      "host label and Retry must stay in the same row");
     await page.locator("#quick-agent-model").focus();
     await page.keyboard.press("Tab");
     await page.keyboard.press("Tab");
