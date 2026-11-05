@@ -31,6 +31,18 @@ module.exports = async ({browser, baseUrl}) => {
         if (writes.length === 1) return route.abort("connectionreset");
         return route.fulfill({response});
       }
+      if (scenario === "blocker-schema-correction" && writes.length === 1) {
+        const response = await route.fetch();
+        assert.equal(response.status(),200,"server accepts the original answer before its reply is lost");
+        return route.abort("connectionreset");
+      }
+      if (["blocker-retry-label", "blocker-attachment-correction"].includes(scenario) && writes.length === 1) {
+        return route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"Synthetic failure before acceptance"})});
+      }
+      if (["blocker-retry-label", "blocker-attachment-correction"].includes(scenario) && writes.length === 2) {
+        const response = await context.request.post(`${baseUrl}/agents/${key}/inquiries/${inquiryId}/dismiss`,{data:{}});
+        assert.equal(response.status(),200,"the same inquiry is dismissed before the retry reaches the server");
+      }
       if (["blocker-multiselect-comma", "blocker-durable-rejection-correction"].includes(scenario) && writes.length === 1) {
         return route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"Synthetic failure before acceptance"})});
       }
@@ -45,9 +57,17 @@ module.exports = async ({browser, baseUrl}) => {
     await page.goto(`${baseUrl}/ui#agent/${key}`,{waitUntil:"networkidle"});
     await page.waitForSelector("#inquiry-form",{state:"attached"});
     if (!await page.locator("#inquiry-form").isVisible()) await page.locator("details.mobile-inquiry > summary").click();
-    if (scenario === "blocker-multiselect-comma") {
+    if (["blocker-multiselect-comma", "blocker-schema-correction", "blocker-attachment-correction"].includes(scenario)) {
       await page.locator('#inquiry-form input[type="checkbox"]').first().check();
-      await page.locator('input[type="file"]').first().setInputFiles({name:"regions.png",mimeType:"image/png",buffer:Buffer.from("synthetic image")});
+      if (scenario !== "blocker-multiselect-comma") {
+        await page.locator('#inquiry-form input[name="choice"]').fill("Original answer");
+      }
+      if (scenario === "blocker-multiselect-comma") {
+        await page.locator('input[type="file"]').first().setInputFiles({name:"regions.png",mimeType:"image/png",buffer:Buffer.from("synthetic image")});
+      }
+      if (scenario === "blocker-attachment-correction") {
+        await page.locator('input[type="file"]').first().setInputFiles({name:"removed.txt",mimeType:"text/plain",buffer:Buffer.from("remove me")});
+      }
     } else if (scenario === "blocker-durable-rejection-correction") {
       await page.locator('#inquiry-form input[type="text"]').fill("Original answer");
       await page.locator('#inquiry-form input[type="checkbox"]').first().check();
@@ -57,6 +77,80 @@ module.exports = async ({browser, baseUrl}) => {
     }
     await page.locator('#inquiry-form [name="feedback"]').fill("Original feedback");
     await page.locator('#inquiry-form button[type="submit"]').click();
+
+    if (scenario === "blocker-retry-label") {
+      await page.waitForFunction(key => inquiryAnswerStore().entries.get(key)?.status === "uncertain",key);
+      const uncertainSubmit = page.locator('#inquiry-form button[type="submit"]');
+      assert.equal((await uncertainSubmit.innerText()).trim(),"Retry","an uncertain failed answer labels the shared submit button Retry");
+      await page.locator("#inquiry-form [data-retry-inquiry-answer]").click();
+      await page.waitForFunction(key => inquiryAnswerStore().entries.get(key)?.status === "rejected",key);
+      assert.equal(writes.length,2);
+      const restored = await context.request.post(`${baseUrl}/agents/${key}/inquiries/${inquiryId}/restore`,{data:{}});
+      assert.equal(restored.status(),200);
+      await page.reload({waitUntil:"networkidle"});
+      await page.waitForSelector("#inquiry-form button[type=submit]");
+      assert.equal((await page.locator('#inquiry-form button[type="submit"]').innerText()).trim(),"Retry","a rejected failed answer also labels the shared submit button Retry");
+      return;
+    }
+
+    if (scenario === "blocker-schema-correction") {
+      await page.waitForFunction(key => inquiryAnswerStore().entries.get(key)?.status === "uncertain",key);
+      await page.reload({waitUntil:"networkidle"});
+      const correctionForm = page.locator("#inquiry-form");
+      await correctionForm.locator('[name="choice"]').fill("Latest correction after lost reply");
+      await correctionForm.locator('input[name="regions"]').nth(0).uncheck();
+      await correctionForm.locator('input[name="regions"]').nth(1).check();
+      await correctionForm.locator('[name="feedback"]').fill("Latest feedback");
+      await page.waitForFunction(async key => {
+        const store = inquiryAnswerStore();
+        const entry = store.entries.get(key);
+        await Promise.all(store.pendingWrites.values());
+        return entry?.correctionDraft?.choice === "Latest correction after lost reply" &&
+          entry.correctionDraft?.regions?.length === 1 && entry.correctionDraft.regions[0] === "Tokyo" &&
+          entry.correctionDraft?.user_feedback === "Latest feedback";
+      },key);
+      assert.equal(writes.length,1,"saving corrections does not send another answer request");
+      await page.reload({waitUntil:"networkidle"});
+      const restoredForm = page.locator("#inquiry-form");
+      assert.equal(await restoredForm.locator('[name="choice"]').inputValue(),"Latest correction after lost reply");
+      assert.equal(await restoredForm.locator('input[name="regions"]').nth(0).isChecked(),false);
+      assert.equal(await restoredForm.locator('input[name="regions"]').nth(1).isChecked(),true);
+      assert.equal(await restoredForm.locator('[name="feedback"]').inputValue(),"Latest feedback");
+      const saved = await page.evaluate(key => inquiryAnswerStore().entries.get(key).correctionDraft,key);
+      assert.equal(saved.choice,"Latest correction after lost reply");
+      assert.deepEqual(saved.regions,["Tokyo"]);
+      assert.equal(saved.user_feedback,"Latest feedback");
+      return;
+    }
+
+    if (scenario === "blocker-attachment-correction") {
+      await page.waitForFunction(key => inquiryAnswerStore().entries.get(key)?.status === "uncertain",key);
+      const failedForm = page.locator("#inquiry-form");
+      await failedForm.locator("[data-remove-prompt-attachment]").click();
+      await failedForm.locator('[name="choice"]').fill("Corrected answer without attachment");
+      await page.waitForFunction(async key => {
+        const store = inquiryAnswerStore();
+        const entry = store.entries.get(key);
+        await Promise.all(store.pendingWrites.values());
+        return entry?.correctionDraft?.choice === "Corrected answer without attachment" &&
+          Array.isArray(entry.correctionDraft.attachments) && entry.correctionDraft.attachments.length === 0;
+      },key);
+      await page.reload({waitUntil:"networkidle"});
+      assert.equal(await page.locator("#inquiry-form [data-remove-prompt-attachment]").count(),0,"removed file stays absent after reload");
+      await page.locator('#inquiry-form [data-retry-inquiry-answer]').click();
+      await page.locator("#confirmation-dialog [data-confirmation-accept]").click();
+      await page.waitForFunction(key => inquiryAnswerStore().entries.get(key)?.status === "rejected",key);
+      const restored = await context.request.post(`${baseUrl}/agents/${key}/inquiries/${inquiryId}/restore`,{data:{}});
+      assert.equal(restored.status(),200);
+      await page.reload({waitUntil:"networkidle"});
+      assert.equal(await page.locator("#inquiry-form [data-remove-prompt-attachment]").count(),0,"removed file stays absent after durable rejection");
+      await page.locator('#inquiry-form button[type="submit"]').click();
+      await page.waitForFunction(() => inquiryAnswerStore().entries.size === 0);
+      assert.equal(writes.length,3);
+      assert.equal(writes[2].attachments.length,0,"corrected answer does not send the removed file");
+      assert.equal(JSON.parse(writes[2].answer).choice,"Corrected answer without attachment");
+      return;
+    }
 
     if (scenario === "blocker-cancel-race") {
       await page.waitForSelector("[data-inquiry-answer-recovery]");

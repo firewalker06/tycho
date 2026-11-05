@@ -58,6 +58,11 @@ end
 
 review_fields = if ENV["TYCHO_REMOTE_UI_INQUIRY_BLOCKER_CASE"] == "blocker-multiselect-comma"
                   [{ "key" => "regions", "label" => "Regions", "input_type" => "multi_select", "options" => ["Jakarta, Indonesia", "Tokyo"], "required" => true }]
+                elsif ["blocker-schema-correction", "blocker-attachment-correction"].include?(ENV["TYCHO_REMOTE_UI_INQUIRY_BLOCKER_CASE"])
+                  [
+                    { "key" => "choice", "label" => "Your answer", "input_type" => "text", "required" => true },
+                    { "key" => "regions", "label" => "Regions", "input_type" => "multi_select", "options" => ["Jakarta, Indonesia", "Tokyo"], "required" => true }
+                  ]
                 elsif ENV["TYCHO_REMOTE_UI_INQUIRY_BLOCKER_CASE"] == "blocker-durable-rejection-correction"
                   [
                     { "key" => "choice", "label" => "Your answer", "input_type" => "text", "required" => true },
