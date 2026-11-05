@@ -10,30 +10,32 @@ The [Interaction Profiler](REMOTE_UI_INTERACTION_PROFILER.md) is optional verifi
 
 ## Markdown path check
 
-`bin/test` first checks all tracked Markdown files, including root files and
+`bin/test` first scans every tracked Markdown file, including root files and
 `docs/`. Use repository-relative links, resolved from the file that contains
-the link. Absolute local Markdown links, reference links, and HTML link or
-image targets fail the check, including targets in marked examples.
+the link.
 
-The check also rejects local path text with common Unix directory roots,
-Windows drive paths, or a file URI scheme. Remote URLs and home-relative
-runtime paths remain valid. The text check excludes complete scheme URLs,
-except file URIs and Windows drive paths. Local-looking URL paths, queries,
-and fragments do not count as local files. HTML attributes are checked with
-case-insensitive names, whitespace around the equals sign, quoted or unquoted
-values, and line breaks. Attribute order does not affect the check.
-Before checking a destination, it decodes named, decimal, and hexadecimal
-HTML character references. Markdown destinations also decode backslash
-escapes. HTML attribute backslashes stay literal. Decoding uses one pass;
-escaped ampersands and nested character references are not decoded again.
-The named-reference table is local test data; no network request is needed.
-`test/markdown_paths_test.rb` covers these rules and the review reproductions.
+The guard scans lines rather than parsing link forms. It removes fenced code
+blocks and inline code, then decodes backslash punctuation escapes and HTML
+named, decimal, and hexadecimal character references in one pass. The named
+reference table is local test data; no network request is needed. Escaped
+ampersands and generated character references are not decoded again.
 
-For a required command example or API sample,
-put `<!-- local-path-example: REASON -->` on the same line, or immediately
-before its fenced code block. Use a specific reason. This exception permits
-sample path text only; do not use it to retain machine-specific links.
-The check prints each failed file and line and stops before the test suite.
+The scan removes scheme URLs, including their paths, queries, and fragments.
+File URIs and Windows drive paths remain subject to the local path check.
+It rejects remaining absolute local path tokens anywhere on a line, including
+quotes, nested lists, tables, reference definitions, and HTML attributes.
+Tokens include slash-rooted paths with a directory separator or filename
+extension, home-relative paths, file URIs, and Windows drive paths. Relative
+repository paths do not count as absolute tokens.
+
+Use fenced or inline code for required path examples. Code examples are
+excluded even when they contain link syntax. A `local-path-example` comment
+does not exempt path text outside code. The check prints each failed file,
+line, and source text, then stops before the regression suite.
+`test/markdown_paths_test.rb` covers the line-scan policy and all review
+reproductions. The three older expectations that depended on link parsing
+now follow this policy: fenced link examples pass, while local path text in
+HTML attribute text and backslash-escaped HTML paths fail.
 
 ## Test notification safety
 

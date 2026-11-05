@@ -4,7 +4,8 @@ require "fileutils"
 require "tmpdir"
 require_relative "support/markdown_paths"
 
-# Exact input and expected outcomes from the PR #328 review reproductions.
+# Review reproductions plus the current line-scan policy. Three older
+# link-parser expectations change with the explicit code/text policy.
 cases = [
   ["relative_link", "[Guide](docs/guide.md)\n", true],
   ["remote_home", "[Remote](https://example.test/home/user)\n", true],
@@ -44,13 +45,13 @@ cases = [
   ["multiline attribute", "<a title='Notes'\n href \n=\n '/data/notes.md'>Notes</a>", false],
   ["quoted angle", "<a title='a > b' href='/data/notes.md'>Notes</a>", false],
   ["encoded target", "<a href='&#47;data/notes.md'>Notes</a>", false],
-  ["attribute text", "<a title=\"href='/data/notes.md'\" href='notes.md'>Notes</a>", true],
+  ["attribute text", "<a title=\"href='/data/notes.md'\" href='notes.md'>Notes</a>", false],
   ["relative HTML", "<img ALT='Notes' SRC = '../images/notes.png'>", true],
   ["remote HTML", "<a HREF = 'https://example.test/-/home/alice'>Notes</a>", true],
   ["remote image", "<img SRC=https://example.test/find?path=/Users/alice>", true],
   ["remote attribute text", "<a title='https://example.test/-/home/alice' href='notes.md'>Notes</a>", true],
   ["marked HTML", "<a HREF = '/data/notes.md'>Notes</a> <!-- local-path-example: Target. -->", false],
-  ["marked link block", "<!-- local-path-example: Target. -->\n```html\n<a href='/data/notes.md'>Notes</a>\n```", false],
+  ["marked link block", "<!-- local-path-example: Target. -->\n```html\n<a href='/data/notes.md'>Notes</a>\n```", true],
   ["angle Markdown", "[Notes](</data/notes with spaces.md>)", false],
   ["angle reference", "[Notes]: </data/notes with spaces.md>", false],
   ["Windows target", "[Notes](C:/data/notes.md) <!-- local-path-example: Target. -->", false],
@@ -74,9 +75,35 @@ cases = [
   ["escaped ampersand", "[Notes](\\&sol;data/notes.md)", true],
   ["nested Markdown reference", "[Notes](&amp;sol;data/notes.md)", true],
   ["nested HTML reference", "<a href='&amp;sol;data/notes.md'>Notes</a>", true],
-  ["HTML backslash stays literal", "<a href='\\/data/notes.md'>Notes</a>", true],
+  ["HTML backslash is decoded", "<a href='\\/data/notes.md'>Notes</a>", false],
   ["HTML decimal without semicolon", "<img src='&#47data/notes.png'>", false],
-  ["HTML hex without semicolon", "<img src='&#x2fnotes.png'>", false]
+  ["HTML hex without semicolon", "<img src='&#x2fnotes.png'>", false],
+  ["review quoted reference", "> [Notes]: /data/notes.md\n>\n> [Notes]\n", false],
+  ["quote token", "> Notes: /Users/alice/notes.md", false],
+  ["nested list token", "- Parent\n  - Notes: /private/notes.md", false],
+  ["table cell token", "| Notes | /var/folders/notes.md |", false],
+  ["reference token", "[Notes]: /home/alice/notes.md", false],
+  ["HTML home token", "<a href='~/notes.md'>Notes</a>", false],
+  ["plain home token", "Notes: ~/notes.md", false],
+  ["plain file token", "Notes: file:///data/notes.md", false],
+  ["unlisted root", "Notes: /arbitrary-root/notes.md", false],
+  ["relative dot path", "[Notes](./docs/notes.md)", true],
+  ["relative parent path", "[Notes](../../../docs/notes.md)", true],
+  ["quoted relative path", "> [Notes]: ../docs/notes.md", true],
+  ["inline code token", "Notes: `/Users/alice/notes.md`", true],
+  ["inline home token", "Notes: `~/notes.md`", true],
+  ["inline code links", "Notes: `<a href='/data/notes.md'>Notes</a>`", true],
+  ["unmarked fenced code", "```sh\ncat /Users/alice/notes.md\n```", true],
+  ["quoted fenced code", "> ```sh\n> cat /Users/alice/notes.md\n> ```", true],
+  ["nested list fenced code", "- Parent\n  - ```sh\n    cat /Users/alice/notes.md\n    ```", true],
+  ["long inline code", "Notes: ``/Users/alice/notes`here``", true],
+  ["multiline inline code", "Notes: `cat\n /Users/alice/notes.md`", true],
+  ["unclosed inline code", "Notes: `cat /Users/alice/notes.md", false],
+  ["code followed by path", "`/Users/alice/code.md` /home/alice/notes.md", false],
+  ["quoted fence boundary", "> ```sh\n> cat /Users/alice/notes.md\n> ```\n> /home/alice/notes.md", false],
+  ["remote parentheses", "[Remote](https://example.test/a(b)/home/alice)", true],
+  ["URL next to local link", "[Remote](https://example.test/notes)[Notes](/data/notes.md)", false],
+  ["table URL next to local", "| https://example.test/#/home/alice | /data/notes.md |", false]
 ]
 
 %w[&sol; &#47; &#x2f; &#X2F;].each do |slash|
@@ -91,11 +118,11 @@ cases.each do |name, input, allowed|
   raise "#{name}: expected allowed=#{allowed}, got #{actual.inspect}" unless actual.empty? == allowed
 end
 raise "expected attribute line number" unless MarkdownPaths.invalid_lines("<a\n href='/data/notes.md'>Notes</a>\n") == [2]
-raise "do not unescape entity output" unless MarkdownPaths.decode_target("&#92;/data", markdown: true) == "\\/data"
-raise "do not unescape HTML backslashes" unless MarkdownPaths.decode_target("\\&sol;data", markdown: false) == "\\/data"
-raise "unknown named references stay literal" unless MarkdownPaths.decode_target("&unknown;", markdown: true) == "&unknown;"
-raise "decode legacy attribute references" unless MarkdownPaths.decode_target("&amp!", markdown: false) == "&!"
-raise "retain ambiguous attribute references" unless MarkdownPaths.decode_target("&amp=1", markdown: false) == "&amp=1"
+raise "do not unescape entity output" unless MarkdownPaths.decode_text("&#92;/data") == "\\/data"
+raise "preserve escaped ampersands" unless MarkdownPaths.decode_text("\\&sol;data") == "&sol;data"
+raise "unknown named references stay literal" unless MarkdownPaths.decode_text("&unknown;") == "&unknown;"
+raise "decode legacy attribute references" unless MarkdownPaths.decode_text("&amp!") == "&!"
+raise "retain ambiguous attribute references" unless MarkdownPaths.decode_text("&amp=1") == "&amp=1"
 
 Dir.mktmpdir("tycho-markdown-paths-") do |root|
   system("git", "init", "-q", root, exception: true)
