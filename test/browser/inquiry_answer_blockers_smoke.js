@@ -200,6 +200,9 @@ module.exports = async ({browser, baseUrl}) => {
       await form.locator('input[name="regions"]').nth(1).check();
       await form.locator('[name="response"]').fill("Corrected response");
       await form.locator('[name="count"]').fill("");
+      await form.locator('[name="city"]').selectOption("Tokyo");
+      await form.locator('[name="allowed"]').selectOption("No");
+      await form.locator('[name="ratio"]').fill("0");
       await form.locator('[name="feedback"]').fill("");
       await page.locator('input[type="file"]').first().setInputFiles({name:"added.txt",mimeType:"text/plain",buffer:Buffer.from("added")});
       await page.locator('[data-pending-attachment]:has-text("removed.txt") [data-remove-prompt-attachment]').click();
@@ -210,6 +213,7 @@ module.exports = async ({browser, baseUrl}) => {
         return !entry?.correctionDraftSavePending && entry?.correctionDraft?.choice === "Corrected choice" &&
           entry.correctionDraft?.regions?.length === 1 && entry.correctionDraft.regions[0] === "Tokyo" &&
           entry.correctionDraft?.response === "Corrected response" && entry.correctionDraft?.count === null &&
+          entry.correctionDraft?.city === "Tokyo" && entry.correctionDraft?.allowed === false && entry.correctionDraft?.ratio === 0 &&
           entry.correctionDraft?.user_feedback === null && entry.correctionDraft?.attachments?.length === 1 &&
           entry.correctionDraft.attachments[0].filename === "added.txt";
       },key);
@@ -219,6 +223,9 @@ module.exports = async ({browser, baseUrl}) => {
       assert.equal(await visibleForm.locator('input[name="regions"]').nth(1).isChecked(),true);
       assert.equal(await visibleForm.locator('[name="response"]').inputValue(),"Corrected response");
       assert.equal(await visibleForm.locator('[name="count"]').inputValue(),"");
+      assert.equal(await visibleForm.locator('[name="city"]').inputValue(),"Tokyo");
+      assert.equal(await visibleForm.locator('[name="allowed"]').inputValue(),"No");
+      assert.equal(await visibleForm.locator('[name="ratio"]').inputValue(),"0");
       assert.equal(await visibleForm.locator('[name="feedback"]').inputValue(),"");
       assert.equal(await visibleForm.locator("[data-remove-prompt-attachment]").count(),1);
       await page.locator('#inquiry-form [data-retry-inquiry-answer]').click();
@@ -232,18 +239,25 @@ module.exports = async ({browser, baseUrl}) => {
       assert.equal(await rejectedForm.locator('input[name="regions"]').nth(1).isChecked(),true);
       assert.equal(await rejectedForm.locator('[name="response"]').inputValue(),"Corrected response");
       assert.equal(await rejectedForm.locator('[name="count"]').inputValue(),"");
+      assert.equal(await rejectedForm.locator('[name="city"]').inputValue(),"Tokyo");
+      assert.equal(await rejectedForm.locator('[name="allowed"]').inputValue(),"No");
+      assert.equal(await rejectedForm.locator('[name="ratio"]').inputValue(),"0");
       assert.equal(await rejectedForm.locator('[name="feedback"]').inputValue(),"");
       assert.equal((await rejectedForm.locator("[data-pending-attachment]").innerText()).includes("added.txt"),true);
       const visibleDraft = await rejectedForm.evaluate(form => {
         const data = new FormData(form);
         const feedback = String(data.get("feedback") || "").trim();
         const count = String(data.get("count") || "").trim();
+        const ratio = String(data.get("ratio") || "").trim();
         return {
           answer: {
             choice: String(data.get("choice") || "").trim() || null,
             regions: data.getAll("regions").length ? data.getAll("regions") : null,
             response: String(data.get("response") || "").trim() || null,
             count: count ? Number.parseInt(count,10) : null,
+            city: String(data.get("city") || "").trim() || null,
+            allowed: String(data.get("allowed") || "").trim() ? String(data.get("allowed")).toLowerCase() === "yes" : null,
+            ratio: ratio ? Number(ratio) : null,
             user_feedback: feedback || null,
           },
           feedback,
