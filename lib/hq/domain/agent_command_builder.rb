@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "rbconfig"
+
 module HQ
   class AgentCommandBuilder
     def initialize(agent:, harness_adapter:, workspace:, sandbox_mode:, model:, reasoning_effort:,
@@ -92,13 +94,13 @@ module HQ
     end
 
     def build_pi_command
-      command = harness_command_prefix + ["--mode", "json"]
+      command = harness_command_prefix + ["--mode", "rpc"]
       command.concat(model_arguments)
       command.concat(pi_thinking_arguments)
       command.concat(pi_safety_arguments)
       command.concat(["--session", @session_id]) unless @session_id.empty?
-      command << @prompt
-      execution(command)
+      runner = [RbConfig.ruby, "--disable-gems", File.expand_path("pi_rpc_runner.rb", __dir__)]
+      execution(runner + command).merge(prompt_transport: "stdin", stdin_data: @prompt)
     end
 
     def build_agy_command(interactive: false)
