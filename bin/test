@@ -10,7 +10,7 @@ require File.join(ROOT, "test/support/test_environment")
 # Check tracked Markdown before starting the slower regression suite.
 markdown_files, git_status = Open3.capture2("git", "ls-files", "-z", chdir: ROOT)
 abort "Cannot list tracked Markdown files" unless git_status.success?
-local_path = %r{(?<![\w~}])/(?:Users|home|tmp|absolute|opt|var|usr|etc|Volumes|private|root|mnt|srv|Applications|Library|workspace|workspaces)/|file://|\b[A-Za-z]:[\\/]}
+local_path = %r{(?<![\w~\}])/(?:Users|home|tmp|absolute|opt|var|usr|etc|Volumes|private|root|mnt|srv|Applications|Library|workspace|workspaces)/|file://|\b[A-Za-z]:[\\/]}
 absolute_link = %r{\]\(\s*<?/(?!/)|(?:href|src)=["']/|\]:\s*<?/(?!/)}
 violations = []
 markdown_files.split("\0").select { |path| path.downcase.end_with?(".md") }.each do |path|
