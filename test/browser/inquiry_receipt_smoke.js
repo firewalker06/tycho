@@ -52,11 +52,11 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForIn
         // Use the actual attachment picker. File bytes must survive exact retry and reload.
         await page.locator('input[type="file"]').first().setInputFiles({name:"synthetic.txt",mimeType:"text/plain",buffer:Buffer.from("Synthetic attachment only")});
         await page.locator('#inquiry-form button[type="submit"]').click();
-        await page.waitForSelector("[data-inquiry-answer-recovery]");
         await page.waitForFunction(key => {
           const entry=state.pendingInquirySubmissionEntries.get(key) || inquiryAnswerStore().entries.get(key);
-          return !entry || !["storing","sending"].includes(entry.status);
+          return entry && !["storing","sending"].includes(entry.status);
         },agent.key);
+        await page.waitForSelector("[data-inquiry-answer-recovery]");
         if(scenario==="rejection") {
           assert.match(await page.locator("[data-inquiry-answer-recovery]").innerText(),/Answer not sent/);
           await context.request.post(`${baseUrl}/agents/${agent.key}/inquiries/${inquiryId}/restore`,{data:{}});

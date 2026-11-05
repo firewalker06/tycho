@@ -4965,6 +4965,10 @@ details.queue-read-block:not([open]) > .queue-read-body {
   animation: pending-user-message-pulse 1.45s ease-in-out infinite;
 }
 
+.message.user.pending.inquiry-response {
+  animation: none;
+}
+
 .message-send-status {
   justify-self: end;
   margin-top: -4px;
@@ -5022,26 +5026,6 @@ details.queue-read-block:not([open]) > .queue-read-body {
 .message.user.parent-agent-message .message-role {
   color: var(--accent);
   text-transform: none;
-}
-
-.message.inquiry-response {
-  justify-self: stretch;
-  width: calc(100% - 28px);
-  margin-right: 14px;
-  margin-left: 14px;
-  border-color: color-mix(in srgb, var(--warning) 68%, var(--border));
-  background: color-mix(in srgb, var(--warning) 13%, var(--panel));
-}
-
-.message.user.inquiry-response .message-role,
-.message.inquiry-response .message-role {
-  justify-content: flex-end;
-  color: var(--warning);
-}
-
-.message.inquiry-response .message-role .ui-icon {
-  width: 18px;
-  height: 18px;
 }
 
 .message-content {
