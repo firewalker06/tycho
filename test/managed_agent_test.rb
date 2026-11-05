@@ -1770,6 +1770,7 @@ module ManagedAgentTest
         #!/bin/sh
         last=""
         for argument in "$@"; do last="$argument"; done
+        if [ "$last" = "-" ]; then last=$(cat); fi
         printf '%s\\n---\\n' "$last" >> "$TYCHO_TEST_CONTEXT_CAPTURE_DIR/$TYCHO_AGENT_KEY"
       SH
       FileUtils.chmod(0o755, harness)
@@ -1818,7 +1819,7 @@ module ManagedAgentTest
         prompt: "Complete a substantive review.",
         agent: harness
       )
-      assert_summary_sections_guidance(cold.send(:build_command).fetch(:command).last, harness, "cold")
+      assert_summary_sections_guidance(cold.send(:build_command).then { |value| value[:stdin_data] || value.fetch(:command).last }, harness, "cold")
 
       resumed = HQ::ManagedAgent.new(
         key: "#{harness}-summary-guidance-resumed",
@@ -1840,7 +1841,7 @@ module ManagedAgentTest
         ]
       )
       resumed.add_user_message!("Continue the substantive review.")
-      assert_summary_sections_guidance(resumed.send(:build_command).fetch(:command).last, harness, "resumed")
+      assert_summary_sections_guidance(resumed.send(:build_command).then { |value| value[:stdin_data] || value.fetch(:command).last }, harness, "resumed")
     end
   end
 
@@ -3243,7 +3244,7 @@ module ManagedAgentTest
 
         if %w[codex claude pi].include?(adapter)
           launch = resumed.send(:structured_output_runner_launch, resumed_command, execution.fetch(:env))
-          runner_config = JSON.parse(launch.fetch(:env).fetch("TYCHO_AGENT_RUNNER_CONFIG"))
+          runner_config = JSON.parse(launch.fetch(:stdin_data))
           assert(runner_config["harness_adapter"] == adapter,
                  "expected #{adapter} profile correction to use the declared adapter")
           assert(runner_config["initial_command"].first(prefix.length) == prefix &&

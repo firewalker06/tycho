@@ -52,7 +52,7 @@ module DelegationRunnerTest
         resumed_session = ARGV.find { |argument| argument.start_with?("fake-") }
         session_id = resumed_session || "fake-#{Process.pid}"
         gate = ENV["TYCHO_TEST_NESTED_GATE"]
-        if gate && !resumed_session && ARGV.last.to_s.include?("Coordinate queued nested work")
+        if gate && !resumed_session && STDIN.read.include?("Coordinate queued nested work")
           File.write("#{gate}.ready", "ready")
           deadline = Time.now + 30
           sleep 0.02 until File.exist?(gate) || Time.now >= deadline

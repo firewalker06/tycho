@@ -73,8 +73,8 @@ module HQ
       command.concat(["-C", @workspace]) if @session_id.empty?
       command << @session_id unless @session_id.empty?
       command << "--"
-      command << @prompt
-      execution(command)
+      command << "-"
+      execution(command).merge(prompt_transport: "stdin", stdin_data: @prompt)
     end
 
     def build_claude_command
@@ -176,7 +176,12 @@ module HQ
     end
 
     def execution(command)
-      { command: command, env: @harness_command_environment.dup }
+      {
+        command: command,
+        env: @harness_command_environment.dup,
+        prompt_transport: "argv",
+        description: command.map { |part| part == @prompt ? "[prompt]" : part }
+      }
     end
 
     def model_arguments
