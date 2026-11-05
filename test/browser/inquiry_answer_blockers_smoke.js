@@ -36,10 +36,10 @@ module.exports = async ({browser, baseUrl}) => {
         assert.equal(response.status(),200,"server accepts the original answer before its reply is lost");
         return route.abort("connectionreset");
       }
-      if (["blocker-retry-label", "blocker-attachment-correction"].includes(scenario) && writes.length === 1) {
+      if (["blocker-retry-label", "blocker-attachment-correction", "blocker-file-add", "blocker-clear-feedback", "blocker-remove-rejected", "blocker-complete-draft"].includes(scenario) && writes.length === 1) {
         return route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"Synthetic failure before acceptance"})});
       }
-      if (["blocker-retry-label", "blocker-attachment-correction"].includes(scenario) && writes.length === 2) {
+      if (["blocker-retry-label", "blocker-attachment-correction", "blocker-remove-rejected", "blocker-complete-draft"].includes(scenario) && writes.length === 2) {
         const response = await context.request.post(`${baseUrl}/agents/${key}/inquiries/${inquiryId}/dismiss`,{data:{}});
         assert.equal(response.status(),200,"the same inquiry is dismissed before the retry reaches the server");
       }
@@ -57,7 +57,7 @@ module.exports = async ({browser, baseUrl}) => {
     await page.goto(`${baseUrl}/ui#agent/${key}`,{waitUntil:"networkidle"});
     await page.waitForSelector("#inquiry-form",{state:"attached"});
     if (!await page.locator("#inquiry-form").isVisible()) await page.locator("details.mobile-inquiry > summary").click();
-    if (["blocker-multiselect-comma", "blocker-schema-correction", "blocker-attachment-correction"].includes(scenario)) {
+    if (["blocker-multiselect-comma", "blocker-schema-correction", "blocker-attachment-correction", "blocker-file-add", "blocker-remove-rejected", "blocker-complete-draft"].includes(scenario)) {
       await page.locator('#inquiry-form input[type="checkbox"]').first().check();
       if (scenario !== "blocker-multiselect-comma") {
         await page.locator('#inquiry-form input[name="choice"]').fill("Original answer");
@@ -65,8 +65,12 @@ module.exports = async ({browser, baseUrl}) => {
       if (scenario === "blocker-multiselect-comma") {
         await page.locator('input[type="file"]').first().setInputFiles({name:"regions.png",mimeType:"image/png",buffer:Buffer.from("synthetic image")});
       }
-      if (scenario === "blocker-attachment-correction") {
+      if (["blocker-attachment-correction", "blocker-remove-rejected", "blocker-complete-draft"].includes(scenario)) {
         await page.locator('input[type="file"]').first().setInputFiles({name:"removed.txt",mimeType:"text/plain",buffer:Buffer.from("remove me")});
+      }
+      if (scenario === "blocker-complete-draft") {
+        await page.locator('#inquiry-form [name="response"]').fill("Original response");
+        await page.locator('#inquiry-form [name="count"]').fill("1");
       }
     } else if (scenario === "blocker-durable-rejection-correction") {
       await page.locator('#inquiry-form input[type="text"]').fill("Original answer");
@@ -105,7 +109,7 @@ module.exports = async ({browser, baseUrl}) => {
         const store = inquiryAnswerStore();
         const entry = store.entries.get(key);
         await Promise.all(store.pendingWrites.values());
-        return entry?.correctionDraft?.choice === "Latest correction after lost reply" &&
+        return !entry?.correctionDraftSavePending && entry?.correctionDraft?.choice === "Latest correction after lost reply" &&
           entry.correctionDraft?.regions?.length === 1 && entry.correctionDraft.regions[0] === "Tokyo" &&
           entry.correctionDraft?.user_feedback === "Latest feedback";
       },key);
@@ -123,6 +127,138 @@ module.exports = async ({browser, baseUrl}) => {
       return;
     }
 
+    if (scenario === "blocker-file-add") {
+      await page.waitForFunction(key => inquiryAnswerStore().entries.get(key)?.status === "uncertain",key);
+      await page.locator('input[type="file"]').first().setInputFiles({name:"added.txt",mimeType:"text/plain",buffer:Buffer.from("added after failure")});
+      await page.waitForFunction(async key => {
+        const store = inquiryAnswerStore();
+        const entry = store.entries.get(key);
+        await Promise.all(store.pendingWrites.values());
+        return !entry?.correctionDraftSavePending && entry?.correctionDraft?.attachments?.length === 1 && entry.correctionDraft.attachments[0].filename === "added.txt";
+      },key);
+      assert.equal(writes.length,1,"adding a file does not send another answer request");
+      await page.reload({waitUntil:"networkidle"});
+      assert.equal(await page.locator("#inquiry-form [data-remove-prompt-attachment]").count(),1,"added file is restored after reload");
+      assert.match(await page.locator("#inquiry-form").innerText(),/added.txt/);
+      assert.equal(await page.locator('#inquiry-form [name="choice"]').inputValue(),"Original answer");
+      return;
+    }
+
+    if (scenario === "blocker-clear-feedback") {
+      await page.waitForFunction(key => inquiryAnswerStore().entries.get(key)?.status === "uncertain",key);
+      await page.locator('#inquiry-form [name="feedback"]').fill("");
+      await page.waitForFunction(async key => {
+        const store = inquiryAnswerStore();
+        const entry = store.entries.get(key);
+        await Promise.all(store.pendingWrites.values());
+        return !entry?.correctionDraftSavePending && Object.hasOwn(entry?.correctionDraft || {},"user_feedback") && entry.correctionDraft.user_feedback === null;
+      },key);
+      await page.reload({waitUntil:"networkidle"});
+      assert.equal(await page.locator('#inquiry-form [name="feedback"]').inputValue(),"","cleared feedback stays empty after reload");
+      assert.equal(writes.length,1,"clearing feedback does not send another answer request");
+      const saved = await page.evaluate(key => inquiryAnswerStore().entries.get(key).correctionDraft,key);
+      assert.equal(saved.user_feedback,null);
+      return;
+    }
+
+    if (scenario === "blocker-remove-rejected") {
+      await page.waitForFunction(key => inquiryAnswerStore().entries.get(key)?.status === "uncertain",key);
+      await page.locator('#inquiry-form [name="choice"]').fill("Corrected before rejection");
+      await page.locator('#inquiry-form [data-retry-inquiry-answer]').click();
+      await page.locator("#confirmation-dialog [data-confirmation-accept]").click();
+      await page.waitForFunction(key => inquiryAnswerStore().entries.get(key)?.status === "rejected",key);
+      const restored = await context.request.post(`${baseUrl}/agents/${key}/inquiries/${inquiryId}/restore`,{data:{}});
+      assert.equal(restored.status(),200);
+      await page.reload({waitUntil:"networkidle"});
+      const rejectedForm = page.locator("#inquiry-form");
+      assert.equal(await rejectedForm.locator("[data-remove-prompt-attachment]").count(),1);
+      await rejectedForm.locator('[data-pending-attachment]:has-text("removed.txt") [data-remove-prompt-attachment]').click();
+      await page.waitForFunction(async key => {
+        const store = inquiryAnswerStore();
+        const entry = store.entries.get(key);
+        await Promise.all(store.pendingWrites.values());
+        return !entry?.correctionDraftSavePending && entry?.correctionDraft?.attachments?.length === 0;
+      },key);
+      await page.reload({waitUntil:"networkidle"});
+      const restoredForm = page.locator("#inquiry-form");
+      assert.equal(await restoredForm.locator("[data-remove-prompt-attachment]").count(),0,"removal in rejected state stays saved");
+      assert.equal(await restoredForm.locator('[name="choice"]').inputValue(),"Corrected before rejection");
+      await restoredForm.locator('button[type="submit"]').click();
+      await page.waitForFunction(() => inquiryAnswerStore().entries.size === 0);
+      assert.equal(writes.length,3);
+      assert.equal(writes[2].attachments.length,0,"the corrected request excludes the removed attachment");
+      assert.equal(JSON.parse(writes[2].answer).choice,"Corrected before rejection");
+      assert.notEqual(writes[2].client_request_id,writes[1].client_request_id);
+      return;
+    }
+
+    if (scenario === "blocker-complete-draft") {
+      await page.waitForFunction(key => inquiryAnswerStore().entries.get(key)?.status === "uncertain",key);
+      const form = page.locator("#inquiry-form");
+      await form.locator('[name="choice"]').fill("Corrected choice");
+      await form.locator('input[name="regions"]').nth(0).uncheck();
+      await form.locator('input[name="regions"]').nth(1).check();
+      await form.locator('[name="response"]').fill("Corrected response");
+      await form.locator('[name="count"]').fill("");
+      await form.locator('[name="feedback"]').fill("");
+      await page.locator('input[type="file"]').first().setInputFiles({name:"added.txt",mimeType:"text/plain",buffer:Buffer.from("added")});
+      await page.locator('[data-pending-attachment]:has-text("removed.txt") [data-remove-prompt-attachment]').click();
+      await page.waitForFunction(async key => {
+        const store = inquiryAnswerStore();
+        const entry = store.entries.get(key);
+        await Promise.all(store.pendingWrites.values());
+        return !entry?.correctionDraftSavePending && entry?.correctionDraft?.choice === "Corrected choice" &&
+          entry.correctionDraft?.regions?.length === 1 && entry.correctionDraft.regions[0] === "Tokyo" &&
+          entry.correctionDraft?.response === "Corrected response" && entry.correctionDraft?.count === null &&
+          entry.correctionDraft?.user_feedback === null && entry.correctionDraft?.attachments?.length === 1 &&
+          entry.correctionDraft.attachments[0].filename === "added.txt";
+      },key);
+      await page.reload({waitUntil:"networkidle"});
+      const visibleForm = page.locator("#inquiry-form");
+      assert.equal(await visibleForm.locator('[name="choice"]').inputValue(),"Corrected choice");
+      assert.equal(await visibleForm.locator('input[name="regions"]').nth(1).isChecked(),true);
+      assert.equal(await visibleForm.locator('[name="response"]').inputValue(),"Corrected response");
+      assert.equal(await visibleForm.locator('[name="count"]').inputValue(),"");
+      assert.equal(await visibleForm.locator('[name="feedback"]').inputValue(),"");
+      assert.equal(await visibleForm.locator("[data-remove-prompt-attachment]").count(),1);
+      await page.locator('#inquiry-form [data-retry-inquiry-answer]').click();
+      await page.locator("#confirmation-dialog [data-confirmation-accept]").click();
+      await page.waitForFunction(key => inquiryAnswerStore().entries.get(key)?.status === "rejected",key);
+      const restored = await context.request.post(`${baseUrl}/agents/${key}/inquiries/${inquiryId}/restore`,{data:{}});
+      assert.equal(restored.status(),200);
+      await page.reload({waitUntil:"networkidle"});
+      const rejectedForm = page.locator("#inquiry-form");
+      assert.equal(await rejectedForm.locator('[name="choice"]').inputValue(),"Corrected choice");
+      assert.equal(await rejectedForm.locator('input[name="regions"]').nth(1).isChecked(),true);
+      assert.equal(await rejectedForm.locator('[name="response"]').inputValue(),"Corrected response");
+      assert.equal(await rejectedForm.locator('[name="count"]').inputValue(),"");
+      assert.equal(await rejectedForm.locator('[name="feedback"]').inputValue(),"");
+      assert.equal((await rejectedForm.locator("[data-pending-attachment]").innerText()).includes("added.txt"),true);
+      const visibleDraft = await rejectedForm.evaluate(form => {
+        const data = new FormData(form);
+        const feedback = String(data.get("feedback") || "").trim();
+        const count = String(data.get("count") || "").trim();
+        return {
+          answer: {
+            choice: String(data.get("choice") || "").trim() || null,
+            regions: data.getAll("regions").length ? data.getAll("regions") : null,
+            response: String(data.get("response") || "").trim() || null,
+            count: count ? Number.parseInt(count,10) : null,
+            user_feedback: feedback || null,
+          },
+          feedback,
+          attachments: Array.from(form.querySelectorAll("[data-pending-attachment] .attachment-copy strong"),node=>node.textContent.trim()),
+        };
+      });
+      await rejectedForm.locator('button[type="submit"]').click();
+      await page.waitForFunction(() => inquiryAnswerStore().entries.size === 0);
+      assert.equal(writes.length,3);
+      assert.deepEqual(JSON.parse(writes[2].answer),visibleDraft.answer,"the corrected request matches the visible field values");
+      assert.equal(writes[2].feedback,visibleDraft.feedback);
+      assert.deepEqual(writes[2].attachments.map(file=>file.filename),visibleDraft.attachments,"the corrected request matches the visible file list");
+      return;
+    }
+
     if (scenario === "blocker-attachment-correction") {
       await page.waitForFunction(key => inquiryAnswerStore().entries.get(key)?.status === "uncertain",key);
       const failedForm = page.locator("#inquiry-form");
@@ -132,7 +268,7 @@ module.exports = async ({browser, baseUrl}) => {
         const store = inquiryAnswerStore();
         const entry = store.entries.get(key);
         await Promise.all(store.pendingWrites.values());
-        return entry?.correctionDraft?.choice === "Corrected answer without attachment" &&
+        return !entry?.correctionDraftSavePending && entry?.correctionDraft?.choice === "Corrected answer without attachment" &&
           Array.isArray(entry.correctionDraft.attachments) && entry.correctionDraft.attachments.length === 0;
       },key);
       await page.reload({waitUntil:"networkidle"});
@@ -300,7 +436,12 @@ module.exports = async ({browser, baseUrl}) => {
     assert.equal(await recovery.locator('input[name="regions"]').nth(0).inputValue(),"Jakarta, Indonesia");
     assert.equal(await recovery.locator('input[name="regions"]').nth(0).isChecked(),true);
     await recovery.locator('input[name="regions"]').nth(1).check();
-    await page.waitForFunction(key => inquiryAnswerStore().entries.get(key)?.correctionDraft?.regions?.length === 2 && !inquiryAnswerStore().pendingWrites.has(key),key);
+    await page.waitForFunction(async key => {
+      const store = inquiryAnswerStore();
+      const entry = store.entries.get(key);
+      await Promise.all(store.pendingWrites.values());
+      return entry?.correctionDraft?.regions?.length === 2 && !entry.correctionDraftSavePending && !store.pendingWrites.has(key);
+    },key);
     await page.reload({waitUntil:"networkidle"});
     await page.waitForSelector('#inquiry-form input[type="checkbox"][name="regions"]');
     const entry = await page.evaluate(key => {

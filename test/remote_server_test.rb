@@ -8739,7 +8739,8 @@ module RemoteServerTest
            "expected mobile inquiry answers to use one collapsible header with the full-screen action")
     assert(js[:body].include?("Leave feedback") &&
            js[:body].include?('name="feedback"') &&
-           js[:body].include?("const feedback = String(new FormData(form).get(\"feedback\")"),
+           js[:body].include?("values.user_feedback = feedback || null;") &&
+           js[:body].include?("const feedback = savedCorrection"),
            "expected every inquiry to end with optional user feedback")
     assert(!js[:body].include?("data-inquiry-confirm") &&
            js[:body].include?('class="inquiry-footer"'),

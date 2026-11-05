@@ -63,6 +63,18 @@ review_fields = if ENV["TYCHO_REMOTE_UI_INQUIRY_BLOCKER_CASE"] == "blocker-multi
                     { "key" => "choice", "label" => "Your answer", "input_type" => "text", "required" => true },
                     { "key" => "regions", "label" => "Regions", "input_type" => "multi_select", "options" => ["Jakarta, Indonesia", "Tokyo"], "required" => true }
                   ]
+                elsif ENV["TYCHO_REMOTE_UI_INQUIRY_BLOCKER_CASE"] == "blocker-complete-draft"
+                  [
+                    { "key" => "choice", "label" => "Your answer", "input_type" => "text", "required" => true },
+                    { "key" => "regions", "label" => "Regions", "input_type" => "multi_select", "options" => ["Jakarta, Indonesia", "Tokyo"], "required" => true },
+                    { "key" => "response", "label" => "Response", "input_type" => "multiline", "required" => true },
+                    { "key" => "count", "label" => "Count", "input_type" => "integer", "required" => false }
+                  ]
+                elsif ["blocker-remove-rejected", "blocker-file-add"].include?(ENV["TYCHO_REMOTE_UI_INQUIRY_BLOCKER_CASE"])
+                  [
+                    { "key" => "choice", "label" => "Your answer", "input_type" => "text", "required" => true },
+                    { "key" => "regions", "label" => "Regions", "input_type" => "multi_select", "options" => ["Jakarta, Indonesia", "Tokyo"], "required" => true }
+                  ]
                 elsif ENV["TYCHO_REMOTE_UI_INQUIRY_BLOCKER_CASE"] == "blocker-durable-rejection-correction"
                   [
                     { "key" => "choice", "label" => "Your answer", "input_type" => "text", "required" => true },
