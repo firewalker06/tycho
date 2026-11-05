@@ -7,7 +7,8 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForIn
   const selectedCase = process.env.TYCHO_REMOTE_UI_INQUIRY_RECEIPT_CASE;
   const evidence = [];
   let fixtureIndex = 0;
-  for (const width of (selectedCase ? [1440] : process.env.TYCHO_REMOTE_UI_INQUIRY_CORRECTION_CASE ? [] : baseline ? [1440] : [1440,390])) for (const theme of (selectedCase || baseline ? ["dark"] : ["dark","light"])) {
+  const selectedWidth = process.env.TYCHO_REMOTE_UI_INQUIRY_RECEIPT_VIEWPORT === "mobile" ? 390 : 1440;
+  for (const width of (selectedCase ? [selectedWidth] : process.env.TYCHO_REMOTE_UI_INQUIRY_CORRECTION_CASE ? [] : baseline ? [1440] : [1440,390])) for (const theme of (selectedCase || baseline ? ["dark"] : ["dark","light"])) {
     for (const scenario of (selectedCase ? [selectedCase] : baseline ? ["lost"] : ["lost", "malformed", "empty", "wrong-server", "wrong-inquiry", "auth", "unbound-conflict", "rejection"])) {
       console.log(`Inquiry recovery: ${width} ${theme} ${scenario}`);
       const context = await browser.newContext({viewport:{width,height:900},isMobile:width<500,hasTouch:width<500});
@@ -30,7 +31,7 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForIn
           const payload = route.request().postDataJSON();
           payloads.push(JSON.stringify(payload));
           if (!baseline) assert.equal(payload.response_mode,"answer_receipt");
-          if(payloads.length===1 && scenario==="failed-reload") {
+          if(payloads.length===1 && scenario.startsWith("failed-")) {
             return route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"Synthetic failure before acceptance"})});
           }
           if(payloads.length===1 && scenario==="auth") return route.fulfill({status:401,contentType:"application/json",body:JSON.stringify({error:"Synthetic authentication needed"})});
@@ -42,7 +43,7 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForIn
           const response=await route.fetch();
           assert.equal(response.status(),200);
           const data=await response.json();
-          if(payloads.length===2 && scenario==="failed-reload") {
+          if(payloads.length===2 && scenario.startsWith("failed-")) {
             markRetryDispatched();
             await retryResponse;
           }
@@ -82,7 +83,7 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForIn
           await page.waitForFunction(()=>inquiryAnswerStore().entries.size===0);
           assert.notEqual(JSON.parse(payloads[0]).client_request_id,JSON.parse(payloads[1]).client_request_id);
         } else {
-          if (scenario==="failed-reload") {
+          if (scenario.startsWith("failed-")) {
             await page.reload({waitUntil:"networkidle"});
           } else {
             await page.evaluate(()=>navigate({type:"tab",tab:"agents"}));
@@ -90,7 +91,7 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForIn
           }
           await page.waitForSelector("[data-retry-inquiry-answer]");
           assert.equal(payloads.length,1,"reload/navigation does not write automatically");
-          if (scenario==="failed-reload") {
+          if (scenario.startsWith("failed-")) {
             const recovered = await page.evaluate(key=>({
               entries: [...inquiryAnswerStore().entries.values()].map(entry=>({id:entry.id,status:entry.status})),
               pending: (state.pendingConversationMessages[key] || []).map(block=>({id:block.id,intent:block.metadata?.inquiry_intent_id})),
@@ -100,6 +101,31 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForIn
             assert.equal(await page.locator(".message.user.inquiry-response").count(),1,"failed answer is restored to the conversation after reload");
             assert.match(await page.locator(".message.user.inquiry-response").innerText(),/Synthetic answer retained/);
             assert.match(await page.locator(".message-send-status").innerText(),/Answer not confirmed/);
+            if (scenario === "failed-edit-retry" || scenario === "failed-reload-edit") {
+              const editor = page.locator("[data-edit-inquiry-answer]").first();
+              assert.equal(await editor.inputValue(), "Synthetic answer retained");
+              await editor.fill("Edited synthetic answer");
+              if (scenario === "failed-reload-edit") {
+                await page.reload({waitUntil:"networkidle"});
+                await page.waitForSelector("[data-edit-inquiry-answer]");
+                assert.equal(await page.locator("[data-edit-inquiry-answer]").first().inputValue(), "Edited synthetic answer");
+              }
+            }
+            if (scenario === "failed-cancel") {
+              await page.locator("[data-cancel-inquiry-answer]").click();
+              await page.waitForSelector("[data-inquiry-answer-recovery]", {state:"detached"});
+              await page.waitForSelector("#inquiry-form");
+              assert.equal(await page.locator('#inquiry-form input[type="text"]').inputValue(), "");
+              assert.equal(await page.locator(".message.user.inquiry-response").count(), 0);
+              assert.equal(await page.evaluate(()=>inquiryAnswerStore().entries.size), 0);
+              assert.equal(payloads.length, 1, "cancel does not retry or create another answer");
+              evidence.push({width,theme,scenario,writes:payloads.length,cancelled:true});
+              continue;
+            }
+            if (captureDir && scenario === "failed-edit-retry") {
+              fs.mkdirSync(captureDir,{recursive:true});
+              await page.screenshot({path:path.join(captureDir,`inquiry-failure-${width}.png`),fullPage:true});
+            }
             const retryClick = page.locator("[data-retry-inquiry-answer]").click();
             await retryDispatched;
             const response = await context.request.get(`${baseUrl}/agents/${agent.key}/conversation?limit=100`);
@@ -112,13 +138,20 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForIn
               render();
             },{key:agent.key,conversation});
             assert.equal(await page.locator(".message.user.inquiry-response").count(),1,"server copy replaces the restored answer block once");
-            assert.equal((await page.locator(".message-list").innerText()).split("Synthetic answer retained").length-1,1,"answer text appears once when the server copy arrives");
+            const visibleAnswer = scenario === "failed-edit-retry" || scenario === "failed-reload-edit" ? "Edited synthetic answer" : "Synthetic answer retained";
+            assert.equal((await page.locator(".message-list").innerText()).split(visibleAnswer).length-1,1,"answer text appears once when the server copy arrives");
             releaseRetryResponse();
             await retryClick;
             await page.waitForFunction(()=>inquiryAnswerStore().entries.size===0);
             assert.equal(await page.locator(".message.user.inquiry-response").count(),1,"successful retry leaves one conversation answer");
             assert.equal(payloads.length,2);
-            assert.equal(payloads[0],payloads[1],"retry after reload uses the exact saved request");
+            assert.equal(JSON.parse(payloads[0]).client_request_id,JSON.parse(payloads[1]).client_request_id,"edited retry keeps the original request ID");
+            if (scenario === "failed-edit-retry" || scenario === "failed-reload-edit") {
+              const editedPayload = JSON.parse(payloads[1]);
+              assert.equal(JSON.parse(editedPayload.answer).choice, "Edited synthetic answer");
+              assert.equal(editedPayload.feedback, "Synthetic feedback retained");
+              assert.equal(payloads.length, 2, "edited retry sends once");
+            } else assert.equal(payloads[0],payloads[1],"retry after reload uses the exact saved request");
             evidence.push({width,theme,scenario,writes:payloads.length,exactRetry:true,outcome:receipts.at(-1)?.accepted});
             continue;
           }
