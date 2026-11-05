@@ -65,7 +65,7 @@ The detached child runner invokes `tycho agent finalize CHILD_KEY` when the harn
 
 ## Persistence and archives
 
-`<home>/.tycho/logs/agent_delegations.json` is the relationship/report ledger, including ownership generation and soft-disconnect state. Disconnected, unstamped, and ownership-ineligible runs are intentionally absent from its report queue. `<home>/.tycho/config/server_identity.json` stores the server instance UUID. A child also stores its immutable parent snapshot in `managed_agents.json` and its archived `agent_manifest.json`. Parent history contains a typed `agent_started` event; callback messages carry typed reference metadata, so Remote UI only links known records and never linkifies arbitrary text.
+`HOME/.tycho/logs/agent_delegations.json` is the relationship/report ledger, including ownership generation and soft-disconnect state. Disconnected, unstamped, and ownership-ineligible runs are intentionally absent from its report queue. `HOME/.tycho/config/server_identity.json` stores the server instance UUID. A child also stores its immutable parent snapshot in `managed_agents.json` and its archived `agent_manifest.json`. Parent history contains a typed `agent_started` event; callback messages carry typed reference metadata, so Remote UI only links known records and never linkifies arbitrary text.
 
 Archiving either side does not delete the ledger. Callback-only parent archives mark the corresponding reports `parent_archived`; their complete queued messages remain in `memory.jsonl` with `archived_without_run: true`. Archived agent detail and conversation routes are read-only, so links keep working regardless of archive order.
 

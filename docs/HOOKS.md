@@ -13,35 +13,35 @@ Tycho fires events at key points in its runtime. External code can subscribe to 
 
 ## Configuration
 
-### Global — `<home>/.tycho/config/hooks.yml`
+### Global — `HOME/.tycho/config/hooks.yml`
 
 Override the global hooks file with `TYCHO_HOOKS_PATH`.
 
 ```yaml
 hooks:
   agent.run.started:
-    - command: "<home>/bin/notify.sh"
-    - command: "echo started >> /path/to/temp/tycho.log"
+    - command: "HOME/bin/notify.sh"
+    - command: "echo started >> path/to/temp/tycho.log"
       env:
         FOO: bar
   agent.inquiry.available:
-    - command: "<home>/bin/auto-answer.rb"
+    - command: "HOME/bin/auto-answer.rb"
       blocking: true
       timeout: 30
   agent.*:
-    - command: "<home>/bin/agent-all.sh"
+    - command: "HOME/bin/agent-all.sh"
 ```
 
-### Per-project — `<home>/.tycho/config/hq.yml`
+### Per-project — `HOME/.tycho/config/hq.yml`
 
 ```yaml
 projects:
   - key: web
     name: Web
-    path: <home>/Code/web
+    path: HOME/Code/web
     hooks:
       agent.run.started:
-        - command: "<home>/bin/web-notify.sh"
+        - command: "HOME/bin/web-notify.sh"
 ```
 
 Per-project hooks only fire when the event payload carries the matching `project_key`. Global handlers run first, then project handlers.
@@ -57,12 +57,12 @@ Per-project hooks only fire when the event payload carries the matching `project
 
 ### Ruby handlers
 
-Drop `.rb` files into `<home>/.claude/hq-hooks/` (global) or `/path/to/project/.hq/hooks/` (per-project):
+Drop `.rb` files into `HOME/.claude/hq-hooks/` (global) or `path/to/project/.hq/hooks/` (per-project):
 
 ```ruby
-# <home>/.claude/hq-hooks/log_agent_runs.rb
+# HOME/.claude/hq-hooks/log_agent_runs.rb
 HQ::Hooks.on("agent.run.finalized") do |payload|
-  File.open("/path/to/temp/tycho-agent-runs.log", "a") do |f|
+  File.open("path/to/temp/tycho-agent-runs.log", "a") do |f|
     f.puts("#{Time.now} #{payload["agent_key"]} => #{payload["status"]}")
   end
 end
@@ -102,7 +102,7 @@ Handler blocks receive a frozen payload Hash with string keys. Blocking Ruby han
 | Event | Payload keys |
 |---|---|
 | `config.loaded` | `path`, `project_count` | Fired once on boot and after explicit registry reloads (e.g. `add_project!`, `archive_project!`). |
-| `config.reloaded` | `path`, `project_count` | Fired when Tycho detects `<home>/.tycho/config/hq.yml` was modified on disk and re-reads it. Follows `config.loaded`. |
+| `config.reloaded` | `path`, `project_count` | Fired when Tycho detects `HOME/.tycho/config/hq.yml` was modified on disk and re-reads it. Follows `config.loaded`. |
 | `project.loaded` | `project_key`, `project_path` | Fired once per project after `config.loaded`. Convenient for per-project bootstrap hooks. |
 | `project.added` | `project_key`, `project_path` |
 | `project.updated` | `project_key`, `fields` | Fired from `Registry#update_project!` (e.g. `bin/tycho project update ... --pr-url ...`). |
@@ -120,8 +120,8 @@ Blocking shell hooks must print valid JSON to stdout. A non-JSON or empty respon
 
 ## Logging
 
-- Hook lifecycle messages are written to `<home>/.tycho/logs/hq.log` with the `Hooks` progname.
-- Shell hook stdout and stderr are tee'd to `<home>/.tycho/logs/hooks.log` (daily-rotating).
+- Hook lifecycle messages are written to `HOME/.tycho/logs/hq.log` with the `Hooks` progname.
+- Shell hook stdout and stderr are tee'd to `HOME/.tycho/logs/hooks.log` (daily-rotating).
 
 ## Risks and limitations
 
@@ -133,4 +133,4 @@ Blocking shell hooks must print valid JSON to stdout. A non-JSON or empty respon
 
 ## Reloading
 
-Send `SIGHUP` to the running Tycho process to reload `<home>/.tycho/config/hooks.yml`, per-project `hooks:` entries, and Ruby handler files without restarting Tycho.
+Send `SIGHUP` to the running Tycho process to reload `HOME/.tycho/config/hooks.yml`, per-project `hooks:` entries, and Ruby handler files without restarting Tycho.

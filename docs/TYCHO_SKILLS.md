@@ -8,15 +8,15 @@ Tycho uses each harness's current personal skill directory. `TYCHO_SKILLS_HOME` 
 
 | Harness | Install root | Official convention |
 | --- | --- | --- |
-| Codex | `<home>/.agents/skills` | [OpenAI Codex skills](https://developers.openai.com/codex/skills) |
-| Claude Code | `<home>/.claude/skills` | [Claude Code skills](https://code.claude.com/docs/en/skills) |
-| OpenCode | `<home>/.config/opencode/skills` | [OpenCode agent skills](https://opencode.ai/docs/skills) |
-| Pi | `<home>/.pi/agent/skills` | [Pi agent skills](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/skills.md) |
+| Codex | `HOME/.agents/skills` | [OpenAI Codex skills](https://developers.openai.com/codex/skills) |
+| Claude Code | `HOME/.claude/skills` | [Claude Code skills](https://code.claude.com/docs/en/skills) |
+| OpenCode | `HOME/.config/opencode/skills` | [OpenCode agent skills](https://opencode.ai/docs/skills) |
+| Pi | `HOME/.pi/agent/skills` | [Pi agent skills](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/skills.md) |
 
-Each skill lives in `/path/to/skill-root/tycho/SKILL.md`. Tycho places a `.tycho-owned.json` marker beside it. The marker records the Tycho source, installed version, and checksums used to prove that a later update is safe.
+Each skill lives in `path/to/skill-root/tycho/SKILL.md`. Tycho places a `.tycho-owned.json` marker beside it. The marker records the Tycho source, installed version, and checksums used to prove that a later update is safe.
 
 A custom harness profile uses its declared adapter’s row and root. For example,
-a profile with `adapter: opencode` installs to `<home>/.config/opencode/skills`.
+a profile with `adapter: opencode` installs to `HOME/.config/opencode/skills`.
 Remote Settings shows the profile and adapter together; profiles for the same
 adapter intentionally share the same installed skill.
 
@@ -32,9 +32,9 @@ Install and update require a confirmation in the Remote UI and `{"confirmed":tru
 
 ## After a Tycho upgrade
 
-When the bundled skill version changes, open **Settings → Skills** and run the confirmed **Update** action for each installed harness. Tycho updates its marked copies at `<home>/.agents/skills/tycho` (Codex), `<home>/.claude/skills/tycho` (Claude Code), `<home>/.config/opencode/skills/tycho` (OpenCode), and `<home>/.pi/agent/skills/tycho` (Pi). Restart a harness if it does not detect the updated skill.
+When the bundled skill version changes, open **Settings → Skills** and run the confirmed **Update** action for each installed harness. Tycho updates its marked copies at `HOME/.agents/skills/tycho` (Codex), `HOME/.claude/skills/tycho` (Claude Code), `HOME/.config/opencode/skills/tycho` (OpenCode), and `HOME/.pi/agent/skills/tycho` (Pi). Restart a harness if it does not detect the updated skill.
 
-Tycho never overwrites an unmarked copy, including a separately installed `<home>/.codex/skills/tycho`. Preserve or reconcile any local changes in that copy yourself, then rename or remove it if it shadows the supported Codex installation and use **Settings → Skills** to install or update the managed copy under `<home>/.agents/skills/tycho`.
+Tycho never overwrites an unmarked copy, including a separately installed `HOME/.codex/skills/tycho`. Preserve or reconcile any local changes in that copy yourself, then rename or remove it if it shadows the supported Codex installation and use **Settings → Skills** to install or update the managed copy under `HOME/.agents/skills/tycho`.
 
 ## Verify an installation
 

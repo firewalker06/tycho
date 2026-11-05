@@ -8,25 +8,25 @@ type: reference
 
 ## Summary
 
-Tycho scheduled runs are driven by `tycho schedule daemon`. Definitions live in `<home>/.tycho/config/schedules.yml`, mutable runtime state lives in `<home>/.tycho/logs/schedules.json`, daemon heartbeat state lives in `<home>/.tycho/logs/scheduler_daemon.json`, and cron syntax is validated before any long-running scheduler loop starts. The TUI and Remote UI are management surfaces, but neither owns the clock.
+Tycho scheduled runs are driven by `tycho schedule daemon`. Definitions live in `HOME/.tycho/config/schedules.yml`, mutable runtime state lives in `HOME/.tycho/logs/schedules.json`, daemon heartbeat state lives in `HOME/.tycho/logs/scheduler_daemon.json`, and cron syntax is validated before any long-running scheduler loop starts. The TUI and Remote UI are management surfaces, but neither owns the clock.
 
 The current scope is intentionally narrow: schedules own one persistent managed agent session each. There are no shell commands, agent-template selections, ad hoc existing-agent targets, or agent clones. The first due run creates the schedule-owned agent; later due runs append a scheduled user message to that same agent and start another `ManagedAgent` run so native Codex/Claude/OpenCode/Pi session resume can preserve context.
 
-Each schedule has two editable prompt fields: a system message for the schedule-owned agent session, and a run message sent as the next user message each time the schedule runs. The Remote UI edits both in one schedule form and saves the run message inline in `<home>/.tycho/config/schedules.yml`; legacy `message_file` schedules still load, but saving them from the Remote UI converts them to inline run messages. On failure or required human input, stop the schedule and notify via web push. On success, notify only on the first successful run and the first successful run after a prior failure; both success notifications should include the next scheduled run time.
+Each schedule has two editable prompt fields: a system message for the schedule-owned agent session, and a run message sent as the next user message each time the schedule runs. The Remote UI edits both in one schedule form and saves the run message inline in `HOME/.tycho/config/schedules.yml`; legacy `message_file` schedules still load, but saving them from the Remote UI converts them to inline run messages. On failure or required human input, stop the schedule and notify via web push. On success, notify only on the first successful run and the first successful run after a prior failure; both success notifications should include the next scheduled run time.
 
 ## Current Decisions
 
 - Scheduler owner: dedicated `tycho schedule daemon`, not the TUI and not the Remote server.
 - Management surfaces: both TUI and Remote UI show schedules and allow safe operations.
 - Remote UI daemon control: Remote UI may start, stop, or restart the dedicated scheduler daemon through a supervisor, but `tycho serve` must not run scheduler ticks itself.
-- Config source: `<home>/.tycho/config/schedules.yml`.
+- Config source: `HOME/.tycho/config/schedules.yml`.
 - Validation: fail fast on invalid cron syntax, invalid project references, and invalid prompt file paths.
-- Runtime state: persist mutable schedule state separately from config under `<home>/.tycho/logs/schedules.json`.
-- Daemon state: persist `tycho schedule daemon` heartbeat and last tick metadata under `<home>/.tycho/logs/scheduler_daemon.json`.
+- Runtime state: persist mutable schedule state separately from config under `HOME/.tycho/logs/schedules.json`.
+- Daemon state: persist `tycho schedule daemon` heartbeat and last tick metadata under `HOME/.tycho/logs/scheduler_daemon.json`.
 - Target scope: agent-only. Each schedule owns one managed agent and each run resumes that schedule session.
 - Unsupported commands: `shell`, `agent_template`, `agent_existing`, and `agent_clone`.
 - Prompt fields: system message plus run message in one schedule form.
-- Run-message source: Remote UI saves inline text in `<home>/.tycho/config/schedules.yml`; legacy file-backed schedules are read-compatible and convert to inline when saved from the form.
+- Run-message source: Remote UI saves inline text in `HOME/.tycho/config/schedules.yml`; legacy file-backed schedules are read-compatible and convert to inline when saved from the form.
 - Scheduled execution prompts include the final-output attachment checklist so created or referenced durable artifacts are reported in `attachments`; the stored scheduled user message stays clean to avoid repeated checklist buildup in persistent memory.
 - Scheduled agent display names do not include a text prefix; UI surfaces distinguish them with the schedule icon.
 - Retention: keep the schedule-owned agent active across runs unless the operator explicitly archives it.
@@ -68,7 +68,7 @@ caller started it, so a past run cannot be attributed from that state alone.
 
 When a schedule appears to run while the banner is `stopped`, check the schedule's
 `last_due_at`, `last_started_at`, run count, and managed-agent log; inspect
-`<home>/.tycho/logs/scheduler_daemon.log` and `scheduler_daemon.json`; then audit manual
+`HOME/.tycho/logs/scheduler_daemon.log` and `scheduler_daemon.json`; then audit manual
 CLI/Remote API use and any external service, cron job, wrapper, or custom integration
 that can invoke `tycho schedule daemon`, `tycho schedule daemon --once`,
 `tycho schedule run`, `Scheduler#tick`, or `Scheduler#run_now`.
@@ -78,7 +78,7 @@ that can invoke `tycho schedule daemon`, `tycho schedule daemon --once`,
 ### Architecture To Reuse
 
 - `ManagedAgent#start!` spawns built-in and Claude-compatible runs as detached child processes, writes raw logs, tracks `pid`, preserves native `session_id`, clears derived logs, and emits lifecycle hooks.
-- `AgentStore#load_with_poll_events` restores persisted agents from `<home>/.tycho/logs/managed_agents.json`, polls running processes, marks completed runs unread, and produces transition events for push notifications.
+- `AgentStore#load_with_poll_events` restores persisted agents from `HOME/.tycho/logs/managed_agents.json`, polls running processes, marks completed runs unread, and produces transition events for push notifications.
 - `RemoteService` already exposes start/stop/chat/archive operations for agents, setup readiness, push notifications, and project refresh.
 - The TUI has 30-second full refresh and 10-second action/agent polling, but it is an interactive client rather than a reliable background daemon.
 - Hooks can react to schedule and agent events, but they should not become the clock source.
@@ -92,7 +92,7 @@ Schedules support exactly one target type:
 `agent`:
 
 - Creates or reuses the schedule-owned managed agent for `project_key`.
-- Uses the project's path and default agent harness from `<home>/.tycho/config/hq.yml`.
+- Uses the project's path and default agent harness from `HOME/.tycho/config/hq.yml`.
 - Does not select a project agent template.
 - Seeds the schedule system message once, then appends the run message as a user message for each due run.
 - Names the managed agent from `target.name`, falling back to the schedule name or key, without adding a text prefix.
@@ -112,7 +112,7 @@ An agent can technically be prompted to run local commands, but schedules should
 
 `message`:
 
-- Store the message sent each run directly in `<home>/.tycho/config/schedules.yml` as `message`.
+- Store the message sent each run directly in `HOME/.tycho/config/schedules.yml` as `message`.
 - Sent as the user message every time the schedule runs.
 - Remote UI edits this inline in the main schedule form.
 
@@ -138,7 +138,7 @@ Cron validation:
 
 - Start with standard five-field cron syntax: minute, hour, day-of-month, month, day-of-week.
 - Reject unsupported Quartz-style fields such as seconds, year, `?`, `L`, and `#` unless Tycho intentionally adopts them.
-- Validate all definitions in `<home>/.tycho/config/schedules.yml` before `tycho schedule daemon` starts the long-running loop.
+- Validate all definitions in `HOME/.tycho/config/schedules.yml` before `tycho schedule daemon` starts the long-running loop.
 - Include the schedule key and cron field in error messages so TUI/Remote UI can render useful validation failures.
 
 Failure:
@@ -170,8 +170,8 @@ Success notifications:
 Locks:
 
 - Store per-schedule `running_lock` or `last_due_at`.
-- Use atomic file writes for `<home>/.tycho/logs/schedules.json`.
-- Treat `AgentStore` and `<home>/.tycho/logs/schedules.json` as shared state because TUI, Remote UI, and scheduler may all touch them.
+- Use atomic file writes for `HOME/.tycho/logs/schedules.json`.
+- Treat `AgentStore` and `HOME/.tycho/logs/schedules.json` as shared state because TUI, Remote UI, and scheduler may all touch them.
 
 ### Data Model
 

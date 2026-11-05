@@ -204,8 +204,8 @@ Key references:
 | Conversation motion | Small native pixel SVG based on the retired FRED avatar; active-process loop and one-shot confirmed-success marker | Motion follows existing run state, retains its time across polling, and becomes static under reduced motion; see [CONVERSATION_ANIMATIONS.md](./CONVERSATION_ANIMATIONS.md) |
 | TUI framework | Bubbletea + Lipgloss-compatible styling + Bubbles (Charm Ruby) | Elm Architecture fits the dashboard's event-driven model; Tycho uses native Lipgloss except on Intel macOS, where a Ruby compatibility backend avoids Go cgo callback crashes from multiple Charm native runtimes |
 | Homebrew bottle platforms | Apple Silicon macOS and Linux; no Intel macOS bottle from v0.11.1 onward | v0.11.0 is the final Intel bottle. Intel users retain the source-install path, while the bottle workflow and release checks must not publish Intel artifacts or checksums |
-| Default data root | `<home>/.tycho` for config, schedule prompts, runtime state, and logs | Source and packaged installs should never write runtime data into the repository or Homebrew Cellar by default |
-| Config split | `<home>/.tycho/config/hq.yml` (active) + `<home>/.tycho/config/hq.archived.yml` (archived) | Archive without losing history; logs move to `<home>/.tycho/logs/projects/archived/` |
+| Default data root | `HOME/.tycho` for config, schedule prompts, runtime state, and logs | Source and packaged installs should never write runtime data into the repository or Homebrew Cellar by default |
+| Config split | `HOME/.tycho/config/hq.yml` (active) + `HOME/.tycho/config/hq.archived.yml` (archived) | Archive without losing history; logs move to `HOME/.tycho/logs/projects/archived/` |
 | Project lifecycle CLI | Explicit `tycho project create KEY`, plus list/show/update/archive commands with normalized human or JSON output | An explicit mutation verb prevents help text, command names, and typos from registering projects while keeping lifecycle automation clear |
 | Multi-file lifecycle writes | `FileTransaction` snapshots config/state files and runs compensating log moves around project archival and session-loop creation | A failed downstream step must restore project, agent, schedule, memory, and log state instead of leaving a partially completed lifecycle operation |
 | Callback-only agent archive | Archive protected `delegation_callback` queues into read-only conversation history, while rejecting ordinary and mixed pending queues | Obsolete delegated results must not trap a stopped parent, but ordinary user work must never disappear implicitly |
@@ -217,7 +217,7 @@ Key references:
 | Managed-agent identity | Generate keys as `<project>-agent-<UTC timestamp with microseconds>`, adding a short random suffix only on an exact collision; retain legacy numeric keys when loading existing state | Timestamp identities remain sortable and avoid key reuse when agents are created concurrently or archived across Tycho instances |
 | Managed-agent CLI delegation | `--parent-agent KEY` explicitly declares delegated ownership locally and remotely; omitting it creates a root or takes over an existing child, while `--root` is an explicit unrelated-root marker | The same visible command semantics apply across custom and resumed harnesses without secret capability propagation |
 | Delegation ownership | Persist `parent`/`user` ownership and a monotonic generation on each relationship; stamp delegated runs and report only matching parent-owned generations | Direct user takeover must suppress stale callbacks immediately, while a later parent prompt can reclaim only that edge without results crossing ownership boundaries |
-| Cross-harness response style | Append the current `<home>/.tycho/config/response_style.md` policy to every cold and resumed run, with project/template override or opt-out; record the harness `session_id` on each run | Keep operator-facing prose consistent without coupling the policy to a harness-native role API or persisting it into conversation memory, while retaining the native session identity used for each run; explicit task formats remain higher priority |
+| Cross-harness response style | Append the current `HOME/.tycho/config/response_style.md` policy to every cold and resumed run, with project/template override or opt-out; record the harness `session_id` on each run | Keep operator-facing prose consistent without coupling the policy to a harness-native role API or persisting it into conversation memory, while retaining the native session identity used for each run; explicit task formats remain higher priority |
 | Agent session strategy | Persist native Claude/Codex/OpenCode/Pi `session_id` per managed agent and resume after the first run; recover legacy run-level identity and keep `memory.jsonl` as HQ's canonical transcript | Native resume recovers agent-side continuity and prompt-cache reuse. HQ only replays bounded `memory.jsonl` on first run or when no native session is known |
 | Managed-agent store recovery | Validate every save, reject unapproved reductions that remove at least five records and at least half of all active records, retain a private session/archival recovery ledger, and create checksum-verified atomic daily snapshots with configurable 30-day default retention | Lost session IDs self-heal from run history or last-known state; archived-key resurrection and accidental whole-store replacement are rejected; explicit batch archive and validated restore retain supported escape hatches with transactional safety artifacts |
 | Structured output correction | Give Codex and Claude-compatible runs native schema enforcement; give cold OpenCode and Pi runs the canonical schema as hidden execution-only guidance; validate every result and allow Codex, Claude, and Pi two same-session corrections by default (`TYCHO_STRUCTURED_OUTPUT_CORRECTION_LIMIT`, clamped to `0..5`) | One contract prevents harness drift; invalid JSON must not become a successful result; Pi can correct in its native session without rerunning completed tools even though it lacks a schema flag |
@@ -239,7 +239,7 @@ Key references:
 | Input handling | `BubbleteaInput` patches `Bubbletea::Program#poll_event` with a Ruby-side queue | Fixes multi-byte / bracketed paste truncation in Bubbles `TextInput`/`TextArea` |
 | Logging | Centralized `HQ.logger` (stdlib `Logger`), daily rotation, 7-day retention | Single sink for lifecycle, config, process, and silently-rescued errors |
 | Skill discovery | Resolve the configured harness key through its native adapter, then enumerate that adapter's Codex, Claude, OpenCode, Pi, or agy skill roots | Per-agent trigger character and roots stay protocol-correct for built-ins and custom profiles |
-| Tycho skill installation | Keep a checksummed bundled source manifest behind `SkillInstaller`; install to `<home>/.agents/skills` (Codex), `<home>/.claude/skills` (Claude Code), `<home>/.config/opencode/skills` (OpenCode), `<home>/.pi/agent/skills` (Pi), or `<home>/.gemini/config/skills` (agy), and update only files proven Tycho-owned | One deep module owns current path conventions, status comparison, staged/atomic replacement, exact change reporting, and collision/error safety for Remote API/UI callers |
+| Tycho skill installation | Keep a checksummed bundled source manifest behind `SkillInstaller`; install to `HOME/.agents/skills` (Codex), `HOME/.claude/skills` (Claude Code), `HOME/.config/opencode/skills` (OpenCode), `HOME/.pi/agent/skills` (Pi), or `HOME/.gemini/config/skills` (agy), and update only files proven Tycho-owned | One deep module owns current path conventions, status comparison, staged/atomic replacement, exact change reporting, and collision/error safety for Remote API/UI callers |
 | Agent auto-name | The first launch requests an optional `agent_title_suggestion`. A valid terminal result can replace a title only while it exactly matches the stored default-name provenance, on any run. Once a suggestion or manual rename gives the agent a custom title, later suggestions do nothing. Legacy records without provenance and clones keep their names. Manual renames invalidate pending suggestions, including rename-and-restore. Each run processes its title at most once, including after reload and summary rebuilds. Quick Agent keeps the current project name visible as read-only text; a separate editable Project selector and optional Name stay inside initially collapsed Options. Selection changes update the summary and create target together. Alphabetical project choices use a stable key tie-break. A server-owned `quick_agent.default_project_key` preference in `hq.yml` governs global launches on that host, with explicit scoped/manual choices taking priority and a valid available-project fallback. The modal backdrop uses a darker translucent fill without blur. Codex receives a required-nullable schema copy while canonical validation still accepts omitted titles. | Reduces form input while preserving user names and making title handling durable across reloads and summary rebuilds |
 | Remote Sessions | Local JSON API and web UI via `tycho serve`; Tailscale auto-bind; terminal QR startup URL | Remote clients can inspect and control managed agents through the same `AgentStore` / `ManagedAgent` paths as the TUI |
 | Homebrew update lifecycle | A successful Homebrew update resolves the stable `.../bin/tycho` launcher, restarts any running scheduler with that launcher, and asks a running local Remote server to self-replace through its authenticated restart endpoint; absent local services are reported as no-ops | Homebrew Cellar paths are versioned and may disappear during upgrade, so replacement server and daemon processes must never inherit the old Cellar executable; server lifecycle remains local rather than broker-proxied |
@@ -260,13 +260,13 @@ Key references:
 | Remote attachment reads | Resolve visible active attachment owners from the committed agent snapshot without lifecycle maintenance; read source files for each accepted request and retain preview limits and MIME checks | Attachment previews and downloads do not wait for the global lifecycle lock; file changes remain visible on refresh |
 | Remote multiserver resources | Keep one UI-serving broker, aggregate only compact Agent and Project resources through a disk-backed stale-while-revalidate catalog, and require explicit server identity for details and mutations | Combined lists stay responsive across peer failures and broker restarts; only a validated full snapshot may remove cached resources, while schedules, setup, GitHub, push, restart, and other server-level behavior remain local |
 | Project workspace browsing | Keep canonical path resolution, sensitive/generated-file policy, bounded listing, Markdown/image previews, and optimistic-lock plain-text edits in `ProjectWorkspace`; expose only relative paths through project-scoped endpoints | Remote and multiserver browsing must not leak host paths or let client routing bypass traversal, symlink, VCS, credential, binary, encoding, or size controls |
-| Remote credential ownership | Bind one bearer credential to each stable remote server key and verified scheme/host/effective-port origin; keep Tycho-managed values in atomic mode-`0600` `<home>/.tycho/config/remote_credentials.json`, with explicit per-server `token_env` overrides | CLI and broker share one resolver, multiple peers cannot select credentials by incidental names, origin changes require explicit recovery, and browser promotion removes its copy only after verified persistence |
-| Scheduled runs | Dedicated `tycho schedule daemon`, definitions in `<home>/.tycho/config/schedules.yml`, runtime state in `<home>/.tycho/logs/schedules.json`, validated standard cron syntax | Scheduled work should continue independently from the TUI and Remote UI while still reusing existing agent execution paths |
+| Remote credential ownership | Bind one bearer credential to each stable remote server key and verified scheme/host/effective-port origin; keep Tycho-managed values in atomic mode-`0600` `HOME/.tycho/config/remote_credentials.json`, with explicit per-server `token_env` overrides | CLI and broker share one resolver, multiple peers cannot select credentials by incidental names, origin changes require explicit recovery, and browser promotion removes its copy only after verified persistence |
+| Scheduled runs | Dedicated `tycho schedule daemon`, definitions in `HOME/.tycho/config/schedules.yml`, runtime state in `HOME/.tycho/logs/schedules.json`, validated standard cron syntax | Scheduled work should continue independently from the TUI and Remote UI while still reusing existing agent execution paths |
 | Temporary session loops | Remote UI can adopt an idle conversation as a normal recurring schedule, run it immediately with schedule context, and stop it at a configured cutoff | Review-waiting sessions need lightweight polling without losing their existing context or creating a separate agent |
 | Run cost provenance | Persist harness and model on each managed-agent run; raw-log cost rebuilds use that per-run metadata and leave legacy runs unpriced when provenance is missing | Historical estimates must not silently apply the agent's current model price to older runs |
 | Usage metrics | Persist idempotent v1 run records and provider-scoped native-session aggregates in one atomic, locked store; normalize Codex cumulative counters and version-aware Claude run cost/modelUsage telemetry; query active and archived history through the same CLI/API module | Historical reporting must remain auditable without raw-log joins, guessed prices/models/session IDs, or conflating runs, native sessions, and managed agents |
 | Context pressure | Warn only from a harness-reported active-context window, compaction, or overflow; label measured, reported, stale, and unknown evidence; keep cumulative usage metrics separate; compaction replacements save the successor, start a handoff successor when requested, then archive the source; serialize schedule state before managed-agent state while atomically moving a scheduled source's runtime, configured target, recurring system context, memory, and PR catalog to its context-pressure replacement | Operators need an actionable quality warning without false precision, while concurrent scheduler saves, queued work, inquiries, schedule status and future dispatch, delegation, PR links, rollback, and audit history must survive any context recovery choice |
-| Schedule daemon freshness | `tycho schedule daemon` writes heartbeat state to `<home>/.tycho/logs/scheduler_daemon.json`; UI surfaces derive running/stale/stopped from heartbeat age and process liveness, and report untracked running daemons without heartbeat state | Users need to know whether cron work is actually ticking, not only whether definitions are valid |
+| Schedule daemon freshness | `tycho schedule daemon` writes heartbeat state to `HOME/.tycho/logs/scheduler_daemon.json`; UI surfaces derive running/stale/stopped from heartbeat age and process liveness, and report untracked running daemons without heartbeat state | Users need to know whether cron work is actually ticking, not only whether definitions are valid |
 | Schedule command scope | Agent-only schedules; each schedule owns one persistent managed agent session and accepts only inline messages or files under `schedules/` | Preserve recurring context without adding arbitrary shell execution or loose existing-agent targets |
 | Schedule statuses | Schedules expose `scheduled`, `paused`, or `stopped`; last outcome and error reason are tracked separately. `no_action_needed` is reserved for observational checks where no action was necessary, while completed actions and deliverables use `success` | Keep healthy no-op checks quiet without hiding meaningful completed work from unread state and notifications |
 | Schedule interactive protection | A due run stops with reason `interactive` when the schedule-owned agent has later user messages; resuming records an acknowledgement boundary and keeps the same session | User conversations in scheduled sessions must not be overwritten by the next cron tick, and recovery should be one explicit action |
@@ -346,9 +346,9 @@ and queued-run push notification behavior. Schedule-management work remains on
 ### v0.1 — Dashboard Foundation ✓
 
 - [x] Bubbletea/Lipgloss/Bubbles TUI scaffold (`hq.rb` + `lib/hq/app.rb`)
-- [x] Project registry from `<home>/.tycho/config/hq.yml` (`lib/hq/registry.rb`)
+- [x] Project registry from `HOME/.tycho/config/hq.yml` (`lib/hq/registry.rb`)
 - [x] Concurrent project metadata refresh
-- [x] Managed-agent persistence and restoration via `<home>/.tycho/logs/managed_agents.json`
+- [x] Managed-agent persistence and restoration via `HOME/.tycho/logs/managed_agents.json`
 - [x] In-app sidebar log viewer; `g` shortcut to open project terminal
 
 ### v0.2 — Managed Agents ✓
@@ -356,7 +356,7 @@ and queued-run push notification behavior. Schedule-management work remains on
 - [x] Codex / Claude-compatible execution paths
 - [x] `AgentLogParser` for JSON / stream-json demultiplexing
 - [x] Per-agent log artifacts: `raw.log`, `conversation.log`, `system.log`, `memory.jsonl`
-- [x] Agent create/edit forms loaded from `<home>/.tycho/config/system_prompts.yml`
+- [x] Agent create/edit forms loaded from `HOME/.tycho/config/system_prompts.yml`
 - [x] Structured inquiry form with gated review submission
 - [x] Multi-select inquiry support; expandable wrapped inquiry text fields
 
@@ -380,7 +380,7 @@ and queued-run push notification behavior. Schedule-management work remains on
 - [x] Project archiving (config + logs move to archived locations)
 - [x] Project create/show/update/archive CLI with JSON output
 - [x] New-project form with live path autocomplete
-- [x] Per-project log organization under `<home>/.tycho/logs/projects/{project}/`
+- [x] Per-project log organization under `HOME/.tycho/logs/projects/{project}/`
 - [x] Centralized `HQ.logger` with daily rotation and 7-day cleanup
 - [x] Loading screen with progress bar; deferred slow startup work
 - [x] Global `ctrl-g` terminal shortcut; `ctrl-r` HQ restart
@@ -489,13 +489,13 @@ and queued-run push notification behavior. Schedule-management work remains on
 ### Scheduled Runs
 
 - [x] Decide scheduler owner: dedicated `tycho schedule daemon`
-- [x] Decide config source: `<home>/.tycho/config/schedules.yml` with cron syntax validation
+- [x] Decide config source: `HOME/.tycho/config/schedules.yml` with cron syntax validation
 - [x] Decide management surfaces: TUI and Remote UI
 - [x] Decide command scope: persistent schedule-owned agent only; no shell, templates, loose existing-agent targets, or clones
 - [x] Decide prompt sources: inline text or files under `schedules/`
 - [x] Decide failure/success notifications: stop and web-push on failure; notify only first success and first success after failure
-- [x] Add `ScheduleRegistry` / `ScheduleStore` and persisted runtime state in `<home>/.tycho/logs/schedules.json`
-- [x] Persist scheduler daemon heartbeat state in `<home>/.tycho/logs/scheduler_daemon.json`
+- [x] Add `ScheduleRegistry` / `ScheduleStore` and persisted runtime state in `HOME/.tycho/logs/schedules.json`
+- [x] Persist scheduler daemon heartbeat state in `HOME/.tycho/logs/scheduler_daemon.json`
 - [x] Add `tycho schedule daemon` with `--once`, `--dry-run`, and long-running daemon modes
 - [x] Support persistent schedule-owned agents with repeated scheduled messages in the same session
 - [x] Stop due runs when the schedule-owned agent has unacknowledged user conversation
@@ -534,7 +534,7 @@ and queued-run push notification behavior. Schedule-management work remains on
 ### Observability
 
 - [x] Structured run/native-session usage, cost, timing, completeness, and lifecycle metrics
-- [ ] In-app log filter / search for `<home>/.tycho/logs/hq.log`
+- [ ] In-app log filter / search for `HOME/.tycho/logs/hq.log`
 - [ ] Agent run timeline view
 
 ### Personality Tweaks

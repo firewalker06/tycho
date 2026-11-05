@@ -37,7 +37,7 @@ Prepare the initial state before each run. Actions stay in effect after a run; t
 Copy the [schedule example](../config/interaction-tests/schedule-resume.json) to a file for the feature:
 
 ```sh
-cp config/interaction-tests/schedule-resume.json /path/to/temp/interaction-scenario.json
+cp config/interaction-tests/schedule-resume.json path/to/temp/interaction-scenario.json
 ```
 
 Edit the URL and steps. Supported actions are `open`, `click`, `fill`, `expand`, `wait`, and `measure`. Preparation actions establish the initial state. A `measure` step defines its trigger click and expectation together, so the probe starts before the click and can capture synchronous changes.
@@ -63,8 +63,8 @@ Set `TYCHO_PLAYWRIGHT_PATH` if Playwright is outside the local module path. If t
 
 ```sh
 bin/remote-ui-interaction-report \
-  --config /path/to/temp/interaction-scenario.json \
-  --output /path/to/temp/interaction-report.html
+  --config path/to/temp/interaction-scenario.json \
+  --output path/to/temp/interaction-report.html
 ```
 
 Add `--headed` to show Chrome. The runner uses a fresh browser context. It writes one HTML file with a step log and a separate section for each measurement. Each section includes timing data, completed request timings, and three embedded screenshots: before the trigger, after the trigger, and at the final state or timeout.
@@ -124,7 +124,7 @@ outside the repository.
 Run the optional Chrome smoke check when changing the profiler or checking its setup:
 
 ```sh
-TYCHO_REMOTE_UI_CAPTURE_DIR=/path/to/temp/tycho-interaction-profiler-check \
+TYCHO_REMOTE_UI_CAPTURE_DIR=path/to/temp/tycho-interaction-profiler-check \
   node test/browser/interaction_report_smoke.js
 ```
 

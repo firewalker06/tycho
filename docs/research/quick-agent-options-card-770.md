@@ -92,7 +92,7 @@ disabled states. X, Escape, and overlay close preserve the page draft.
 Run from the repository root:
 
 ```sh
-TYCHO_REMOTE_UI_QUICK_OPTIONS_ONLY=1 TYCHO_REMOTE_UI_CAPTURE_DIR=/path/to/temp/tycho-770-options bin/remote-ui-smoke
+TYCHO_REMOTE_UI_QUICK_OPTIONS_ONLY=1 TYCHO_REMOTE_UI_CAPTURE_DIR=path/to/temp/tycho-770-options bin/remote-ui-smoke
 TYCHO_REMOTE_UI_AUTO_NAME_ONLY=1 bin/remote-ui-smoke
 TYCHO_REMOTE_UI_OPTIMISTIC_CREATE_ONLY=1 bin/remote-ui-smoke
 bundle exec ruby test/remote_server_test.rb

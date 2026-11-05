@@ -26,11 +26,9 @@ Remaining absolute local path tokens fail, including home-relative paths,
 file URIs, Windows drive paths, and slash-rooted paths with a directory
 separator or filename extension. Code formatting never exempts a token.
 
-For deliberate examples, use `/path/to/...` or `<home>` followed by the sample
-suffix. Replace these placeholders before running a command. A placeholder
-exempts only its token; another real local path on the same line still fails.
-Runtime shell examples can use the home environment variable instead of a
-literal home path.
+For examples, use relative placeholders such as `path/to/workspace` or
+`HOME`. No token-level placeholder exemption exists. The end-of-line marker
+below is the only allow mechanism.
 
 If an exact literal is required, put `<!-- local-path-ok -->` at the end of
 that source line. This is an explicit, line-only exception. Use it for a
@@ -56,7 +54,7 @@ fixtures inject fake notifiers. Push delivery contract tests must install
 their own explicit transport fake. Do not remove these boundaries when
 adding a scheduler or notification fixture. The guard records denied transport
 attempts and fails at process exit even if production code catches the exception.
-Set `TYCHO_TEST_PUSH_AUDIT_FILE=/path/to/temp/path.jsonl` to capture redacted
+Set `TYCHO_TEST_PUSH_AUDIT_FILE=path/to/temp/path.jsonl` to capture redacted
 per-process attempt counts. An intentional guard probe clears only its own
 expected denial. For standalone tests not already requiring the helper, use
 `bundle exec ruby -r ./test/support/push_safety.rb test/NAME_test.rb`.

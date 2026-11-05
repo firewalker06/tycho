@@ -105,10 +105,10 @@ cases = [
   ["table URL next to local", "| https://example.test/#/home/alice | /data/notes.md |", false],
   ["review quoted code end", "> ```sh\n> cat notes\n\n[Notes](/data/notes.md)\n", false],
   ["review listed code end", "- ```sh\n  cat notes\n\n[Notes](/data/notes.md)\n", false],
-  ["path placeholder", "Notes: /path/to/workspace/notes.md", true],
-  ["home placeholder", "Notes: <home>/.tycho/logs/agents/<key>/run.log", true],
-  ["inline placeholder", "Notes: `/path/to/workspace/notes.md`", true],
-  ["fenced placeholder", "```sh\ncat /path/to/workspace/notes.md\n```", true],
+  ["path placeholder", "Notes: /path/to/workspace/notes.md", false],
+  ["home placeholder", "Notes: <home>/.tycho/logs/agents/<key>/run.log", false],
+  ["inline placeholder", "Notes: `/path/to/workspace/notes.md`", false],
+  ["fenced placeholder", "```sh\ncat /path/to/workspace/notes.md\n```", false],
   ["placeholder followed by local", "<home>/.tycho /Users/alice/notes.md", false],
   ["path placeholder followed by local", "/path/to/workspace /Users/alice/notes.md", false],
   ["similar prefix is real", "/path/together/notes.md", false],
@@ -131,6 +131,10 @@ cases = [
   cases << ["named/numeric src #{slash}", "<img src=#{slash}data/notes.png>", false]
 end
 
+cases << ["review comma list", "Paths: <home>/.tycho,/Users/alice/project", false]
+cases << ["review semicolon list", "Paths: <home>/.tycho;/Users/alice/project", false]
+cases << ["review colon list", "Paths: <home>/.tycho:/Users/alice/project", false]
+cases << ["relative placeholder", "Paths: HOME/.tycho, path/to/workspace", true]
 cases.each do |name, input, allowed|
   actual = MarkdownPaths.invalid_lines(input)
   raise "#{name}: expected allowed=#{allowed}, got #{actual.inspect}" unless actual.empty? == allowed

@@ -35,7 +35,7 @@ The last run's inferred estimate is $2.1019894, subject to consecutive session a
 Run from the repository root:
 
 ```sh
-TYCHO_REMOTE_UI_CLAUDE_COST_ONLY=1 TYCHO_REMOTE_UI_CAPTURE_DIR=/path/to/temp/tycho-claude-cost bin/remote-ui-smoke
+TYCHO_REMOTE_UI_CLAUDE_COST_ONLY=1 TYCHO_REMOTE_UI_CAPTURE_DIR=path/to/temp/tycho-claude-cost bin/remote-ui-smoke
 ```
 
 Scope limit: existing saved estimates and metrics are not repaired. This task adds no live migration or startup transcript scan. Custom wrappers that omit the native version retain their prior accounting behavior with an explicit reported-cost label.

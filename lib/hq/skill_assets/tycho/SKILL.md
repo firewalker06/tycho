@@ -295,12 +295,12 @@ grep "^- key:" $HOME/.tycho/config/hq.yml      # all projects (including agent-o
 
 | Artifact | Path |
 |----------|------|
-| App log | `<home>/.tycho/logs/hq.log` |
-| Action log | `<home>/.tycho/logs/projects/<project>/action.log` |
-| Agent raw stream | `<home>/.tycho/logs/agents/<key>.raw.log` |
-| Agent conversation | `<home>/.tycho/logs/agents/<key>.conversation.log` |
-| Agent system events | `<home>/.tycho/logs/agents/<key>.system.log` |
-| Managed agents store | `<home>/.tycho/logs/managed_agents.json` |
+| App log | `HOME/.tycho/logs/hq.log` |
+| Action log | `HOME/.tycho/logs/projects/PROJECT/action.log` |
+| Agent raw stream | `HOME/.tycho/logs/agents/<key>.raw.log` |
+| Agent conversation | `HOME/.tycho/logs/agents/<key>.conversation.log` |
+| Agent system events | `HOME/.tycho/logs/agents/<key>.system.log` |
+| Managed agents store | `HOME/.tycho/logs/managed_agents.json` |
 
 ---
 

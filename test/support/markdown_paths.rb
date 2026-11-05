@@ -5,8 +5,8 @@ require "json"
 require "open3"
 
 module MarkdownPaths
-  LOCAL_PATH = %r{(?<![\w.~\\/\}])(?:~/|/(?!/|path/to/)(?:[A-Za-z0-9._~-]+/|[A-Za-z0-9._~-]*\.[A-Za-z0-9])|file://|[A-Za-z]:[\\/])}i
-  URL = /\b([a-z][a-z0-9+.-]*):(?:[^\s<>"'`|()\[\]]|\([^()\s]*\)|\[[^\]\s]*\])+/i
+  LOCAL_PATH = %r{(?<![\w.~\\/\}])(?:~/|/(?!/)(?:[A-Za-z0-9._~-]+/|[A-Za-z0-9._~-]*\.[A-Za-z0-9])|file://|[A-Za-z]:[\\/])}i
+  URL = /(?<![\w.\/~])([a-z][a-z0-9+.-]*):(?:[^\s<>"'`|()\[\]]|\([^()\s]*\)|\[[^\]\s]*\])+/i
   # HTML5 named references from Python's html.entities.html5, which follows
   # https://html.spec.whatwg.org/multipage/named-characters.html
   NAMED_ENTITIES = JSON.parse(File.read(File.join(__dir__, "html_named_entities.json"))).freeze
@@ -33,7 +33,7 @@ module MarkdownPaths
     source.lines.each_with_index.filter_map do |line, index|
       next if line.match?(/<!-- local-path-ok -->[ \t]*(?:\r?\n)?\z/)
 
-      text = decode_text(line).gsub(%r{<home>(?:/[^\s"'`|)\]]*)?}, " ").gsub(URL) do |url|
+      text = decode_text(line).gsub(URL) do |url|
         scheme = Regexp.last_match(1)
         scheme.casecmp?("file") || scheme.length == 1 ? url : " "
       end

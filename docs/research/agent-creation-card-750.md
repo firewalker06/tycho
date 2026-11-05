@@ -113,7 +113,7 @@ Run the new Chrome checks from the repository root:
 
 ```sh
 TYCHO_REMOTE_UI_OPTIMISTIC_CREATE_ONLY=1 \
-TYCHO_REMOTE_UI_CAPTURE_DIR=/path/to/temp/tycho-card-750-browser bin/remote-ui-smoke
+TYCHO_REMOTE_UI_CAPTURE_DIR=path/to/temp/tycho-card-750-browser bin/remote-ui-smoke
 ```
 
 They use desktop (1440 px) and mobile (390 px), a held create request, immediate
@@ -130,7 +130,7 @@ a new service instance retry, one run only, conflicting
 options, archived receipts, concurrent requests, and failure after persistence.
 
 Local profiling evidence is retained outside the checkout in
-`/path/to/temp/tycho-card-750/`: `baseline.json`, `stages.jsonl`, `scaled.json`,
+`path/to/temp/tycho-card-750/`: `baseline.json`, `stages.jsonl`, `scaled.json`,
 `scaled-stages.jsonl`, `comparison.json`, and the fixture/profiling scripts.
 Chrome receipts and screenshots are in its `browser/` directory. The tables
 above retain the main measurements even after temporary files are removed.

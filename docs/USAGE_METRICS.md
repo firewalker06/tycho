@@ -10,7 +10,7 @@ Tycho writes one normalized record when a managed run finalizes. The public entr
 
 ## Storage and identity
 
-The owner-readable store is `<home>/.tycho/logs/usage_metrics.json`. Its root schema is versioned:
+The owner-readable store is `HOME/.tycho/logs/usage_metrics.json`. Its root schema is versioned:
 
 ```json
 {

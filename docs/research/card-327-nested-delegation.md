@@ -134,7 +134,7 @@ The automatic messages retain agent authorship and protected queue sources. Upst
 Run from the repository root to capture only synthetic ownership and queue metadata outside the checkout:
 
 ```sh
-TYCHO_TEST_CONTRACT_TRACE=/path/to/temp/tycho-nested-contract.jsonl bundle exec ruby -r ./test/support/push_safety.rb test/delegation_runner_test.rb
+TYCHO_TEST_CONTRACT_TRACE=path/to/temp/tycho-nested-contract.jsonl bundle exec ruby -r ./test/support/push_safety.rb test/delegation_runner_test.rb
 ```
 
 ### Parent contract and remaining evidence

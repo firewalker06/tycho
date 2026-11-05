@@ -9,7 +9,7 @@ recurring work. Use it in the terminal or through its optional Remote UI.
 
 Tycho currently supports Codex, Claude, OpenCode, Pi, and custom profiles for
 any of those native harness families. It keeps each agent's conversation,
-status, and artifacts under your local `<home>/.tycho` directory.
+status, and artifacts under your local `HOME/.tycho` directory.
 
 Tycho is early, single-operator software. Homebrew installs target macOS;
 source installs also work in Linux-style environments and Windows 11 through
@@ -46,7 +46,7 @@ optional integrations, and environment overrides.
 
 ## Configure
 
-Tycho stores project definitions in `<home>/.tycho/config/hq.yml`. A minimal project
+Tycho stores project definitions in `HOME/.tycho/config/hq.yml`. A minimal project
 looks like this:
 
 ```yaml
@@ -54,19 +54,19 @@ projects:
   - key: my-workspace
     name: My Workspace
     group: Personal
-    path: <home>/Code/my-workspace
+    path: HOME/Code/my-workspace
     agent: codex
 ```
 
 You can also create projects from the TUI or the command line:
 
 ```bash
-tycho project create my-workspace --path <home>/Code/my-workspace --harness codex
+tycho project create my-workspace --path HOME/Code/my-workspace --harness codex
 ```
 
 The complete annotated configuration is in
 [`config/hq.yml.example`](config/hq.yml.example). Schedules, prompt templates,
-hooks, and response style use separate files under `<home>/.tycho/config`.
+hooks, and response style use separate files under `HOME/.tycho/config`.
 For compatible local wrappers and gateways, see [custom harness
 profiles](docs/CUSTOM_HARNESSES.md).
 

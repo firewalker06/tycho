@@ -1,6 +1,6 @@
 # Remote Sessions Server
 
-The Remote Sessions server is HQ's local JSON API for inspecting and controlling managed agents without opening the Bubbletea TUI. It is intentionally small and local-first: the API reuses the same `AgentStore` and `ManagedAgent` domain objects as the TUI, so agent state continues to live in `<home>/.tycho/logs/managed_agents.json` and per-agent artifacts under `<home>/.tycho/logs/agents/`.
+The Remote Sessions server is HQ's local JSON API for inspecting and controlling managed agents without opening the Bubbletea TUI. It is intentionally small and local-first: the API reuses the same `AgentStore` and `ManagedAgent` domain objects as the TUI, so agent state continues to live in `HOME/.tycho/logs/managed_agents.json` and per-agent artifacts under `HOME/.tycho/logs/agents/`.
 
 ## Connection limits
 
@@ -78,15 +78,15 @@ limits are unchanged.
 - Routing: manual method/path dispatch in `HQ::RemoteServer`.
 - Domain layer: `HQ::RemoteService`, backed by `Registry`, `Project`, `AgentStore`, `ManagedAgent`, and `AgentChatLog`.
 - QR rendering: `rqrcode` generates the QR matrix; HQ renders a compact terminal half-block QR for the remote UI URL.
-- Logging: request/lifecycle lines are printed to stdout and also sent to `HQ.logger`, which writes to `<home>/.tycho/logs/hq.log`.
+- Logging: request/lifecycle lines are printed to stdout and also sent to `HQ.logger`, which writes to `HOME/.tycho/logs/hq.log`.
 
 No Rack, Puma, WEBrick, or external webserver gem is used.
 
 ## Managed-agent store backups and recovery
 
-Every successful write to `<home>/.tycho/logs/managed_agents.json` validates the
+Every successful write to `HOME/.tycho/logs/managed_agents.json` validates the
 record set and creates at most one checksum-verified snapshot per UTC day in
-`<home>/.tycho/logs/managed_agents.json.backups/`. Snapshot metadata records the
+`HOME/.tycho/logs/managed_agents.json.backups/`. Snapshot metadata records the
 SHA-256 digest, byte size, record count, native-session count, and creation
 time. `TYCHO_AGENT_STORE_BACKUP_RETENTION_DAYS` controls retention and defaults
 to 30 days. Rotation runs only after a new snapshot validates and always keeps
@@ -123,7 +123,7 @@ To restore without editing JSON manually:
 3. Restore the selected absolute snapshot path:
 
    ```bash
-   tycho agent store restore <home>/.tycho/logs/managed_agents.json.backups/managed_agents-YYYYMMDDTHHMMSSffffffZ-CHECK.json
+   tycho agent store restore HOME/.tycho/logs/managed_agents.json.backups/managed_agents-YYYYMMDDTHHMMSSffffffZ-CHECK.json
    ```
 
 The restore rechecks the checksum and schemas under the normal store lock. A
@@ -154,8 +154,8 @@ tycho serve daemon
 
 Daemon mode binds the server first, prints the same Remote UI URL and QR
 code, then returns control to the shell. After detaching, request and
-lifecycle lines continue in `<home>/.tycho/logs/remote_server_daemon.log` and
-`<home>/.tycho/logs/hq.log`.
+lifecycle lines continue in `HOME/.tycho/logs/remote_server_daemon.log` and
+`HOME/.tycho/logs/hq.log`.
 
 When Tailscale is not available, the default bind is:
 
@@ -281,7 +281,7 @@ All six Settings sections use a named level-two heading and a short description.
 
 Quick Agent opens with a read-only current project name, the prompt, and a closed **Options** toggle. Expanded Options contains a separate editable Project selector, optional Name, harness, model, and effort. The selector remains present for project-scoped starts and a one-project catalog. Selection changes update the visible summary and actual create target together while preserving prompt and name. Project choices sort by case-insensitive display name, then key. Settings → Configuration saves the host's global Quick Agent default as `quick_agent.default_project_key` in `hq.yml` through `GET` and `PATCH /settings/quick-agent`. Blank keeps the original first-available-project behavior. Explicit project scope and manual choices take priority. Missing, hidden, and unavailable saved projects fall back to a valid visible workspace; if none remains, creation is rejected. Online peer projects remain available for explicit selection. The Quick Agent backdrop dims the page with a translucent black fill and uses no blur; modal contents retain full opacity. <!-- local-path-ok -->
 
-Settings → Configuration explains that response style is shared writing guidance for tone, clarity, and prose rather than task instructions. A missing policy stays collapsed behind **Add response style**. Once saved, the compact summary shows an excerpt, **Edit response style**, and a trash action that removes the global policy after confirmation. Opening the editor prefills existing content, while saving or canceling returns to the compact summary. Conversation Settings records whether the displayed agent run used the **Global**, **Custom**, or **Disabled** response-style source and combines model and reasoning effort into one row. It reads and writes `<home>/.tycho/config/response_style.md` by default, or `TYCHO_RESPONSE_STYLE_PATH` when configured. Saves use Tycho's atomic file store and retain the previous file as `response_style.md.bak`; focused edits survive polling refreshes.
+Settings → Configuration explains that response style is shared writing guidance for tone, clarity, and prose rather than task instructions. A missing policy stays collapsed behind **Add response style**. Once saved, the compact summary shows an excerpt, **Edit response style**, and a trash action that removes the global policy after confirmation. Opening the editor prefills existing content, while saving or canceling returns to the compact summary. Conversation Settings records whether the displayed agent run used the **Global**, **Custom**, or **Disabled** response-style source and combines model and reasoning effort into one row. It reads and writes `HOME/.tycho/config/response_style.md` by default, or `TYCHO_RESPONSE_STYLE_PATH` when configured. Saves use Tycho's atomic file store and retain the previous file as `response_style.md.bak`; focused edits survive polling refreshes.
 
 Settings → Skills reports the bundled Tycho skill as missing, installed, outdated, blocked, or errored for each built-in harness and configured custom profile. A profile uses its declared Codex, Claude Code, OpenCode, or Pi skill root. Install and update are separate confirmed actions, target that adapter's official personal skill directory, and report the exact skills changed. See [TYCHO_SKILLS.md](./TYCHO_SKILLS.md) for source, ownership, checksum, path, and verification details.
 
@@ -301,7 +301,7 @@ New-agent forms start with a free-text Custom prompt. Existing-agent edit and cl
 
 One Remote UI combines agents and projects from the local `tycho serve` instance and configured peer Remote servers. The browser still talks only to the server that served the UI; that local server returns the cached combined catalog and brokers each resource request to its owner. This avoids browser CORS and lets the local broker apply either server-side configured peer credentials or browser-local peer credentials.
 
-Configure peers in `<home>/.tycho/config/hq.yml`:
+Configure peers in `HOME/.tycho/config/hq.yml`:
 
 ```yaml
 remote_servers:
@@ -317,7 +317,7 @@ remote_servers:
     token_env: TYCHO_LAPTOP_REMOTE_TOKEN
 ```
 
-Configure the Loop session defaults and reusable prompts in Settings → Automation, or directly in `<home>/.tycho/config/hq.yml`:
+Configure the Loop session defaults and reusable prompts in Settings → Automation, or directly in `HOME/.tycho/config/hq.yml`:
 
 ```yaml
 session_loops:
@@ -333,7 +333,7 @@ session_loops:
 
 The Settings screen manages the configured server list; the default local server is always present. Each peer row can edit its display name, choose the Lucide **Server** or **Computer** icon, and explicitly **Forget cached data** without changing the remote server itself. The Agents screen combines agents and projects from all servers and offers an **All servers** filter. Local ownership uses a home icon without a visible label; peers show their configured icon and name. Resource health remains explicit as **Online**, **Offline**, **Stale**, or **Token required**. There is no global active-server switch.
 
-For ad hoc peers, open Settings, use the **Add server** toggle in the **Servers** header, and enter a display name plus a loopback or Tailscale MagicDNS URL such as `tycho-peer` and `http://127.0.0.1:7374/` or `http://vps-cd946cb7.tail952bf7.ts.net:7373`. If the peer requires a bearer token, enter it in **Remote token**. The UI verifies the peer through the agent API, writes the peer metadata to `remote_servers` in `<home>/.tycho/config/hq.yml`, reloads the registry, and refreshes that peer's resource catalog. Removing a non-local server from the list also removes it from `hq.yml`. Ad hoc UI-added peers are intentionally limited to loopback and Tailscale MagicDNS hosts; edit `remote_servers` directly for broader LAN, public, or credentialed peers.
+For ad hoc peers, open Settings, use the **Add server** toggle in the **Servers** header, and enter a display name plus a loopback or Tailscale MagicDNS URL such as `tycho-peer` and `http://127.0.0.1:7374/` or `http://vps-cd946cb7.tail952bf7.ts.net:7373`. If the peer requires a bearer token, enter it in **Remote token**. The UI verifies the peer through the agent API, writes the peer metadata to `remote_servers` in `HOME/.tycho/config/hq.yml`, reloads the registry, and refreshes that peer's resource catalog. Removing a non-local server from the list also removes it from `hq.yml`. Ad hoc UI-added peers are intentionally limited to loopback and Tailscale MagicDNS hosts; edit `remote_servers` directly for broader LAN, public, or credentialed peers.
 
 UI-entered remote tokens are not written to `hq.yml`. Saving one verifies it against the selected peer, atomically writes it to the UI-serving Tycho host's private credential file, and removes the browser-local copy only after persistence succeeds. Existing browser tokens under `hq.remote.serverTokens` remain usable for promotion and are sent only to their owning peer as `X-Tycho-Remote-Server-Token`; a failed promotion leaves that browser copy intact. The UI's own bearer token remains separate under `hq.remote.token` and authenticates the browser to the server that served the UI.
 
@@ -364,7 +364,7 @@ selected for that exact entry:
 1. If `token_env` is configured, its environment value wins. A missing value is
    an error; Tycho does not fall through to its store.
 2. Otherwise, Tycho uses the server key's entry from
-   `<home>/.tycho/config/remote_credentials.json`.
+   `HOME/.tycho/config/remote_credentials.json`.
 3. Otherwise, an inline `token` is accepted temporarily with a migration
    warning. Move it into the credential store with `tycho server migrate`.
 
@@ -402,9 +402,9 @@ The current grouping, silent-notification, and PWA badge behavior is summarized 
 
 The Remote server polls managed-agent state while it is running and sends one push notification when an agent requires response or finishes. Structured `no_action_needed` outcomes stay quiet and do not mark the agent unread. Agent notifications share the `hq:agents` browser notification tag so repeated agent updates replace the previous Tycho agent notification instead of piling up; input-required notifications renotify audibly, while routine finish notifications are marked silent. Agent payloads also carry the current unread-agent count so browsers with the Badging API can show the count on the installed PWA app icon. Notification clicks open a durable `/#notification/{id}` route that can resolve an active or archived agent and show retained fallback detail if the original target is absent.
 
-Use `.env.sample` as the template for local runtime environment values such as `TYCHO_WEB_PUSH_VAPID_SUBJECT`. Real `.env` files are gitignored. `tycho serve` loads both the install/repo `.env` and `<home>/.tycho/.env` automatically on startup, with `<home>/.tycho/.env` taking precedence over the install/repo file. Values already set in the process environment take precedence over both files; public runtime overrides use the `TYCHO_*` prefix.
+Use `.env.sample` as the template for local runtime environment values such as `TYCHO_WEB_PUSH_VAPID_SUBJECT`. Real `.env` files are gitignored. `tycho serve` loads both the install/repo `.env` and `HOME/.tycho/.env` automatically on startup, with `HOME/.tycho/.env` taking precedence over the install/repo file. Values already set in the process environment take precedence over both files; public runtime overrides use the `TYCHO_*` prefix.
 
-Auto-refresh reads the in-memory `/servers/resources` catalog first, so slow or offline peers do not block list rendering. The broker atomically persists each peer's last successful compact snapshot in `<home>/.tycho/logs/remote_resources.json` with private file permissions. On startup it restores configured peers as stale before attempting network refreshes, so an offline peer's agents and projects survive a broker restart. Persisted snapshots have no age-based expiry while the peer remains configured. <!-- local-path-ok -->
+Auto-refresh reads the in-memory `/servers/resources` catalog first, so slow or offline peers do not block list rendering. The broker atomically persists each peer's last successful compact snapshot in `HOME/.tycho/logs/remote_resources.json` with private file permissions. On startup it restores configured peers as stale before attempting network refreshes, so an offline peer's agents and projects survive a broker restart. Persisted snapshots have no age-based expiry while the peer remains configured. <!-- local-path-ok -->
 
 A bounded background worker pool refreshes local and peer snapshots with short timeouts. Failed, unauthorized, incompatible, and incomplete responses retain the last successful snapshot and use exponential retry backoff. A valid response must contain both complete `agents` and `projects` arrays; it replaces the prior snapshot atomically, so resources missing from that successful response are treated as deleted or archived. Removing a peer or choosing **Forget cached data** removes its persisted snapshot.
 
@@ -469,7 +469,7 @@ While running, the server prints request logs to stdout:
 [Remote] 00:14:31 POST /agents/web-charlie-agent-8/messages 200 18.7ms <!-- local-path-ok -->
 ```
 
-The same lines are written to `<home>/.tycho/logs/hq.log` through `HQ.logger`.
+The same lines are written to `HOME/.tycho/logs/hq.log` through `HQ.logger`.
 
 ### Server-Timing and slow requests
 
@@ -502,7 +502,7 @@ Agent responses use this shape:
   "name": "Web Charlie",
   "project_key": "web",
   "template_key": "implementer",
-  "workspace": "<home>/Code/web",
+  "workspace": "HOME/Code/web",
   "prompt": "Work on the next task.",
   "sandbox_mode": "danger-full-access",
   "agent": "codex",
@@ -517,8 +517,8 @@ Agent responses use this shape:
   "last_result": "success",
   "summary": "Completed successfully",
   "session_id": "019db38a-99ca-7109-9f26-be991d1a4708",
-  "log_path": "<home>/Code/hq/<home>/.tycho/logs/agents/web-charlie-agent-8.raw.log",
-  "memory_path": "<home>/Code/hq/<home>/.tycho/logs/agents/web-charlie-agent-8.memory.jsonl",
+  "log_path": "HOME/Code/hq/HOME/.tycho/logs/agents/web-charlie-agent-8.raw.log",
+  "memory_path": "HOME/Code/hq/HOME/.tycho/logs/agents/web-charlie-agent-8.memory.jsonl",
   "revision": "1778247891.123456"
 }
 ```
@@ -609,7 +609,7 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `GET` | `/attachments/{id}/blob` | Stream the attachment file bytes for image and binary previews. | <!-- local-path-ok -->
 | `GET` | `/setup` | Read full Remote UI readiness, including harness, tool, and skill diagnostics. |
 | `GET` | `/setup/summary` | Read lightweight shell, auth, count, config, onboarding, log, push, and refresh metadata without cold harness discovery. | <!-- local-path-ok -->
-| `POST` | `/setup/welcome` | Create the first-run welcome sandbox project under `<home>/.tycho/workspaces/welcome`. | <!-- local-path-ok -->
+| `POST` | `/setup/welcome` | Create the first-run welcome sandbox project under `HOME/.tycho/workspaces/welcome`. | <!-- local-path-ok -->
 | `GET` | `/search` | Return agent and project payloads for compatibility with older client-side search flows. |
 | `GET` | `/`, `/ui`, `/ui.css`, `/ui.js` | Serve the Remote UI. `/ui` remains a compatibility alias. | <!-- local-path-ok -->
 | `GET` | `/favicon.svg`, `/favicon.ico` | Serve the Remote UI favicon. | <!-- local-path-ok -->
@@ -638,7 +638,7 @@ Requests a Remote server self-restart. The endpoint is authenticated like other 
 ```json
 {
   "restarting": true,
-  "command": "/path/to/ruby"
+  "command": "path/to/ruby"
 }
 ```
 
@@ -663,7 +663,7 @@ Returns active agents:
 
 ### `POST /agents`
 
-Creates a new agent from a project template and persists it to `<home>/.tycho/logs/managed_agents.json`.
+Creates a new agent from a project template and persists it to `HOME/.tycho/logs/managed_agents.json`.
 
 `POST /agents`, `POST /agents/{key}/messages`, and `POST /agents/{key}/start` accept an optional `parent_agent_key`. Tycho trusts that key as a declaration that the operation came from the parent; omitting it makes a message a direct user takeover. The parent must be active on this server. An optional `parent_server_id` must match this server's stable instance ID; cross-server delegation is rejected. Repeating the same association is idempotent, while self-parenting, cycles, unknown parents, and conflicting re-parenting return a conflict. <!-- local-path-ok -->
 
@@ -677,7 +677,7 @@ Request:
   "template_key": "implementer",
   "name": "Web Charlie",
   "prompt": "Work on the checkout bug.",
-  "workspace": "<home>/Code/web",
+  "workspace": "HOME/Code/web",
   "sandbox_mode": "danger-full-access",
   "agent": "codex",
   "model": "gpt-5.1-codex-max",
@@ -862,7 +862,7 @@ Response:
     "type": "file",
     "format": "markdown",
     "title": "Notes",
-    "path": "<home>/project/docs/notes.md",
+    "path": "HOME/project/docs/notes.md",
     "blob_path": "/attachments/att_abc123/blob", // <!-- local-path-ok -->
     "content": "# Notes\n\n- Check follow-up work"
   }
@@ -879,7 +879,7 @@ curl http://127.0.0.1:7373/attachments/att_abc123/blob --output attachment.bin
 
 ### `PUT /agents/{key}/reading` <!-- local-path-ok -->
 
-Marks an agent as read after the user has visibly visited its rendered conversation. This is the explicit Remote UI mutation for clearing `unread` in `<home>/.tycho/logs/managed_agents.json`; `GET /agents/{key}/conversation` remains read-only, and polling data is not treated as reading. <!-- local-path-ok -->
+Marks an agent as read after the user has visibly visited its rendered conversation. This is the explicit Remote UI mutation for clearing `unread` in `HOME/.tycho/logs/managed_agents.json`; `GET /agents/{key}/conversation` remains read-only, and polling data is not treated as reading. <!-- local-path-ok -->
 
 ```sh
 curl -X PUT http://127.0.0.1:7373/agents/web-charlie-agent-8/reading
@@ -1005,7 +1005,7 @@ retry cases with and without notifications, both dispatch/cancel transaction
 orders and concurrent races, cancellation during file preparation, and desktop/
 mobile Dark/Nord Light two-tab composer preservation. Optional
 `TYCHO_REMOTE_UI_PROMPT_CONCURRENCY_CASE=lane|tabs` selects the focused cases;
-`TYCHO_REMOTE_UI_PROMPT_OUTBOX_BASELINE=/path/to/path/prompt_submissions.js`
+`TYCHO_REMOTE_UI_PROMPT_OUTBOX_BASELINE=path/to/path/prompt_submissions.js`
 serves a pinned module for before checks. Use an outside-checkout capture path.
 
 For delivery-proof and local cancellation checks, run
@@ -1015,7 +1015,7 @@ read/auth errors, same-text distinct IDs, multiple ordered intents, cancellation
 late replies, reload/navigation, and local/synthetic peer routes in desktop/mobile
 Dark and Nord Light. Set `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the checkout to
 save screenshots and request-count evidence. For a before comparison,
-`TYCHO_REMOTE_UI_PROMPT_RETRY_BASELINE=/path/to/path/ui.js` serves the pinned
+`TYCHO_REMOTE_UI_PROMPT_RETRY_BASELINE=path/to/path/ui.js` serves the pinned
 full UI bundle (prompt submissions, inquiry submissions, then app).
 For a focused repeat of a timing case, set
 `TYCHO_REMOTE_UI_PROMPT_RETRY_CASE=1440:dark:peer:immediate` and optional
@@ -1141,7 +1141,7 @@ curl -X POST http://127.0.0.1:7373/agents/web-charlie-agent-8/stop
 
 ### `DELETE /agents/{key}` <!-- local-path-ok -->
 
-Archives an idle agent by moving its log artifacts to `<home>/.tycho/logs/agents/archive/` and removing it from `<home>/.tycho/logs/managed_agents.json`. A callback-only queue is archived without execution and preserved in read-only conversation history. Ordinary queued prompts and mixed queues return HTTP `409` with instructions to run or delete the ordinary work; running agents also return `409`.
+Archives an idle agent by moving its log artifacts to `HOME/.tycho/logs/agents/archive/` and removing it from `HOME/.tycho/logs/managed_agents.json`. A callback-only queue is archived without execution and preserved in read-only conversation history. Ordinary queued prompts and mixed queues return HTTP `409` with instructions to run or delete the ordinary work; running agents also return `409`.
 
 ```bash
 curl -X DELETE http://127.0.0.1:7373/agents/web-charlie-agent-8
@@ -1153,7 +1153,7 @@ Response:
 {
   "archived": true,
   "agent_key": "web-charlie-agent-8",
-  "archive_path": "<home>/Code/hq/<home>/.tycho/logs/agents/archive/20260508-001431-web-charlie-agent-8",
+  "archive_path": "HOME/Code/hq/HOME/.tycho/logs/agents/archive/20260508-001431-web-charlie-agent-8",
   "archived_delegation_callback_count": 2
 }
 ```
@@ -1187,7 +1187,7 @@ Response:
   "archived": [
     {
       "agent_key": "web-charlie-agent-8",
-      "archive_path": "<home>/.tycho/logs/agents/archive/20260508-001431-web-charlie-agent-8"
+      "archive_path": "HOME/.tycho/logs/agents/archive/20260508-001431-web-charlie-agent-8"
     }
   ],
   "skipped": [
@@ -1309,7 +1309,7 @@ Disables one browser push subscription by endpoint:
 
 ### `POST /push/test` <!-- local-path-ok -->
 
-Sends a test notification to an enabled subscription. Automatic agent-transition notifications are sent by the Remote server poll loop, de-duplicated in `<home>/.tycho/logs/push_notifications.json`, grouped through a shared notification tag, and mirrored to the installed-app badge when the browser exposes the Badging API.
+Sends a test notification to an enabled subscription. Automatic agent-transition notifications are sent by the Remote server poll loop, de-duplicated in `HOME/.tycho/logs/push_notifications.json`, grouped through a shared notification tag, and mirrored to the installed-app badge when the browser exposes the Badging API.
 
 `sent: 1` means the push provider returned HTTP 2xx. It does not prove that the service worker received the payload or that Windows displayed it. Provider response codes and acceptance/failure times are persisted with the subscription and logged with a hashed endpoint label.
 
@@ -1384,7 +1384,7 @@ Remote UI can render a first-run screen without the normal header or footer.
 
 ### `GET /settings/response-style` <!-- local-path-ok -->
 
-Returns the active global response-style file as `response_style`, including its `path`, `content`, UTF-8 byte count, and `exists` state. A missing file returns an empty, addable configuration instead of an error. The endpoint resolves `TYCHO_RESPONSE_STYLE_PATH` first and otherwise uses `<home>/.tycho/config/response_style.md`.
+Returns the active global response-style file as `response_style`, including its `path`, `content`, UTF-8 byte count, and `exists` state. A missing file returns an empty, addable configuration instead of an error. The endpoint resolves `TYCHO_RESPONSE_STYLE_PATH` first and otherwise uses `HOME/.tycho/config/response_style.md`.
 
 ### `PATCH /settings/response-style` <!-- local-path-ok -->
 
@@ -1408,7 +1408,7 @@ Adopts an idle, unscheduled managed agent as a normal schedule whose target incl
 
 ### `POST /setup/welcome` <!-- local-path-ok -->
 
-Creates the first-run welcome sandbox at `<home>/.tycho/workspaces/welcome`, appends a
+Creates the first-run welcome sandbox at `HOME/.tycho/workspaces/welcome`, appends a
 `welcome` project to `hq.yml`, and returns the project detail payload. This route
 is only available before any project is configured.
 

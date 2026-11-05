@@ -183,7 +183,7 @@ Example agent payload:
 3. If it says **Ready**, select **Enable notifications** and accept the Windows/browser permission prompt.
 4. Select **Send test**. Confirm a Tycho notification appears in Windows Notification Center while the PWA is minimized or closed.
 5. Complete a disposable agent run. Confirm one completion notification arrives and opens that agent when selected.
-6. If delivery fails, copy the **Tycho build** value, open DevTools in the PWA, select **Application → Service workers**, and confirm `/service-worker.js` is active with scope `/` for the Tycho origin. Then check Windows **Settings → System → Notifications** for both the browser and installed Tycho PWA, and inspect `<home>/.tycho/logs/hq.log` on the Tycho host for the endpoint host plus HTTP response code. Do not copy or share the full endpoint. <!-- local-path-ok -->
+6. If delivery fails, copy the **Tycho build** value, open DevTools in the PWA, select **Application → Service workers**, and confirm `/service-worker.js` is active with scope `/` for the Tycho origin. Then check Windows **Settings → System → Notifications** for both the browser and installed Tycho PWA, and inspect `HOME/.tycho/logs/hq.log` on the Tycho host for the endpoint host plus HTTP response code. Do not copy or share the full endpoint. <!-- local-path-ok -->
 
 ## Improvement Ideas
 
