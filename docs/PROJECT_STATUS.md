@@ -15,13 +15,17 @@ type: project
 ## Managed prompt transport
 
 Command builders declare the prompt transport. Codex managed runs use stdin
-with `exec -` or `exec resume ID -`; Claude, agy, Pi, and OpenCode retain argv.
+with `exec -` or `exec resume ID -`; Claude uses print-mode text stdin; agy
+uses `--print --input-format text` with stdin for new and resumed runs. Pi and
+OpenCode retain argv.
 The correction runner receives its configuration through stdin, so command
 arrays with prompt text do not enter the runner environment. Pipe writers run
 concurrently with stdout reads. Raw logs and canonical memory keep their
 existing prompt content; saved command descriptions redact prompt arguments.
-Installed Codex CLI 0.166.0 help confirms both stdin forms. Follow-up harness
-transport work is tracked separately in cards #812 through #816.
+Installed Codex CLI 0.166.0 help confirms both stdin forms. agy CLI 1.5.1 help
+confirms text stdin, print mode, conversation resume, JSON Schema, and
+stream-json output. Follow-up harness transport work is tracked separately in
+cards #812 through #816.
 
 ## Message acceptance and background reads
 

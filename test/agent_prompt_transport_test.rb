@@ -82,6 +82,37 @@ module AgentPromptTransportTest
         end
       end
 
+      # agy print mode uses text stdin with its native stream-json output.
+      ["agy first line\n日本語 🛰️\n\n", "agy-private-813\n" + ("é\n" * 600_000)].each do |prompt|
+        [nil, "agy-session-813"].each do |session|
+          agent = HQ::ManagedAgent.new(key: "agy-transport", name: "agy Transport", project_key: "test",
+                                       template_key: "custom", workspace: dir, prompt:, agent: "agy",
+                                       session_id: session, log_path: File.join(dir, "agy.raw.log"))
+          execution = agent.send(:build_command, prompt:)
+          assert(execution[:prompt_transport] == "stdin", "agy must declare stdin")
+          assert(execution[:command].include?("--print") && execution[:command].include?("--input-format") &&
+                 execution[:command].include?("text") && execution[:command].include?("--output-format") &&
+                 execution[:command].include?("stream-json"), "agy must keep text stdin and stream-json output")
+          assert(!execution[:command].include?(prompt), "agy prompt leaked into argv")
+          assert(execution[:command].include?("--conversation") && execution[:command].include?(session),
+                 "agy resume arguments missing") if session
+          input = HQ::AgentPromptTransport.input(execution[:stdin_data])
+          reader, writer = IO.pipe
+          pid = Process.spawn(RbConfig.ruby, script, *execution[:command].drop(1), in: input, out: writer)
+          input.close
+          writer.close
+          result = JSON.parse(reader.read)
+          reader.close
+          _, status = Process.wait2(pid)
+          assert(status.success?, "agy fake child failed")
+          assert(result["digest"] == Digest::SHA256.hexdigest(prompt) && result["size"] == prompt.bytesize,
+                 "agy prompt bytes changed")
+          assert(!(result["argv"] + result["env"].values).any? { |value| value.include?(prompt) },
+                 "agy prompt leaked into child argv or environment")
+          assert(!result["process"].include?("agy-private-813"), "agy prompt leaked into process listing")
+        end
+      end
+
       # Exercise the complete managed launch, including the recorder and correction runner.
       managed_script = File.join(dir, "managed_harness.rb")
       fixture = File.expand_path("fixtures/structured_output/valid.json", __dir__)
@@ -122,6 +153,34 @@ module AgentPromptTransportTest
       Timeout.timeout(15) { agent.instance_variable_get(:@process_monitors).values.each(&:join) }
       agent.poll!
       assert(agent.last_exit_code == 0 && File.binread(capture) == expected.b, "direct resumed launch changed stdin")
+
+      agy_capture = File.join(dir, "agy-received")
+      agy_script = File.join(dir, "agy_managed_harness.rb")
+      File.write(agy_script, <<~'CHILD')
+        capture = ARGV.shift
+        File.binwrite(capture, STDIN.read)
+      CHILD
+      agy_prompt = "agy-managed-private-813\n日本語 🛰️\n" + ("é" * 600_000)
+      agy_agent = HQ::ManagedAgent.new(key: "managed-agy-transport", name: "Managed agy", project_key: "test",
+                                       template_key: "custom", workspace: dir, prompt: agy_prompt, agent: "agy",
+                                       log_path: File.join(dir, "managed-agy.raw.log"),
+                                       messages: [HQ::ManagedAgent::AgentMessage.new(role: "system", content: agy_prompt, created_at: Time.now)])
+      agy_prefix = [RbConfig.ruby, agy_script, agy_capture]
+      agy_agent.define_singleton_method(:harness_execution) { { command: agy_prefix, env: {} } }
+      agy_agent.define_singleton_method(:structured_output_correction_supported?) { false }
+      agy_execution = agy_agent.send(:build_command)
+      agy_expected = agy_execution[:stdin_data]
+      assert(agy_execution[:prompt_transport] == "stdin" && !agy_execution[:command].include?(agy_prompt),
+             "managed agy launch must keep prompt out of argv")
+      agy_agent.start!
+      Timeout.timeout(15) { agy_agent.instance_variable_get(:@process_monitors).values.each(&:join) }
+      agy_agent.poll!
+      assert(agy_agent.last_exit_code == 0 && File.binread(agy_capture) == agy_expected.b,
+             "managed agy launch changed exact prompt bytes")
+      assert(File.binread(agy_agent.raw_log_path).include?(agy_prompt.b), "agy raw log lost exact prompt")
+      assert(File.readlines(agy_agent.memory_path).map { |line| JSON.parse(line) }
+             .any? { |event| event["content"] == agy_prompt }, "agy canonical transcript lost exact prompt")
+      assert(!agy_agent.last_run.command.include?("agy-managed-private-813"), "agy saved command leaked prompt")
 
       # A child that closes stdin before reading must not leave a blocked writer.
       before = Thread.list

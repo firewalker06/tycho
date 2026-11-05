@@ -109,10 +109,15 @@ module HQ
       command.concat(["--conversation", @session_id]) unless @session_id.empty?
       unless interactive
         command.concat(["--output-format", "stream-json", "--print-timeout", "120s"])
+        command.concat(["--input-format", "text"])
         command.concat(["--json-schema", @result_schema_path]) if File.file?(@result_schema_path)
       end
-      command.concat([interactive ? "--prompt-interactive" : "--print", @prompt])
-      execution(command)
+      if interactive
+        execution(command + ["--prompt-interactive", @prompt])
+      else
+        command << "--print"
+        execution(command).merge(prompt_transport: "stdin", stdin_data: @prompt)
+      end
     end
 
     def build_interactive_codex_command
