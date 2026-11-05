@@ -5,6 +5,7 @@ require_relative "log_paths"
 require_relative "attachment_normalizer"
 require_relative "queue_work"
 require_relative "agent_command_builder"
+require_relative "agent_prompt_transport"
 require_relative "harness_execution"
 require_relative "agent_memory"
 require_relative "agent_stream_projector"
@@ -1333,7 +1334,7 @@ module HQ
       if (missing = missing_executable_for(command))
         return record_start_failure!(
           "Agent harness #{@agent.inspect} executable not found: #{missing}",
-          command,
+          execution.fetch(:description, command),
           run_metadata:
         )
       end
@@ -1366,12 +1367,12 @@ module HQ
       end
 
       log_file = File.open(@log_path, "a")
-      launch = structured_output_runner_launch(command, environment)
+      launch = structured_output_runner_launch(command, environment, execution)
       run = AgentRun.new(
         started_at: @started_at,
         status: "running",
         log_path: @log_path,
-        command: Shellwords.join(command),
+        command: Shellwords.join(execution.fetch(:description, command)),
         session_id: @session_id,
         response_style_source: response_style_source,
         agent: @agent,
@@ -1391,6 +1392,7 @@ module HQ
       before_spawn&.call(run)
       native_owned_path = run_native_owned_file_path(run_id)
       FileUtils.rm_f(native_owned_path)
+      launch_input = AgentPromptTransport.input(launch[:stdin_data])
       @pid = spawn(
         external_process_environment(launch.fetch(:env)).merge(
           "TYCHO_STATUS_PATH" => status_path,
@@ -1409,8 +1411,9 @@ module HQ
           "TYCHO_LAUNCH_OWNER_PID" => Process.pid.to_s
         ),
         current_ruby_executable, "--disable-gems", "-e", agent_runner_script, *launch.fetch(:command),
-        chdir: @workspace, out: log_file, err: %i[child out], pgroup: true
+        in: launch_input || File::NULL, chdir: @workspace, out: log_file, err: %i[child out], pgroup: true
       )
+      launch_input&.close
       delivery_rolled_back = false
       native_acknowledged = false
       # The prepared run and outer PID are durable before ownership transfers.
@@ -1449,6 +1452,8 @@ module HQ
         before_spawn&.call(run)
       end
       raise
+    ensure
+      launch_input&.close unless launch_input&.closed?
     end
 
     def stop!
@@ -2143,9 +2148,13 @@ module HQ
       command_builder(prompt:).build
     end
 
-    def structured_output_runner_launch(command, environment)
+    def structured_output_runner_launch(command, environment, execution = {})
       unless structured_output_correction_supported?
-        return { command:, env: environment.merge("TYCHO_NATIVE_ACK_DELEGATED" => nil) }
+        return {
+          command:,
+          stdin_data: execution[:stdin_data],
+          env: environment.merge("TYCHO_NATIVE_ACK_DELEGATED" => nil, "TYCHO_AGENT_RUNNER_CONFIG" => nil)
+        }
       end
 
       correction = command_builder(
@@ -2155,6 +2164,8 @@ module HQ
       ).build
       config = {
         "initial_command" => command,
+        "initial_stdin" => execution[:stdin_data],
+        "prompt_transport" => correction.fetch(:prompt_transport),
         "correction_command" => correction.fetch(:command),
         "harness_adapter" => harness_adapter,
         "schema_path" => result_schema_path,
@@ -2168,12 +2179,13 @@ module HQ
         "--disable-gems",
         "-I", File.expand_path("../..", __dir__),
         "-r", "hq/domain/agent_correction_runner",
-        "-e", "HQ::AgentCorrectionRunner.run_from_environment!"
+        "-e", "HQ::AgentCorrectionRunner.run_from_stdin!"
       ]
       {
         command: runner_command,
+        stdin_data: JSON.generate(config),
         env: environment.merge(
-          "TYCHO_AGENT_RUNNER_CONFIG" => JSON.generate(config),
+          "TYCHO_AGENT_RUNNER_CONFIG" => nil,
           "TYCHO_NATIVE_ACK_DELEGATED" => "1"
         )
       }
@@ -2362,6 +2374,7 @@ module HQ
                        require recorder_path
                        HQ::AgentStreamRecorder.run(
                          command: ARGV,
+                         input: STDIN,
                          raw_log_path: ENV.fetch("TYCHO_RAW_LOG_PATH"),
                          memory_path: ENV.fetch("TYCHO_MEMORY_PATH"),
                          agent_type: ENV.fetch("TYCHO_AGENT_TYPE"),

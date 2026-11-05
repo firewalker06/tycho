@@ -2,6 +2,7 @@
 
 require "fileutils"
 require "json"
+require_relative "agent_prompt_transport"
 require_relative "agent_structured_result"
 require_relative "agent_structured_output_validator"
 
@@ -11,8 +12,8 @@ module HQ
     PROMPT_PLACEHOLDER = "__TYCHO_CORRECTION_PROMPT__"
     VALIDATION_FAILURE_EXIT_CODE = 65
 
-    def self.run_from_environment!
-      config = JSON.parse(ENV.fetch("TYCHO_AGENT_RUNNER_CONFIG"))
+    def self.run_from_stdin!
+      config = JSON.parse(STDIN.read)
       exit(new(config).run)
     rescue StandardError => e
       warn "Tycho agent runner failed: #{e.class}: #{e.message}"
@@ -28,11 +29,12 @@ module HQ
 
     def run
       command = @config.fetch("initial_command")
+      input = @config["initial_stdin"]
       correction_limit = Integer(@config.fetch("correction_limit"))
       session_id = @config["session_id"].to_s
 
       (0..correction_limit).each do |attempt|
-        lines, exit_code = execute(command)
+        lines, exit_code = execute(command, input)
         return exit_code unless exit_code.zero?
 
         session_id = discover_session_id(lines) if session_id.empty?
@@ -57,17 +59,20 @@ module HQ
         end
 
         command = correction_command(session_id, validation.errors, attempt:, correction_limit:)
+        input = @correction_input
       end
     end
 
     private
 
-    def execute(command)
+    def execute(command, input = nil)
       FileUtils.rm_f(@config["last_message_path"]) unless @config["last_message_path"].to_s.empty?
       lines = []
       status = nil
       stream, child_output = IO.pipe
-      pid = Process.spawn(*command, in: File::NULL, out: child_output, err: [:child, :out])
+      prompt_input = AgentPromptTransport.input(input)
+      pid = Process.spawn(*command, in: prompt_input || File::NULL, out: child_output, err: [:child, :out])
+      prompt_input&.close
       acknowledge_native_start!(pid)
       child_output.close
       stream.each_line do |line|
@@ -81,6 +86,7 @@ module HQ
       warn e.message
       [lines, 127]
     ensure
+      prompt_input&.close unless prompt_input&.closed?
       stream&.close unless stream&.closed?
       child_output&.close unless child_output&.closed?
       begin
@@ -140,6 +146,7 @@ module HQ
         "errors" => errors,
         "instruction" => "Return one complete corrected JSON payload matching the configured schema. Include every required field."
       }
+      @correction_input = @config["prompt_transport"] == "stdin" ? JSON.generate(feedback) : nil
       @config.fetch("correction_command").map do |argument|
         argument.to_s
                 .gsub(SESSION_PLACEHOLDER, session_id)

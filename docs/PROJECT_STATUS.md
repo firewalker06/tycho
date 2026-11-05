@@ -12,6 +12,17 @@ type: project
 
 2026-11-05
 
+## Managed prompt transport
+
+Command builders declare the prompt transport. Codex managed runs use stdin
+with `exec -` or `exec resume ID -`; Claude, agy, Pi, and OpenCode retain argv.
+The correction runner receives its configuration through stdin, so command
+arrays with prompt text do not enter the runner environment. Pipe writers run
+concurrently with stdout reads. Raw logs and canonical memory keep their
+existing prompt content; saved command descriptions redact prompt arguments.
+Installed Codex CLI 0.166.0 help confirms both stdin forms. Follow-up harness
+transport work is tracked separately in cards #812 through #816.
+
 ## Message acceptance and background reads
 
 The Remote UI uses an opt-in small message receipt. Durable acceptance and

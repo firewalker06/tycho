@@ -652,7 +652,7 @@ module PromptQueueTest
           count_path = #{count.to_json}
           run_number = (File.exist?(count_path) ? File.read(count_path).to_i : 0) + 1
           File.write(count_path, run_number.to_s)
-          File.open(#{capture.to_json}, "a") { |file| file.puts JSON.generate(ARGV) }
+          File.open(#{capture.to_json}, "a") { |file| file.puts JSON.generate("argv" => ARGV, "prompt" => STDIN.read) }
           File.write(#{File.join(workspace, 'first-run-ready').to_json}, "ready") if run_number == 1
           deadline = Time.now + 20
           sleep 0.01 until run_number != 1 || File.exist?(#{gate.to_json}) || Time.now >= deadline
@@ -732,7 +732,10 @@ module PromptQueueTest
         finished = replay.load_with_poll_events(process_delegations: false).first.find { |candidate| candidate.key == agent.key }
         2.times { replay.load_with_poll_events(process_delegations: false) }
         finished = replay.load_with_poll_events(process_delegations: false).first.find { |candidate| candidate.key == agent.key }
-        arguments = File.readlines(capture).map { |line| JSON.parse(line) }
+        arguments = File.readlines(capture).map do |line|
+          entry = JSON.parse(line)
+          entry.fetch("argv") + [entry.fetch("prompt")]
+        end
         read_events = HQ::AgentMemory.new(finished).events.select { |event| event.dig("metadata", "queue_read") == true }
         resolved = finished.queue_work_batch(batch.fetch("id"))
         expected_dispositions = entries.to_h do |id, source|
@@ -2695,7 +2698,7 @@ module PromptQueueTest
     path = File.join(workspace, "capture-codex")
     File.write(path, <<~RUBY)
       #!/usr/bin/env ruby
-      File.write(ENV.fetch("TYCHO_TEST_QUEUE_CAPTURE"), ARGV.join("\n"))
+      File.write(ENV.fetch("TYCHO_TEST_QUEUE_CAPTURE"), STDIN.read)
     RUBY
     File.chmod(0o755, path)
     path

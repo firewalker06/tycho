@@ -9,8 +9,8 @@ require_relative "sleep_circuit_breaker"
 module HQ
   class AgentStreamRecorder
     def self.run(command:, raw_log_path:, memory_path:, agent_type:, run_id:, incident_path: nil,
-                 native_started_path: nil)
-      new(raw_log_path:, memory_path:, agent_type:, run_id:, incident_path:, native_started_path:).run(command)
+                 native_started_path: nil, input: File::NULL)
+      new(raw_log_path:, memory_path:, agent_type:, run_id:, incident_path:, native_started_path:).run(command, input:)
     end
 
     def initialize(raw_log_path:, memory_path:, agent_type:, run_id:, incident_path: nil, native_started_path: nil)
@@ -21,7 +21,7 @@ module HQ
       @native_started_path = native_started_path.to_s
     end
 
-    def run(command)
+    def run(command, input: File::NULL)
       FileUtils.mkdir_p(File.dirname(@raw_log_path))
       stream = nil
       child_output = nil
@@ -30,7 +30,7 @@ module HQ
 
       File.open(@raw_log_path, "ab") do |raw|
         stream, child_output = IO.pipe
-        pid = Process.spawn(*command, in: File::NULL, out: child_output, err: [:child, :out], pgroup: true)
+        pid = Process.spawn(*command, in: input, out: child_output, err: [:child, :out], pgroup: true)
         child_output.close
         child_output = nil
         install_signal_relay(pid)

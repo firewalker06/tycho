@@ -4013,7 +4013,7 @@ module RemoteServerTest
       File.write(fake_codex, <<~RUBY)
         #!#{RbConfig.ruby}
         require "json"
-        File.write(#{argv_path.dump}, JSON.generate(ARGV))
+        File.write(#{argv_path.dump}, JSON.generate("argv" => ARGV, "prompt" => STDIN.read))
         if ARGV.include?("--full-auto")
           warn "error: unexpected argument '--full-auto' found"
           warn "For more information, try '--help'."
@@ -4076,14 +4076,15 @@ module RemoteServerTest
 
       service.submit_prompt(created[:key], "prompt" => message, "start" => true)
       result = wait_for_agent_terminal_status(service, created[:key])
-      argv = JSON.parse(File.read(argv_path))
-      prompt_argument = argv.find { |argument| argument.include?("inquiry reply") }
-      prompt_index = argv.index(prompt_argument)
+      captured = JSON.parse(File.read(argv_path))
+      argv = captured.fetch("argv")
+      prompt = captured.fetch("prompt")
 
       assert(result[:status] == "succeeded",
              "expected dash-prefixed Remote UI prompt to start successfully, got #{result[:status].inspect}")
-      assert(prompt_index && argv[prompt_index - 1] == "--",
-             "expected Codex prompt to be separated from CLI options, got #{argv.inspect}")
+      assert(argv.last(2) == ["--", "-"] && prompt.include?(message) &&
+             argv.none? { |argument| argument.include?("inquiry reply") },
+             "expected dash-prefixed Codex prompt on stdin, got #{argv.inspect}")
     ensure
       if old_codex_bin
         ENV["TYCHO_CODEX_BIN"] = old_codex_bin
