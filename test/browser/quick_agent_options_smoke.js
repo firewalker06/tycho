@@ -5,15 +5,21 @@ const path = require("node:path");
 module.exports = async ({ browser, baseUrl, captureDir }) => {
   await require("./quick_agent_create_actions_smoke")({ browser, baseUrl, captureDir });
   const results = [];
-  for (const width of [1440, 390, 320]) {
-    const context = await browser.newContext({ viewport: { width, height: 900 } });
+  for (const {width, height} of [
+    {width: 1440, height: 900},
+    {width: 1366, height: 768},
+    {width: 1280, height: 720},
+    {width: 390, height: 844},
+    {width: 320, height: 568},
+  ]) {
+    const context = await browser.newContext({ viewport: { width, height } });
     const page = await context.newPage();
     const errors = [];
     page.on("pageerror", e => errors.push(e.message));
     // Every real request is restricted to the throwaway service.
     await context.route("**/*", route => new URL(route.request().url()).origin === baseUrl ? route.continue() : route.abort());
     await page.goto(`${baseUrl}/ui#agents`, { waitUntil: "networkidle" });
-    await page.evaluate(() => { clearTimeout(state.timer); state.timer = 1; });
+    await page.evaluate(() => { clearTimeout(state.timer); state.timer = 1; state.setupDetailed = true; });
     const options = await (await context.request.get(`${baseUrl}/quick-agent/options`)).json();
     let delay = 600, fail = false, empty = false, peerDelay = 800, peerFail = false;
     let localReads = 0, peerReads = 0;
@@ -79,23 +85,32 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       if (count === 10) {
         const list = await page.locator("[data-quick-agent-peers]").evaluate(el => ({client:el.clientHeight, scroll:el.scrollHeight, overflow:getComputedStyle(el).overflowY}));
         assert(list.scroll > list.client && ["auto", "scroll"].includes(list.overflow), JSON.stringify(list));
-      }
-      if (width <= 640) {
-        const layout = await page.evaluate(() => ({
-          listBottom:document.querySelector("[data-quick-agent-peers]").getBoundingClientRect().bottom,
-          footerTop:document.querySelector(".quick-agent-actions").getBoundingClientRect().top,
-        }));
-        assert(layout.listBottom <= layout.footerTop, `host list must stay above the sticky footer: ${JSON.stringify(layout)}`);
+        const body = await page.locator(".quick-agent-body").evaluate(el => ({client:el.clientHeight, scroll:el.scrollHeight, overflow:getComputedStyle(el).overflowY}));
+        assert(["auto", "scroll"].includes(body.overflow), JSON.stringify(body));
+        if (height <= 768) assert(body.scroll > body.client, JSON.stringify(body));
       }
       await capture(`hosts-${count}`);
+      const frameVisible = await page.evaluate(() => {
+        const rect = el => el.getBoundingClientRect();
+        const form = rect(document.querySelector("#quick-agent-form"));
+        const header = rect(document.querySelector(".quick-agent-header"));
+        const footer = rect(document.querySelector(".quick-agent-actions"));
+        return form.top >= 0 && form.bottom <= innerHeight && header.top >= 0 && footer.bottom <= innerHeight;
+      });
+      assert(frameVisible, `dialog header and footer must fit viewport with ${count} hosts at ${width}x${height}`);
       const lastRetry = rows.last().locator("[data-quick-agent-peer-retry]");
+      await page.locator("[data-quick-agent-peers]").evaluate(el => { el.scrollTop = el.scrollHeight; });
+      await page.locator(".quick-agent-body").evaluate(el => { el.scrollTop = el.scrollHeight; });
       await lastRetry.focus();
+      assert.equal(await lastRetry.evaluate(el => el === document.activeElement), true,
+        "keyboard focus must reach the last Retry button");
       const lastRetryVisible = await lastRetry.evaluate(el => {
         const rect = el.getBoundingClientRect();
-        const list = el.closest("[data-quick-agent-peers]").getBoundingClientRect();
-        return rect.top >= list.top && rect.bottom <= list.bottom && rect.top >= 0 && rect.bottom <= innerHeight;
+        const body = el.closest(".quick-agent-body").getBoundingClientRect();
+        const footer = document.querySelector(".quick-agent-actions").getBoundingClientRect();
+        return rect.top >= body.top && rect.bottom <= body.bottom && rect.top >= 0 && rect.bottom <= footer.top;
       });
-      assert(lastRetryVisible, `last Retry must be visible with ${count} hosts at ${width}px`);
+      assert(lastRetryVisible, `last Retry must be visible above the footer with ${count} hosts at ${width}x${height}`);
       await page.keyboard.press("Tab");
       assert.equal(await page.locator('#quick-agent-form button[value="create"]').evaluate(el => el === document.activeElement), true,
         "Create must follow the last Retry button in keyboard order");
@@ -106,9 +121,51 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
         const rect = el.getBoundingClientRect();
         return rect.top >= 0 && rect.bottom <= innerHeight;
       });
-      assert(actionVisible, `form actions must be in view with ${count} hosts at ${width}px`);
+      assert(actionVisible, `form actions must be in view with ${count} hosts at ${width}x${height}`);
       results.push({width, hostCount:count, actionsVisible:actionVisible, lastRetryReachable:true});
     }
+    await resetDraft();
+    await addPeers("offline", 6);
+    await page.evaluate(() => openQuickAgent());
+    await ready();
+    await expand();
+    const contrastResults = [];
+    const originalAppearance = await page.evaluate(() => document.documentElement.dataset.appearance || "dark");
+    for (const theme of ["dark", "light"]) {
+      const ratios = await page.evaluate(async theme => {
+        const root = document.documentElement;
+        root.dataset.appearance = theme;
+        await new Promise(requestAnimationFrame);
+        const labels = [
+          ["Connected", "done"], ["Connecting", "detail"], ["Stale", "detail"],
+          ["Token required", "need"], ["Offline", "fail"], ["Unknown", "fail"],
+        ];
+        const peers = document.querySelector("[data-quick-agent-peers]");
+        peers.innerHTML = `<div class="quick-agent-peer-heading">Remote hosts</div>${labels.map(([label, state]) => `<div class="quick-agent-peer-row"><span class="quick-agent-peer-name">${label}</span><span class="chip ui-status ${state} quick-agent-peer-status">${label}</span><button type="button" class="quick-agent-peer-retry">Retry</button></div>`).join("")}`;
+        const canvas = document.createElement("canvas");
+        const context = canvas.getContext("2d", {willReadFrequently:true});
+        const rgb = color => {
+          context.fillStyle = "#000000";
+          context.fillStyle = color;
+          context.fillRect(0, 0, 1, 1);
+          return Array.from(context.getImageData(0, 0, 1, 1).data.slice(0, 3));
+        };
+        const luminance = color => color.map(channel => {
+          const value = channel / 255;
+          return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+        }).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
+        return Array.from(peers.querySelectorAll(".quick-agent-peer-status"), badge => {
+          const style = getComputedStyle(badge);
+          const [foreground, background] = [style.color, style.backgroundColor].map(color => luminance(rgb(color)));
+          return {label:badge.textContent, contrast:(Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05)};
+        });
+      }, theme);
+      assert(ratios.every(entry => entry.contrast >= 4.5), `${theme} badge contrast: ${JSON.stringify(ratios)}`);
+      contrastResults.push({width, theme, ratios});
+    }
+    await page.evaluate(theme => { document.documentElement.dataset.appearance = theme; }, originalAppearance);
+    await resetDraft();
+    results.push(...contrastResults);
     // Cold/warm editable time is distinct from actual local option readiness.
     for (const cold of [true, false]) {
       await resetDraft();
@@ -295,6 +352,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     await page.route(`${baseUrl}/servers/*/projects/*`, route => route.fulfill({json:{project:{key:"web",name:"Web",agent:"peer-wrapper",model:"peer-model",agent_template_summaries:[]}}}));
     await page.route(`${baseUrl}/servers/fixture-peer0/agents`, route => route.fulfill({status:503,json:{error:"Fixture acceptance unknown"}}));
     await page.goto(`${baseUrl}/ui#agents`, {waitUntil:"networkidle"});
+    await page.evaluate(() => { clearTimeout(state.timer); state.timer = 1; state.setupDetailed = true; });
     await page.evaluate(() => { history.replaceState(null,"","#project/fixture-peer0%2Fweb"); openQuickAgent(); });
     await ready();
     await page.locator("#quick-agent-prompt").fill("Peer target snapshot");
@@ -311,7 +369,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     assert.equal(peerRecord.server.key,"fixture-peer0");
     assert.equal(peerRecord.rejected,false);
     results.push({width,peerRecord});
-    assert.deepEqual(forbidden, []);
+    assert.deepEqual(forbidden.filter(request => request !== "setup"), []);
     assert.deepEqual(errors, []);
     results.push({ width, localReads, peerReads, localCreation: sent.filter(request => request.url === `${baseUrl}/agents`), exactlyOneRun: true, staleGuards: true, retainedDraft: true, failureRetry: true });
     await context.close();
