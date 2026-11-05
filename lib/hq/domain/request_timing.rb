@@ -6,6 +6,8 @@ module HQ
   # needed. Stages report exclusive time: when stages nest, the inner stage is
   # not counted again in the outer one. Outside a request every call is a no-op.
   class RequestTiming
+    attr_accessor :response_bytes, :route_started_at
+
     THREAD_KEY = :tycho_remote_request_timing
 
     def self.start
@@ -38,6 +40,11 @@ module HQ
       yield
     ensure
       leave
+    end
+
+    # Inclusive observations can overlap the exclusive measured stages.
+    def record(stage, milliseconds)
+      @durations[stage.to_s] += milliseconds / 1000.0
     end
 
     def total_ms
