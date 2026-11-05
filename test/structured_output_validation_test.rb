@@ -107,7 +107,7 @@ module StructuredOutputValidationTest
         assert(result[:invocations].length == 2, "expected #{adapter} to make one correction")
         if adapter == "codex"
           result[:invocations].each do |entry|
-            assert(!JSON.generate(entry.values_at("argv", "environment")).include?(entry["feedback"]),
+            assert(!(entry["argv"] + entry["environment"].values).any? { |value| value.include?(entry["feedback"]) },
                    "Codex prompt leaked into child argv or environment")
           end
           assert(result[:invocations].first["feedback"] == "initial prompt", "initial stdin changed")

@@ -35,7 +35,7 @@ module AgentPromptTransportTest
           assert(prompt.empty? || !execution[:description].include?(prompt), "prompt leaked into description")
           assert(execution[:command].include?(session), "missing resume ID") if session
           launch = agent.send(:structured_output_runner_launch, execution[:command], execution[:env], execution)
-          assert(prompt.empty? || !JSON.generate(launch[:env]).include?(prompt), "prompt leaked into runner environment")
+          assert(prompt.empty? || !launch[:env].values.compact.join("\0").include?(prompt), "prompt leaked into runner environment")
           input = HQ::AgentPromptTransport.input(execution[:stdin_data])
           reader, writer = IO.pipe
           pid = Process.spawn(RbConfig.ruby, script, *execution[:command].drop(1), in: input, out: writer)
@@ -46,7 +46,8 @@ module AgentPromptTransportTest
           _, status = Process.wait2(pid)
           assert(status.success?, "child failed")
           assert(result["digest"] == Digest::SHA256.hexdigest(prompt) && result["size"] == prompt.bytesize, "prompt bytes changed")
-          assert(prompt.empty? || !JSON.generate(result.values_at("argv", "env", "process")).include?(prompt), "child argv or environment contains prompt")
+          assert(prompt.empty? || !(result["argv"] + result["env"].values).any? { |value| value.include?(prompt) }, "child argv or environment contains prompt")
+          assert(prompt.empty? || !result["process"].include?(prompt.lines.first.chomp), "OS process listing contains prompt")
         end
       end
 
