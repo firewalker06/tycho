@@ -28,8 +28,10 @@ UTF-8 without trimming; a real CLI check with a local mock provider preserved
 a 1.8 MB Unicode prompt under the C locale. No separate API server is needed.
 Pi prompt files are not used: file expansion wraps and changes the input.
 The correction runner receives its configuration through stdin, so command
-arrays with prompt text do not enter the runner environment. Pipe writers run
-concurrently with stdout reads. Raw logs and canonical memory keep their
+arrays with prompt text do not enter the runner environment. Shared correction
+configuration, schema and result reads, feedback, and output use explicit UTF-8
+with binary IO. All five adapters preserve Unicode under the C locale. Pipe
+writers run concurrently with stdout reads. Raw logs and canonical memory keep their
 existing prompt content; saved command descriptions redact prompt arguments.
 Installed Codex CLI 0.166.0 help confirms both stdin forms. agy CLI 1.5.1 help
 confirms text stdin, print mode, conversation resume, JSON Schema, and

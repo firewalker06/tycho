@@ -1,8 +1,10 @@
 # frozen_string_literal: true
 
 require "json"
+require "open3"
 require "rbconfig"
 require "stringio"
+require "timeout"
 require "tmpdir"
 require_relative "../lib/hq/domain/agent_correction_runner"
 require_relative "../lib/hq/parser"
@@ -22,6 +24,7 @@ module StructuredOutputValidationTest
     assert_native_codex_schema_split_contract
     assert_successful_correction_for_supported_harnesses
     assert_retry_exhaustion_preserves_invalid_response
+    assert_c_locale_correction_for_all_adapters
     puts "structured_output_validation_test: ok"
   end
 
@@ -151,6 +154,98 @@ module StructuredOutputValidationTest
       assert(structured["status"] == "failed", "expected exhausted result to surface failed status")
       assert(structured["summary"].include?(result[:invalid_path]),
              "expected exhausted result to identify the diagnostic artifact")
+    end
+  end
+
+  def assert_c_locale_correction_for_all_adapters
+    Dir.mktmpdir("tycho-correction-utf8") do |root|
+      dir = File.join(root, "日本語")
+      Dir.mkdir(dir)
+      schema_path = File.join(dir, "schema.json")
+      File.binwrite(schema_path, JSON.generate(
+        "type" => "object", "required" => %w[status summary 日本語],
+        "properties" => { "status" => { "enum" => ["success"] },
+                          "summary" => { "type" => "string" }, "日本語" => { "type" => "string" } }
+      ))
+      script = File.join(dir, "harness.rb")
+      File.write(script, <<~'CHILD')
+        require "json"
+        adapter, capture, last_message, mode, session = ARGV.map { |value| value.dup.force_encoding(Encoding::UTF_8) }
+        prompt = STDIN.binmode.read.force_encoding(Encoding::UTF_8)
+        entry = { "prompt" => prompt, "session" => session, "mode" => mode,
+                  "external_encoding" => Encoding.default_external.name }
+        File.open(capture, "ab") { |file| file.write(JSON.generate(entry).encode(Encoding::UTF_8).b + "\n".b) }
+        payload = { "status" => "success", "summary" => "応答 🛰️\n" }
+        payload["日本語"] = "修正済み" if mode == "resume"
+        raw = JSON.generate(payload).encode(Encoding::UTF_8)
+        events = case adapter
+                 when "codex"
+                   File.binwrite(last_message, raw)
+                   [{ "type" => "thread.started", "thread_id" => session },
+                    { "type" => "item.completed", "item" => { "type" => "agent_message", "text" => raw } }]
+                 when "claude"
+                   [{ "type" => "assistant", "session_id" => session, "structured_output" => payload }]
+                 when "agy"
+                   [{ "event" => "step_update", "step_update" => { "step_type" => "finish", "state" => "DONE" } },
+                    { "event" => "result", "result" => { "conversation_id" => session, "status" => "SUCCESS",
+                                                          "response" => raw, "structured_output" => payload } }]
+                 when "pi"
+                   [{ "type" => "session", "id" => session },
+                    { "type" => "message_end", "message" => { "role" => "assistant",
+                        "content" => [{ "type" => "text", "text" => raw }] } }]
+                 when "opencode"
+                   [{ "type" => "text", "sessionID" => session, "part" => { "type" => "text", "text" => raw } }]
+                 end
+        STDOUT.binmode
+        events.each { |event| STDOUT.write(JSON.generate(event).encode(Encoding::UTF_8).b + "\n".b) }
+      CHILD
+      %w[codex claude agy pi opencode].each do |adapter|
+        capture = File.join(dir, "#{adapter}-received.jsonl")
+        last_message = File.join(dir, "#{adapter}-last.json")
+        invalid_path = File.join(dir, "#{adapter}-invalid.json")
+        session = "#{adapter}-日本語"
+        prompt = "CONTROLLED_C_330\n日本語 🛰️\n\n" + ("é\n" * 600_000)
+        prefix = [RbConfig.ruby, script, adapter, capture, last_message]
+        config = {
+          "initial_command" => prefix + ["initial", session], "initial_stdin" => prompt,
+          "prompt_transport" => "stdin", "harness_adapter" => adapter,
+          "correction_command" => prefix + ["resume", HQ::AgentCorrectionRunner::SESSION_PLACEHOLDER],
+          "schema_path" => schema_path, "last_message_path" => last_message,
+          "invalid_response_path" => invalid_path, "session_id" => "", "correction_limit" => 1
+        }
+        command = [RbConfig.ruby, "--disable-gems", "-r",
+                   File.expand_path("../lib/hq/domain/agent_correction_runner", __dir__),
+                   "-e", "HQ::AgentCorrectionRunner.run_from_stdin!"]
+        env = { "LANG" => "C", "LC_ALL" => "C", "TYCHO_HOME" => root, "TYCHO_LOGS_ROOT" => File.join(root, "logs") }
+        output, error, status = Timeout.timeout(20) do
+          Open3.capture3(env, *command, stdin_data: JSON.generate(config).encode(Encoding::UTF_8).b, binmode: true)
+        end
+        assert(status.success?, "#{adapter} C-locale correction failed: #{error.inspect} #{output.inspect}")
+        entries = File.binread(capture).force_encoding(Encoding::UTF_8).lines.map { |line| JSON.parse(line) }
+        assert(entries.length == 2 && entries.first["prompt"].b == prompt.b, "#{adapter} C-locale prompt changed")
+        assert(entries.all? { |entry| entry["external_encoding"] == "US-ASCII" && entry["session"] == session },
+               "#{adapter} must preserve the Unicode session without changing the C locale")
+        feedback = JSON.parse(entries.last["prompt"])
+        assert(feedback["type"] == "structured_output_validation_error" &&
+               feedback["errors"].any? { |item| item["path"] == "$[\"日本語\"]" }, "#{adapter} Unicode feedback changed: #{feedback.inspect}")
+        decoded = output.dup.force_encoding(Encoding::UTF_8)
+        assert(decoded.include?("応答 🛰️") && decoded.include?("日本語") && !decoded.include?("�"),
+               "#{adapter} Unicode output changed")
+        assert(decoded.lines.count { |line| JSON.parse(line)["type"] == "tycho.structured_output.validation_failed" } == 1,
+               "#{adapter} must make exactly one correction")
+
+        # Exhaustion also writes Unicode diagnostics and emits a Unicode path.
+        config["correction_limit"] = 0
+        output, error, status = Timeout.timeout(20) do
+          Open3.capture3(env, *command, stdin_data: JSON.generate(config).encode(Encoding::UTF_8).b, binmode: true)
+        end
+        assert(status.exitstatus == HQ::AgentCorrectionRunner::VALIDATION_FAILURE_EXIT_CODE && error.empty?,
+               "#{adapter} C-locale exhaustion failed: #{error.inspect}")
+        expected = JSON.generate("status" => "success", "summary" => "応答 🛰️\n").encode(Encoding::UTF_8).b
+        assert(File.binread(invalid_path) == expected, "#{adapter} Unicode diagnostic bytes changed")
+        exhausted = JSON.parse(output.force_encoding(Encoding::UTF_8).lines.last)
+        assert(exhausted["diagnostic_path"] == invalid_path, "#{adapter} Unicode diagnostic path changed")
+      end
     end
   end
 

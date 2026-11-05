@@ -2183,7 +2183,7 @@ module HQ
       ]
       {
         command: runner_command,
-        stdin_data: JSON.generate(config),
+        stdin_data: JSON.generate(config).encode(Encoding::UTF_8),
         env: environment.merge(
           "TYCHO_AGENT_RUNNER_CONFIG" => nil,
           "TYCHO_NATIVE_ACK_DELEGATED" => "1"

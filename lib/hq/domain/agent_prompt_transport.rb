@@ -13,7 +13,7 @@ module HQ
       Thread.new do
         begin
           writer.binmode
-          writer.write(data)
+          writer.write(data.b)
         rescue Errno::EPIPE, IOError
           # The harness can exit or be cancelled before it reads the prompt.
           nil

@@ -193,11 +193,16 @@ module AgentPromptTransportTest
         fixture = ARGV.shift
         capture = ARGV.shift
         raise "runner config leaked" if ENV.key?("TYCHO_AGENT_RUNNER_CONFIG")
-        prompt = STDIN.read
+        prompt = STDIN.binmode.read.force_encoding(Encoding::UTF_8)
+        first = !File.exist?(capture)
         File.binwrite(capture, prompt)
-        raw = File.read(fixture)
-        puts JSON.generate("type" => "text", "sessionID" => "transport-session",
-                           "part" => { "type" => "text", "text" => raw })
+        File.binwrite("#{capture}.initial", prompt) if first
+        payload = JSON.parse(File.binread(fixture).force_encoding(Encoding::UTF_8))
+        payload["summary"] = first ? 42 : "応答 🛰️"
+        raw = JSON.generate(payload)
+        event = { "type" => "text", "sessionID" => "transport-session",
+                  "part" => { "type" => "text", "text" => raw } }
+        STDOUT.binmode.write(JSON.generate(event).encode(Encoding::UTF_8).b + "\n".b)
       CHILD
       capture = File.join(dir, "opencode-received")
       prompt = "managed-private-815\n日本語 🛰️\n" + ("a" * 1_100_000)
@@ -206,13 +211,17 @@ module AgentPromptTransportTest
                                    log_path: File.join(dir, "managed-opencode.raw.log"),
                                    messages: [HQ::ManagedAgent::AgentMessage.new(role: "system", content: prompt, created_at: Time.now)])
       prefix = [RbConfig.ruby, managed_script, fixture, capture]
-      agent.define_singleton_method(:harness_execution) { { command: prefix, env: {} } }
+      agent.define_singleton_method(:harness_execution) { { command: prefix, env: { "LANG" => "C", "LC_ALL" => "C" } } }
       expected = agent.send(:build_command)[:stdin_data]
       agent.start!
       Timeout.timeout(15) { agent.instance_variable_get(:@process_monitors).values.each(&:join) }
       agent.poll!
       assert(agent.last_exit_code == 0, "complete managed launch failed")
-      assert(File.binread(capture) == expected.b, "complete launch changed prompt bytes")
+      assert(File.binread("#{capture}.initial") == expected.b, "complete launch changed prompt bytes")
+      feedback = JSON.parse(File.binread(capture).force_encoding(Encoding::UTF_8))
+      assert(feedback["type"] == "structured_output_validation_error", "managed C-locale correction did not run")
+      events = File.binread(agent.memory_path).force_encoding(Encoding::UTF_8).lines.map { |line| JSON.parse(line) }
+      assert(events.any? { |event| event["content"].to_s.include?("応答 🛰️") }, "managed C-locale response changed")
       assert(File.binread(agent.raw_log_path).include?(prompt.b), "raw log lost exact prompt")
       assert(File.readlines(agent.memory_path).map { |line| JSON.parse(line) }.any? { |event| event["content"] == prompt }, "canonical transcript lost prompt")
       assert(!agent.last_run.command.include?("managed-private-815"), "saved command leaked prompt")
