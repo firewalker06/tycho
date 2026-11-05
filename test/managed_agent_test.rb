@@ -2367,6 +2367,7 @@ module ManagedAgentTest
         response_style: false, log_path: File.join(dir, "native-ack.raw.log")
       )
 
+      agent.define_singleton_method(:structured_output_correction_supported?) { false }
       agent.start!
       deadline = Time.now + 5
       sleep 0.01 while agent.running? && Time.now < deadline
@@ -3244,7 +3245,7 @@ module ManagedAgentTest
                  "expected custom #{adapter} interactive command to resume natively")
         end
 
-        if %w[codex claude pi].include?(adapter)
+        if %w[codex claude opencode pi].include?(adapter)
           launch = resumed.send(:structured_output_runner_launch, resumed_command, execution.fetch(:env))
           runner_config = JSON.parse(launch.fetch(:stdin_data))
           assert(runner_config["harness_adapter"] == adapter,
@@ -3264,9 +3265,6 @@ module ManagedAgentTest
                  sanitized["BUNDLE_GEMFILE"] == "profile-bundle" &&
                  sanitized["TYCHO_GITHUB_TOKEN"].nil? && sanitized["TYCHO_REMOTE_TOKEN"].nil?,
                  "expected #{adapter} profile env to keep declared overrides without leaking server credentials")
-        else
-          assert(!resumed.send(:structured_output_correction_supported?),
-                 "expected custom OpenCode profiles to retain native no-correction behavior")
         end
       end
     end
@@ -3282,7 +3280,7 @@ module ManagedAgentTest
       capture_path = File.join(dir, "prompt.txt")
       File.write(harness, <<~RUBY)
         #!/usr/bin/env ruby
-        File.write(ENV.fetch("TYCHO_TEST_OPENCODE_PROMPT_CAPTURE"), ARGV.last.to_s)
+        File.binwrite(ENV.fetch("TYCHO_TEST_OPENCODE_PROMPT_CAPTURE"), STDIN.read)
       RUBY
       File.chmod(0o755, harness)
       ENV["TYCHO_OPENCODE_BIN"] = harness

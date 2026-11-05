@@ -21,7 +21,11 @@ over stdin, including resume and correction. Pi 0.84.4 is the validated
 baseline. The runner waits for `agent_settled`, or confirms idle handled input
 after acceptance, before EOF shutdown. It bounds process exit and stops only
 its child PID if needed. Explicit UTF-8 RPC bytes also work with the C locale.
-It maps `get_state.sessionId` to the existing session event. OpenCode retains argv.
+It maps `get_state.sessionId` to the existing session event. OpenCode 1.19.3
+uses text stdin with `run --format json` and no positional message, including
+native resume and structured-output correction. Its source reads the pipe as
+UTF-8 without trimming; a real CLI check with a local mock provider preserved
+a 1.8 MB Unicode prompt under the C locale. No separate API server is needed.
 Pi prompt files are not used: file expansion wraps and changes the input.
 The correction runner receives its configuration through stdin, so command
 arrays with prompt text do not enter the runner environment. Pipe writers run

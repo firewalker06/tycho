@@ -2192,7 +2192,7 @@ module HQ
     end
 
     def structured_output_correction_supported?
-      File.file?(result_schema_path) && %w[codex claude pi agy].include?(harness_adapter)
+      File.file?(result_schema_path) && %w[codex claude opencode pi agy].include?(harness_adapter)
     end
 
     def structured_output_correction_limit

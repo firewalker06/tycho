@@ -124,6 +124,8 @@ module HQ
         parsed = JSON.parse(line)
         id = if adapter == "codex"
                parsed["thread_id"] || parsed["session_id"]
+             elsif adapter == "opencode"
+               parsed["sessionID"] || parsed.dig("part", "sessionID")
              elsif adapter == "pi"
                parsed["id"] if parsed["type"] == "session"
              elsif adapter == "agy"
