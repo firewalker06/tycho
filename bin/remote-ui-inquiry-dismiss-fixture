@@ -1,0 +1,58 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "fileutils"
+require "json"
+require "rbconfig"
+require "socket"
+require "tmpdir"
+require_relative "../test/support/test_environment"
+
+$stdout.sync = true
+root = Dir.mktmpdir("tycho-inquiry-dismiss-", "/tmp")
+TestEnvironment.command_env(root).each { |key, value| value ? ENV[key] = value : ENV.delete(key) }
+ENV["TYCHO_REMOTE_TOKEN"] = ""
+ENV.delete("TYCHO_GITHUB_TOKEN")
+ENV["TYCHO_DISABLE_SCHEDULE_PROCESS_DETECTION"] = "1"
+config = File.join(root, "config")
+workspace = File.join(root, "workspace")
+FileUtils.mkdir_p([config, workspace, File.join(root, "logs", "agents")])
+ENV["TYCHO_CONFIG_PATH"] = File.join(config, "hq.yml")
+ENV["TYCHO_SYSTEM_PROMPTS_PATH"] = File.join(config, "system_prompts.yml")
+ENV["TYCHO_SCHEDULES_PATH"] = File.join(config, "schedules.yml")
+File.write(ENV.fetch("TYCHO_CONFIG_PATH"), "projects:\n  - key: web\n    name: Synthetic inquiry fleet\n    path: #{workspace.inspect}\n    agent: codex\n")
+File.write(ENV.fetch("TYCHO_SYSTEM_PROMPTS_PATH"), "custom: Synthetic inquiry fixture\n")
+File.write(ENV.fetch("TYCHO_SCHEDULES_PATH"), "schedules: []\n")
+
+require_relative "../lib/hq/registry"
+require_relative "../lib/hq/domain/agent_store"
+
+registry = HQ::Registry.new
+agents = 600.times.map do |index|
+  key = "web-inquiry-#{index}"
+  agent = HQ::ManagedAgent.new(key:, name: "Synthetic inquiry #{index}", project_key: "web", template_key: "custom",
+                               workspace:, prompt: "Synthetic fixture only", agent: "codex",
+                               log_path: File.join(HQ::AGENT_LOGS_DIR, "#{key}.raw.log"))
+  run = HQ::ManagedAgent::AgentRun.new(started_at: Time.now - 2, finished_at: Time.now - 1,
+                                      status: "input_required", log_path: agent.raw_log_path)
+  agent.runs << run
+  question = { "message" => "Choose the next synthetic step", "fields" => [{ "key" => "choice", "label" => "Next step", "input_type" => "text" }] }
+  agent.structured_result = { "status" => "input_required", "summary" => "Synthetic inquiry", "inquiry" => question }
+  id = agent.send(:inquiry_identity, question, run:)
+  HQ::AgentMemory.new(agent).append_inquiry_request!(question, created_at: run.finished_at, inquiry_id: id)
+  agent
+end
+HQ::AgentStore.new(registry.projects).save(agents)
+
+socket = TCPServer.new("127.0.0.1", 0)
+port = socket.addr[1]
+socket.close
+scenario = JSON.parse(File.read(File.expand_path("../config/interaction-tests/inquiry-dismiss.json", __dir__)))
+scenario["url"] = "http://127.0.0.1:#{port}/"
+scenario_path = File.join(root, "inquiry-dismiss.json")
+File.write(scenario_path, JSON.pretty_generate(scenario))
+puts "Temporary home: #{root}"
+puts "Fixture: http://127.0.0.1:#{port}/ui#agent/web-inquiry-0"
+puts "Profile: bin/remote-ui-interaction-report --config #{scenario_path} --output /tmp/inquiry-dismiss-report.html"
+puts "Use Restore inquiry before another sample. Stop this foreground server with Ctrl-C."
+exec RbConfig.ruby, File.expand_path("tycho", __dir__), "serve", "--host", "127.0.0.1", "--port", port.to_s

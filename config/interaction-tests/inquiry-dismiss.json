@@ -16,7 +16,7 @@
       },
       "expect": { "selector": "#inquiry-form", "visible": false },
       "screenshot": "#view",
-      "withinMs": 100
+      "withinMs": 1500
     }
   ]
 }

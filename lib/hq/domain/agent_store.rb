@@ -1811,20 +1811,23 @@ module HQ
       File.expand_path(path.to_s)
     end
 
-    # Runs a memory-only change for one agent under the store lock. It skips the
-    # fleet-wide load, poll, and rewrite that mutate performs, because the change
-    # appends to the agent's memory journal and leaves its stored record as is.
+    # Yields one active agent under the store lock for memory-journal changes.
+    # The yielded agent is not saved. Read only the primary file: a backup may
+    # contain archived records. Apply the retired ledger even to primary records.
     def with_stored_agent(key)
       with_exclusive_lock do
         record = RequestTiming.measure("record_read") do
-          Array(FileStore.read_json(AGENTS_FILE, fallback: [])).find { |candidate| candidate["key"] == key.to_s }
+          records = File.exist?(AGENTS_FILE) ? JSON.parse(File.read(AGENTS_FILE)) : []
+          raise IOError, "Invalid agent store" unless records.is_a?(Array) && records.all? { |candidate| candidate.is_a?(Hash) }
+
+          @recovery.without_retired(records).find { |candidate| candidate["key"] == key.to_s }
         end
         raise ArgumentError, "Unknown agent: #{key}" unless record
 
-        agent = ManagedAgent.from_hash(record)
-        agent.usage_metrics_store = @usage_metrics_store
-        yield agent
+        yield attach_usage_metrics_store(ManagedAgent.from_hash(record))
       end
+    rescue JSON::ParserError => e
+      raise IOError, "Invalid agent store: #{e.class}"
     end
 
     def with_exclusive_lock
