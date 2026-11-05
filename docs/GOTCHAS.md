@@ -15,6 +15,21 @@ Use `TYCHO_HOME`, `TYCHO_CONFIG_PATH`, `TYCHO_SYSTEM_PROMPTS_PATH`,
 or test runs. Packaged installs should never write runtime files under the
 Homebrew Cellar.
 
+## Agent status does not prove that a test fixture is safe to remove
+
+The managed runner publishes the native harness exit status before it calls
+`agent finalize`. This order lets the finalizer poll the completed run. A
+terminal status and a cleared agent PID therefore do not prove that the runner
+and finalizer have exited. Finalization can still write logs and agent state.
+Tests must wait for all runner process groups they started before they remove
+temporary directories. Do not suppress or retry `Errno::ENOTEMPTY` in cleanup.
+
+Stopping a parent can also dispatch queued child reports and start a new parent
+run. A fixture that must end with a stopped parent must first consume those
+reports and check the stop response. `test/cli_command_test.rb` records runner
+PIDs from CLI responses and waits for their process groups, including finalizer
+processes that remain after the group leader exits.
+
 ## Homebrew install troubleshooting
 
 If `brew install tycho` fails while compiling Charm Ruby gems, make sure Ruby,
