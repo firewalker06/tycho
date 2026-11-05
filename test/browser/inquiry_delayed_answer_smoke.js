@@ -14,7 +14,7 @@ module.exports = async ({browser, baseUrl, captureDir, waitForInquiryRuns}) => {
     const rawKey=`web-inquiry-recovery-${index++}`,key=peer?`fixture-peer/${rawKey}`:rawKey;
     const context=await browser.newContext({viewport:{width,height:900},isMobile:width<500,hasTouch:width<500});
     const page=await context.newPage();page.setDefaultTimeout(10000);
-    const answer=gate(),captured=gate(),reads=gate();let holdReads=false,projection,writes=0,activityAgent;
+    const answer=gate(),captured=gate(),reads=gate();let holdReads=false,projection,writes=0,activityAgent;const submittedIds=[];
     const errors=[];page.on("pageerror",error=>errors.push(error.message));
     console.log(`Delayed answer: ${width} ${theme} ${peer?"peer":"local"} ${scenario}`);
     try {
@@ -25,7 +25,7 @@ module.exports = async ({browser, baseUrl, captureDir, waitForInquiryRuns}) => {
         const pathname=routed?url.pathname.replace("/servers/fixture-peer",""):url.pathname;
         const fetchRoute=()=>route.fetch(routed?{url:`${baseUrl}${pathname}${url.search}`} : {});
         if(request.method()==="POST" && pathname.match(new RegExp(`/agents/${rawKey}/inquiries/[^/]+/answer$`))) {
-          assert.equal(routed,peer);writes++;
+          assert.equal(routed,peer);writes++;submittedIds.push(request.postDataJSON().client_request_id);
           const response=await fetchRoute();assert.equal(response.status(),200);
           projection=(await response.json()).agent;captured.release();await answer.promise;
           return route.fulfill({response});
@@ -50,9 +50,35 @@ module.exports = async ({browser, baseUrl, captureDir, waitForInquiryRuns}) => {
       await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(key)}`,{waitUntil:"networkidle"});
       await page.waitForSelector("#inquiry-form",{state:"attached"});
       if(!await page.locator("#inquiry-form").isVisible()) await page.locator("details.mobile-inquiry > summary").click();
+      if(scenario==="storage-delay") {
+        await page.evaluate(()=>{
+          const storage=inquiryAnswerStore().store, put=storage.put.bind(storage);
+          globalThis.__storageWriteStarted=false;
+          globalThis.__storageWrite=new Promise(resolve=>globalThis.__releaseStorageWrite=resolve);
+          storage.put=entry=>{globalThis.__storageWriteStarted=true;return globalThis.__storageWrite.then(()=>put(entry));};
+        });
+      }
       await page.evaluate(()=>{clearTimeout(state.timer);clearTimeout(state.activityTimer);const original=refresh;globalThis.__answerRefreshes=0;refresh=async(...args)=>{globalThis.__answerRefreshes++;return original(...args);};});
       await page.locator('#inquiry-form input[type="text"]').fill("Synthetic delayed answer");
-      await page.locator('#inquiry-form button[type="submit"]').click();await captured.promise;
+      if(scenario==="storage-delay") await page.evaluate(()=>{globalThis.__duplicateInquiryForm=document.querySelector("#inquiry-form").cloneNode(true);});
+      await page.locator('#inquiry-form button[type="submit"]').click();
+      if(scenario==="storage-delay") {
+        await page.waitForFunction(()=>globalThis.__storageWriteStarted);
+        await page.evaluate(()=>{
+          const duplicate=globalThis.__duplicateInquiryForm;
+          els.view.append(duplicate);
+          duplicate.dispatchEvent(new SubmitEvent("submit",{bubbles:true,cancelable:true}));
+          duplicate.remove();
+        });
+        assert.equal(await page.locator("#inquiry-form").count(),0,"reserved inquiry closes before delayed local storage completes");
+        assert.equal(await page.locator("[data-inquiry-answer-recovery]").count(),1,"in-memory reservation shows the answer during delayed storage");
+        const reservedId=await page.evaluate(key=>state.pendingInquirySubmissionEntries.get(key)?.id,key);
+        await page.evaluate(()=>globalThis.__releaseStorageWrite());
+        await captured.promise;
+        assert.equal(writes,1,"a second submit during delayed storage sends one POST");
+        assert.deepEqual(submittedIds,[reservedId],"the request uses the synchronously reserved idempotency key");
+      }
+      await captured.promise;
       assert.match(page.url(), /#agent\//, "answer submission should open the conversation before the POST returns");
       assert.equal(await page.locator("#inquiry-form").count(),0,"inquiry review form closes while the answer is pending");
       assert.match(await page.locator("[data-inquiry-answer-recovery]").innerText(),/Sending answer[\s\S]*Synthetic delayed answer/,
@@ -65,7 +91,7 @@ module.exports = async ({browser, baseUrl, captureDir, waitForInquiryRuns}) => {
       if(scenario==="retire") {
         const response=await context.request.post(`${baseUrl}/agents/${rawKey}/archive`,{data:{}});assert.equal(response.status(),200);
         await page.evaluate(key=>retireArchivedAgent(key),key);
-      } else {
+      } else if(["detail","activity","mutation"].includes(scenario)) {
         const response=await context.request.patch(`${baseUrl}/agents/${rawKey}`,{data:{name:"Newer canonical name"}});assert.equal(response.status(),200);
         const changed=await response.json();
         if(scenario==="detail") await page.evaluate(key=>ensureAgentDetail(key,true),key);
@@ -81,20 +107,35 @@ module.exports = async ({browser, baseUrl, captureDir, waitForInquiryRuns}) => {
         archived:state.agentDetails[key]?.archived,active:state.agents.some(agent=>agent.key===key),retired:state.archivedAgentKeys.has(key),
         pending:inquiryAnswerStore().entries.size,refreshes:globalThis.__answerRefreshes}),key);
       const before=await snapshot();
+      if(scenario==="refresh-pending") {
+        const response=await context.request.get(`${baseUrl}/agents/${encodeURIComponent(rawKey)}/conversation?limit=100`);
+        assert.equal(response.status(),200,"conversation refresh succeeds while the answer POST response is held");
+        const conversation=await response.json();
+        const intentId=await page.evaluate(key=>state.pendingInquirySubmissionEntries.get(key)?.id || inquiryAnswerStore().entries.get(key)?.id,key);
+        assert(conversation.conversation.some(block=>block.metadata?.inquiry_intent_id===intentId),"server conversation contains the accepted answer intent");
+        await page.evaluate(({key,conversation})=>{
+          state.conversations[key]={blocks:conversation.conversation,revision:conversation.conversation_revision,loaded:true};
+          state.pendingConversationUpdates[key]={blocks:conversation.conversation,revision:conversation.conversation_revision};
+          render();
+        },{key,conversation});
+        const shown=await page.locator(".message-list").innerText();
+        assert.equal((shown.match(/Synthetic delayed answer/g)||[]).length,1,"refresh replaces the optimistic preview with one server answer");
+        assert.equal(await page.locator("[data-inquiry-answer-recovery] details").count(),0,"matching server answer hides the duplicate preview");
+      }
       if(scenario==="retire") {assert.equal(before.active,false);assert.equal(before.archived,true);}
-      else {assert.equal(before.name,"Newer canonical name");assert.equal(before.running,false);}
+      else if(!["refresh-pending","storage-delay"].includes(scenario)) {assert.equal(before.name,"Newer canonical name");assert.equal(before.running,false);}
       holdReads=true;answer.release();
       await page.waitForFunction(()=>inquiryAnswerStore().entries.size===0);
       const after=await snapshot();
       assert.equal(after.name,before.name,"delayed POST must preserve newer canonical name");
-      assert.equal(after.status,before.status,"delayed POST must preserve completion");
-      assert.equal(after.running,before.running,"delayed POST must preserve running state");
+      if(!["storage-delay","refresh-pending"].includes(scenario)) assert.equal(after.status,before.status,"delayed POST must preserve completion");
+      if(!["storage-delay","refresh-pending"].includes(scenario)) assert.equal(after.running,before.running,"delayed POST must preserve running state");
       assert.equal(after.archived,before.archived,"delayed POST must preserve archive state");
       assert.equal(after.active,before.active,"delayed POST must not reinsert retired agent");
       assert.equal(after.retired,before.retired);assert.equal(after.pending,0);assert.equal(after.refreshes,1);assert.equal(writes,1);
       const persisted=(await (await context.request.get(`${baseUrl}/agents/${rawKey}`)).json()).agent;
       assert.equal(persisted.archived,scenario==="retire");
-      assert.equal(after.name,persisted.name);assert.equal(after.running,persisted.running);
+      assert.equal(after.name,persisted.name);if(!["storage-delay","refresh-pending"].includes(scenario)) assert.equal(after.running,persisted.running);
       reads.release();await page.waitForFunction(()=>!state.refreshInFlight);
       assert.deepEqual(errors,[]);results.push({width,theme,peer,scenario,before,projection:{name:projection.name,status:projection.status,running:projection.running,archived:projection.archived},after,writes,passed:true});
     } catch(error) {

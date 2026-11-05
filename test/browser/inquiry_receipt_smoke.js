@@ -53,7 +53,10 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForIn
         await page.locator('input[type="file"]').first().setInputFiles({name:"synthetic.txt",mimeType:"text/plain",buffer:Buffer.from("Synthetic attachment only")});
         await page.locator('#inquiry-form button[type="submit"]').click();
         await page.waitForSelector("[data-inquiry-answer-recovery]");
-        await page.waitForFunction(() => inquiryAnswerStore().entries.values().next().value?.status !== "sending");
+        await page.waitForFunction(key => {
+          const entry=state.pendingInquirySubmissionEntries.get(key) || inquiryAnswerStore().entries.get(key);
+          return !entry || !["storing","sending"].includes(entry.status);
+        },agent.key);
         if(scenario==="rejection") {
           assert.match(await page.locator("[data-inquiry-answer-recovery]").innerText(),/Answer not sent/);
           await context.request.post(`${baseUrl}/agents/${agent.key}/inquiries/${inquiryId}/restore`,{data:{}});
