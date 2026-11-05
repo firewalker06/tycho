@@ -16,8 +16,11 @@ type: project
 
 Command builders declare the prompt transport. Codex managed runs use stdin
 with `exec -` or `exec resume ID -`; Claude uses print-mode text stdin; agy
-uses `--print --input-format text` with stdin for new and resumed runs. Pi and
-OpenCode retain argv.
+uses `--print --input-format text` with stdin for new and resumed runs. Pi uses JSONL RPC
+over stdin, including resume and correction. Pi 0.84.4 is the validated
+baseline. The runner waits for `agent_settled` before EOF shutdown and maps
+`get_state.sessionId` to the existing session event. OpenCode retains argv.
+Pi prompt files are not used: file expansion wraps and changes the input.
 The correction runner receives its configuration through stdin, so command
 arrays with prompt text do not enter the runner environment. Pipe writers run
 concurrently with stdout reads. Raw logs and canonical memory keep their
@@ -211,7 +214,7 @@ Key references:
 | Callback-only agent archive | Archive protected `delegation_callback` queues into read-only conversation history, while rejecting ordinary and mixed pending queues | Obsolete delegated results must not trap a stopped parent, but ordinary user work must never disappear implicitly |
 | External command capture | `CommandRunner` owns bounded process-group execution for harness discovery; GitHub PR diffs use the local `gh auth token` credential through direct HTTPS | One process owner preserves signal exit status for tools, while GitHub API behavior remains isolated from CLI response formats |
 | Custom harness profiles | Allow a configured executable prefix only for the closed Codex, Claude, OpenCode, and Pi adapter families; use the declared adapter for every native command, parser, session, result, metric, readiness, catalog, permission, and skill path | Wrappers can replace a compatible native executable without turning Tycho into an unbounded parser/flag-template engine; existing Claude-compatible profiles remain unchanged |
-| Agent transport | Codex JSON output, Claude-compatible `--output-format stream-json`, OpenCode JSON, and Pi `--mode json` pass through `AgentStreamRecorder`, which preserves `raw.log` and projects complete semantic events immediately | One recorder gives every harness the same durable streaming path without changing native wire formats |
+| Agent transport | Codex JSON output, Claude-compatible `--output-format stream-json`, OpenCode JSON, and Pi JSONL RPC pass through `AgentStreamRecorder`, which preserves `raw.log` and projects complete semantic events immediately | One recorder gives every harness the same durable streaming path without changing native wire formats |
 | Managed-agent environment boundary | Clear server-only `TYCHO_GITHUB_TOKEN` and `TYCHO_REMOTE_TOKEN` values at the harness spawn boundary; delegation uses an explicit trusted parent key instead of an injected capability | A daemon may load server credentials from `.env`, but managed harnesses must not inherit those bearer credentials |
 | Agent model controls | Optional per-agent `model` and `reasoning_effort`, inherited from project/template config and passed as harness run arguments | Model catalogs change outside Tycho; use harness discovery for suggestions where available, keep free-form fallback everywhere, and keep provider-specific thinking budgets out of first-version scope |
 | Managed-agent identity | Generate keys as `<project>-agent-<UTC timestamp with microseconds>`, adding a short random suffix only on an exact collision; retain legacy numeric keys when loading existing state | Timestamp identities remain sortable and avoid key reuse when agents are created concurrently or archived across Tycho instances |

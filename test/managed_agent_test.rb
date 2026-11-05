@@ -3015,8 +3015,8 @@ module ManagedAgentTest
       reasoning_effort: "xhigh"
     )
     pi_command = pi.send(:build_command)[:command]
-    assert(File.basename(pi_command[0]) == "pi" && pi_command[1..2] == ["--mode", "json"],
-           "expected Pi command to use documented JSON mode")
+    assert(pi_command.any? { |part| File.basename(part) == "pi" } && argument_after(pi_command, "--mode") == "rpc",
+           "expected Pi command to use documented RPC mode")
     assert(argument_after(pi_command, "--model") == "openai-codex/gpt-5.4",
            "expected Pi command to include --model")
     assert(argument_after(pi_command, "--thinking") == "xhigh",
@@ -3168,6 +3168,7 @@ module ManagedAgentTest
         )
         execution = agent.send(:build_command)
         command = execution.fetch(:command)
+        command = command.drop(3) if adapter == "pi"
 
         assert(command.first(prefix.length) == prefix,
                "expected #{adapter} custom profile to prefix its native command")
@@ -3198,8 +3199,8 @@ module ManagedAgentTest
           assert(argument_after(command, "--variant") == "high" && command.include?("--auto"),
                  "expected custom OpenCode profile to keep native effort and permission flags")
         when "pi"
-          assert(command[prefix.length, 2] == ["--mode", "json"],
-                 "expected custom Pi cold command to use Pi JSON mode")
+          assert(command[prefix.length, 2] == ["--mode", "rpc"],
+                 "expected custom Pi cold command to use Pi RPC mode")
           assert(agent.send(:prompt_for_execution, response_style: nil).include?("TYCHO STRUCTURED OUTPUT:"),
                  "expected custom Pi profile to reuse hidden structured guidance")
           assert(argument_after(command, "--thinking") == "high" && !command.include?("--tools"),
@@ -3248,8 +3249,8 @@ module ManagedAgentTest
           runner_config = JSON.parse(launch.fetch(:stdin_data))
           assert(runner_config["harness_adapter"] == adapter,
                  "expected #{adapter} profile correction to use the declared adapter")
-          assert(runner_config["initial_command"].first(prefix.length) == prefix &&
-                 runner_config["correction_command"].first(prefix.length) == prefix,
+          assert(runner_config["initial_command"].each_cons(prefix.length).include?(prefix) &&
+                 runner_config["correction_command"].each_cons(prefix.length).include?(prefix),
                  "expected #{adapter} profile corrections to keep the configured prefix")
           sanitized = resumed.send(
             :external_process_environment,

@@ -105,7 +105,7 @@ module StructuredOutputValidationTest
       with_runner(adapter, "corrected", correction_limit: 2) do |result|
         assert(result[:exit_code].zero?, "expected #{adapter} correction to succeed: #{result[:output]}")
         assert(result[:invocations].length == 2, "expected #{adapter} to make one correction")
-        if %w[codex claude agy].include?(adapter)
+        if %w[codex claude pi agy].include?(adapter)
           result[:invocations].each do |entry|
             assert(!(entry["argv"] + entry["environment"].values).any? { |value| value.include?(entry["feedback"]) },
                    "#{adapter} prompt leaked into child argv or environment")
@@ -171,7 +171,7 @@ module StructuredOutputValidationTest
         "resume", HQ::AgentCorrectionRunner::SESSION_PLACEHOLDER,
         HQ::AgentCorrectionRunner::PROMPT_PLACEHOLDER, FIXTURE_ROOT
       ]
-      stdin_transport = %w[codex claude agy].include?(adapter) && scenario != "requires_null_stdin"
+      stdin_transport = %w[codex claude pi agy].include?(adapter) && scenario != "requires_null_stdin"
       if stdin_transport
         initial[-2] = "[stdin]"
         correction[-2] = "[stdin]"
@@ -202,7 +202,7 @@ module StructuredOutputValidationTest
     <<~'RUBY'
       require "json"
       adapter, scenario, state_path, last_message_path, mode, session_id, feedback, fixture_root = ARGV
-      feedback = STDIN.read if %w[codex claude agy].include?(adapter)
+      feedback = STDIN.read if %w[codex claude pi agy].include?(adapter)
       count = File.file?(state_path) ? File.readlines(state_path).length : 0
       entry = {
         "mode" => mode,
