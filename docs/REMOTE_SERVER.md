@@ -36,7 +36,7 @@ No setting can let one address occupy all 32 slots. Existing admitted responses
 are never evicted to make room. Multiple addresses can still fill the global
 limit; this change does not replace the worker pool or global admission policy.
 
-[Serve diagnostics](/Users/didik/Code/personal/tycho-charlie/docs/SERVE_DIAGNOSTICS.md)
+[Serve diagnostics](SERVE_DIAGNOSTICS.md)
 reports the effective settings and rejection count without recording addresses.
 
 ## Agent read snapshots
