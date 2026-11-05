@@ -56,14 +56,46 @@ cases = [
   ["Windows target", "[Notes](C:/data/notes.md) <!-- local-path-example: Target. -->", false],
   ["file target", "<a href='file:///data/notes.md'>Notes</a>", false],
   ["home runtime", "`~/.tycho/logs/`", true],
-  ["API route", "`GET /projects/{key}/workspace/preview`", true]
+  ["API route", "`GET /projects/{key}/workspace/preview`", true],
+  ["review escaped inline", "[Notes](\\/data/notes.md)\n", false],
+  ["review escaped reference", "[Notes]: \\/data/notes.md\n\n[Notes]\n", false],
+  ["review named HTML", "<a href=\"&sol;data/notes.md\">Notes</a>", false],
+  ["escaped angle destination", "[Notes](<\\/data/notes.md>)", false],
+  ["escaped scheme", "[Notes](file\\:///data/notes.md)", false],
+  ["escaped drive", "[Notes](C\\:&sol;data/notes.md)", false],
+  ["encoded scheme", "[Notes](file&colon;&sol;&sol;&sol;data/notes.md)", false],
+  ["encoded drive", "<a href='C&colon;&bsol;data&bsol;notes.md'>Notes</a>", false],
+  ["encoded leading whitespace", "<a href='&Tab;&NewLine;&sol;data/notes.md'>Notes</a>", false],
+  ["remote escaped slashes", "[Remote](https:\\/\\/example.test/notes)", true],
+  ["remote encoded slashes", "[Remote](https:&sol;&sol;example.test/-/home/user)", true],
+  ["remote encoded HTML", "<a href='https&colon;&sol;&sol;example.test/#/Users/alice'>Notes</a>", true],
+  ["relative escaped punctuation", "[Notes](docs/notes\\!.md)", true],
+  ["relative encoded punctuation", "<img src='images/notes&excl;.png'>", true],
+  ["escaped ampersand", "[Notes](\\&sol;data/notes.md)", true],
+  ["nested Markdown reference", "[Notes](&amp;sol;data/notes.md)", true],
+  ["nested HTML reference", "<a href='&amp;sol;data/notes.md'>Notes</a>", true],
+  ["HTML backslash stays literal", "<a href='\\/data/notes.md'>Notes</a>", true],
+  ["HTML decimal without semicolon", "<img src='&#47data/notes.png'>", false],
+  ["HTML hex without semicolon", "<img src='&#x2fnotes.png'>", false]
 ]
+
+%w[&sol; &#47; &#x2f; &#X2F;].each do |slash|
+  cases << ["named/numeric inline #{slash}", "[Notes](#{slash}data/notes.md)", false]
+  cases << ["named/numeric reference #{slash}", "[Notes]: #{slash}data/notes.md\n\n[Notes]", false]
+  cases << ["named/numeric href #{slash}", "<a href='#{slash}data/notes.md'>Notes</a>", false]
+  cases << ["named/numeric src #{slash}", "<img src=#{slash}data/notes.png>", false]
+end
 
 cases.each do |name, input, allowed|
   actual = MarkdownPaths.invalid_lines(input)
   raise "#{name}: expected allowed=#{allowed}, got #{actual.inspect}" unless actual.empty? == allowed
 end
 raise "expected attribute line number" unless MarkdownPaths.invalid_lines("<a\n href='/data/notes.md'>Notes</a>\n") == [2]
+raise "do not unescape entity output" unless MarkdownPaths.decode_target("&#92;/data", markdown: true) == "\\/data"
+raise "do not unescape HTML backslashes" unless MarkdownPaths.decode_target("\\&sol;data", markdown: false) == "\\/data"
+raise "unknown named references stay literal" unless MarkdownPaths.decode_target("&unknown;", markdown: true) == "&unknown;"
+raise "decode legacy attribute references" unless MarkdownPaths.decode_target("&amp!", markdown: false) == "&!"
+raise "retain ambiguous attribute references" unless MarkdownPaths.decode_target("&amp=1", markdown: false) == "&amp=1"
 
 Dir.mktmpdir("tycho-markdown-paths-") do |root|
   system("git", "init", "-q", root, exception: true)
@@ -77,6 +109,11 @@ Dir.mktmpdir("tycho-markdown-paths-") do |root|
   File.write(path, "# Notes\n<a href = '/data/notes.md'>Notes</a>\n")
   expected = "docs/with space.MD:2: <a href = '/data/notes.md'>Notes</a>"
   raise "expected tracked filename, line, and text" unless MarkdownPaths.check(root) == [expected]
+
+  cases.select { |name, _input, _allowed| name.start_with?("review ") }.each do |name, input, _allowed|
+    File.write(path, input)
+    raise "#{name}: tracked reproduction must fail" if MarkdownPaths.check(root).empty?
+  end
 end
 
 puts "markdown_paths_test: ok (#{cases.length} content cases and tracked-file checks)"

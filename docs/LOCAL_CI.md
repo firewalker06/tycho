@@ -22,6 +22,11 @@ except file URIs and Windows drive paths. Local-looking URL paths, queries,
 and fragments do not count as local files. HTML attributes are checked with
 case-insensitive names, whitespace around the equals sign, quoted or unquoted
 values, and line breaks. Attribute order does not affect the check.
+Before checking a destination, it decodes named, decimal, and hexadecimal
+HTML character references. Markdown destinations also decode backslash
+escapes. HTML attribute backslashes stay literal. Decoding uses one pass;
+escaped ampersands and nested character references are not decoded again.
+The named-reference table is local test data; no network request is needed.
 `test/markdown_paths_test.rb` covers these rules and the review reproductions.
 
 For a required command example or API sample,
