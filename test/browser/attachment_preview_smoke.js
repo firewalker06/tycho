@@ -21,6 +21,30 @@ module.exports = async function attachmentPreviewSmoke({ browser, baseUrl, agent
   }
   await page.goto(summaryUrl, { waitUntil: "networkidle" });
   await previewButton("Release review").waitFor();
+  const inquiryControl = await page.evaluate(() => {
+    const agent = { key: "fixture-agent", server_key: "local", project_key: "fixture", latest_inquiry: { id: "fixture-inquiry", message: "Choose a review action.", fields: [] } };
+    const originalMatchMedia = window.matchMedia;
+    state.summaryAttachmentPreview = { id: "fixture-attachment" };
+    const split = renderInquiryForm(agent);
+    state.summaryAttachmentPreview = null;
+    const regular = renderInquiryForm(agent);
+    window.matchMedia = originalMatchMedia;
+    return { split, regular };
+  });
+  await assert(inquiryControl.split.includes('aria-label="Full height"') && inquiryControl.split.includes('title="Full height"') && inquiryControl.split.includes('m8 18 4 4 4-4'), "Wide split inquiry control did not use the full-height label and icon");
+  await assert(inquiryControl.regular.includes('aria-label="Open full-screen inquiry"') && inquiryControl.regular.includes('title="Full-screen inquiry"') && inquiryControl.regular.includes('M15 3h6v6'), "Non-split inquiry control changed its full-screen label or icon");
+  await page.evaluate((html) => {
+    const fixture = document.createElement("div");
+    fixture.id = "inquiry-control-browser-fixture";
+    fixture.innerHTML = '<button type="button">Before</button>' + html;
+    document.body.append(fixture);
+  }, inquiryControl.split);
+  const fullHeightButton = page.locator("#inquiry-control-browser-fixture [data-toggle-inquiry-full-screen]");
+  await page.locator("#inquiry-control-browser-fixture").locator("button").first().focus();
+  await page.keyboard.press("Tab");
+  await assert(await fullHeightButton.getAttribute("aria-label") === "Full height", "Full-height control did not receive keyboard focus or expose its accessible name");
+  await assert(await fullHeightButton.evaluate((button) => button === document.activeElement), "Keyboard Tab did not focus the full-height control");
+  await page.locator("#inquiry-control-browser-fixture").evaluate((node) => node.remove());
   await previewButton("Release review").focus();
   await page.keyboard.press("Enter");
   await page.waitForFunction(() => document.querySelector(".summary-attachment-preview-scroll")?.getAttribute("aria-busy") === "false");
