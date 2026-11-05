@@ -3,6 +3,7 @@
 require "base64"
 require "digest"
 require "fileutils"
+require "ipaddr"
 require "json"
 require "net/http"
 require "open3"
@@ -66,6 +67,8 @@ module HQ
     MAX_CLIENT_WORKERS = 32
     CLIENT_DRAIN_TIMEOUT = 5
     CLIENT_READ_TIMEOUT = 10
+    CLIENT_HEADER_TIMEOUT = 1.0
+    MAX_CLIENT_CONNECTIONS_PER_ADDRESS = 24
     MAX_HEADER_BYTES = 64 * 1024
     SLOW_REQUEST_THRESHOLD_MS = 500
     ACTIVITY_AGENT_FIELDS = %i[
@@ -96,7 +99,9 @@ module HQ
                    daemonize_after_startup: false, daemon_log_path: REMOTE_DAEMON_LOG_FILE, daemonizer: nil,
                    resource_catalog: nil, resource_snapshot_path: nil, agent_activity_snapshot: nil,
                    agent_list_cache: nil, project_metadata_cache: nil,
-                   registry: nil, clock: -> { Time.now }, slow_request_ms: SLOW_REQUEST_THRESHOLD_MS)
+                   registry: nil, clock: -> { Time.now }, slow_request_ms: SLOW_REQUEST_THRESHOLD_MS,
+                   header_timeout: HQ.env("REMOTE_HEADER_TIMEOUT", CLIENT_HEADER_TIMEOUT),
+                   connections_per_address: HQ.env("REMOTE_CONNECTIONS_PER_ADDRESS", MAX_CLIENT_CONNECTIONS_PER_ADDRESS))
       @host = host.to_s.empty? ? DEFAULT_HOST : host.to_s
       @port = port.to_i.positive? ? port.to_i : DEFAULT_PORT
       @public_url = public_url.to_s
@@ -116,6 +121,15 @@ module HQ
       @registry = registry
       @clock = clock
       @serve_diagnostics = ServeDiagnostics.new
+      @client_header_timeout = Float(header_timeout)
+      unless @client_header_timeout.finite? && @client_header_timeout.positive?
+        raise ArgumentError, "TYCHO_REMOTE_HEADER_TIMEOUT must be a finite positive number of seconds"
+      end
+      @connections_per_address = Integer(connections_per_address.to_s, 10)
+      unless @connections_per_address.between?(1, MAX_CLIENT_WORKERS - 1)
+        raise ArgumentError, "TYCHO_REMOTE_CONNECTIONS_PER_ADDRESS must be between 1 and #{MAX_CLIENT_WORKERS - 1}"
+      end
+      @client_addresses = {}
       @client_workers = {}
       @max_client_workers = MAX_CLIENT_WORKERS
       @client_read_timeout = CLIENT_READ_TIMEOUT
@@ -201,11 +215,20 @@ module HQ
     # One thread per accepted client: a slow request (for example a large
     # conversation read) must not block cheap cached reads. Requests are short
     # lived, so a thread per client is simpler than a pool. MAX_CLIENT_WORKERS
-    # bounds the fan-out; at the cap we stop accepting and clients wait in the
-    # kernel backlog.
+    # bounds the fan-out. Reject an address at its limit before waiting for a
+    # global slot, so its extra sockets cannot block the listener.
     def spawn_client_worker(client)
       accepted_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       @serve_diagnostics.accept
+      address = IPAddr.new(client.peeraddr(false)[3]).native.to_s
+      at_limit = @client_workers_mutex.synchronize do
+        @client_addresses.count { |_worker, peer| peer == address } >= @connections_per_address
+      end
+      if at_limit
+        reject_client_connection(client)
+        return
+      end
+
       wait_for_client_slot
       @client_workers_mutex.synchronize do
         worker = Thread.new do
@@ -216,13 +239,32 @@ module HQ
           rescue StandardError => e
             @logger.error("Remote") { "client worker failed: #{e.class} - #{e.message}" }
           ensure
-            @client_workers_mutex.synchronize { @client_workers.delete(Thread.current) }
+            @client_workers_mutex.synchronize do
+              @client_workers.delete(Thread.current)
+              @client_addresses.delete(Thread.current)
+            end
           end
         end
         @client_workers[worker] = client
+        @client_addresses[worker] = address
       end
     rescue StandardError => e
       @logger.error("Remote") { "could not start client worker: #{e.class} - #{e.message}" }
+      client.close unless client.closed?
+    end
+
+    # Never wait for an over-limit client to read. A single small nonblocking
+    # write normally fits in the empty send buffer; otherwise close immediately.
+    def reject_client_connection(client)
+      @serve_diagnostics.reject_connection
+      body = JSON.generate(error: "Too many open connections from this address")
+      response = "HTTP/1.1 429 Too Many Requests\r\n" \
+                 "Content-Type: application/json\r\nContent-Length: #{body.bytesize}\r\n" \
+                 "Retry-After: 1\r\nConnection: close\r\n\r\n#{body}"
+      client.write_nonblock(response, exception: false)
+    rescue IOError, SystemCallError
+      nil
+    ensure
       client.close unless client.closed?
     end
 
@@ -295,6 +337,8 @@ module HQ
         snapshot = @serve_diagnostics.snapshot
         snapshot[:active_worker_slots] = @client_workers_mutex.synchronize { @client_workers.size }
         snapshot[:worker_limit] = MAX_CLIENT_WORKERS
+        snapshot[:connections_per_address] = @connections_per_address
+        snapshot[:header_timeout_seconds] = @client_header_timeout
         write_http(client, status, snapshot)
         return
       end
@@ -929,7 +973,7 @@ module HQ
     # Reads with a total deadline so a silent or truncated client cannot hold
     # a worker (and a MAX_CLIENT_WORKERS slot) forever.
     def read_request(client)
-      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + @client_read_timeout
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + @client_header_timeout
       buffer = +"".b
       head = read_until_blank_line(client, buffer, deadline)
       return nil if head.nil?
@@ -945,6 +989,7 @@ module HQ
         headers[name.to_s.downcase] = value.to_s.strip unless name.to_s.empty?
       end
       length = headers["content-length"].to_i
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + @client_read_timeout
       buffer << read_chunk(client, deadline) while buffer.bytesize < length
       body = buffer.byteslice(0, length).to_s.force_encoding(Encoding::UTF_8)
       path, query = raw_path.to_s.split("?", 2)
@@ -1093,6 +1138,7 @@ module HQ
         409 => "Conflict",
         408 => "Request Timeout",
         413 => "Content Too Large",
+        429 => "Too Many Requests",
         415 => "Unsupported Media Type",
         502 => "Bad Gateway",
         504 => "Gateway Timeout",

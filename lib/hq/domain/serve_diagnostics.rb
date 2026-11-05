@@ -21,11 +21,16 @@ module HQ
     def initialize
       @mutex = Mutex.new
       @accepted = 0
+      @rejected_connections = 0
       @samples = []
     end
 
     def accept
       @mutex.synchronize { @accepted += 1 }
+    end
+
+    def reject_connection
+      @mutex.synchronize { @rejected_connections += 1 }
     end
 
     def record(request, timing)
@@ -51,7 +56,7 @@ module HQ
 
     def snapshot
       @mutex.synchronize do
-        { accepted_sockets: @accepted, sample_limit: SAMPLE_LIMIT, samples: @samples.map(&:dup) }
+        { accepted_sockets: @accepted, rejected_connections: @rejected_connections, sample_limit: SAMPLE_LIMIT, samples: @samples.map(&:dup) }
       end
     end
   end

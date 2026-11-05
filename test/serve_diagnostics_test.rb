@@ -14,12 +14,13 @@ timing.response_bytes = 789
   Thread.new do
     300.times do
       diagnostics.accept
+      diagnostics.reject_connection
       diagnostics.record(request, timing)
     end
   end
 end.each(&:join)
 snapshot = diagnostics.snapshot
-raise "counts" unless snapshot[:accepted_sockets] == 1200 && snapshot[:samples].size == 1024
+raise "counts" unless snapshot[:accepted_sockets] == 1200 && snapshot[:rejected_connections] == 1200 && snapshot[:samples].size == 1024
 raise "labels" unless snapshot[:samples].all? { |sample| sample[:route] == "OTHER /other" }
 raise "measurements" unless snapshot[:samples].first.values_at(:store_lock_wait_ms, :store_lock_hold_ms, :response_bytes) == [123, 456, 789]
 snapshot[:samples].first[:route] = "changed"
