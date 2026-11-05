@@ -8075,10 +8075,10 @@ module RemoteServerTest
     assert(css[:body].include?("grid-template-columns: auto minmax(0, 1fr)"),
            "expected inquiry banners to align the icon beside the prompt")
     assert(css[:body].include?(".inquiry-choice-list"), "expected Remote UI inquiry forms to style multi-select choices")
-    assert(!css[:body].include?(".message.inquiry-response"),
-           "expected Remote UI inquiry replies to use the normal user message style")
-    assert(!css[:body].include?(".message.user.inquiry-response .message-role"),
-           "expected Remote UI inquiry reply headers to use normal user alignment")
+    assert(css[:body].include?(".message.inquiry-response"),
+           "expected Remote UI inquiry replies to use the existing answer block style")
+    assert(css[:body].include?(".message.user.inquiry-response .message-role"),
+           "expected Remote UI inquiry reply headers to keep their existing alignment")
     assert(css[:body].include?("justify-content: flex-end"),
            "expected Remote UI inquiry reply headers to stay right aligned")
     assert(css[:body].include?(".parsed-json-key"),
@@ -9842,20 +9842,21 @@ module RemoteServerTest
            "expected chat messages to render their own attachment rows")
     assert(js[:body].include?("function formatJsonObjectMessage"),
            "expected Remote UI to parse JSON object user replies for display")
-    assert(js[:body].include?('Object.entries(parsed).filter(([key, value]) => key !== "user_feedback" || value != null)'),
-           "expected Remote UI to hide empty feedback values in user messages")
+    assert(js[:body].include?("includeUserFeedback: inquiryResponseBlock(block)") &&
+           js[:body].include?('entries.push(["user_feedback", null])'),
+           "expected historical inquiry answers to keep the existing feedback row")
     assert(js[:body].include?("function inquiryResponseBlock"),
            "expected Remote UI to detect inquiry response messages")
     assert(js[:body].include?("function runSummaryNumber"),
            "expected Remote UI to label each run summary with its stable run number")
-    assert(js[:body].include?('if (block.role === "user") return iconSvg("squareUserRound")'),
-           "expected Remote UI inquiry responses to use the normal user icon")
+    assert(js[:body].include?('return iconSvg("badgeQuestionMark")'),
+           "expected Remote UI inquiry answers to keep the existing answer icon")
     assert(js[:body].include?("function humanizeJsonKey"),
            "expected Remote UI parsed replies to humanize JSON keys")
     assert(js[:body].include?("return words.toUpperCase();"),
            "expected Remote UI parsed reply keys to render as all-caps")
-    assert(js[:body].include?("return blockLabel(block);"),
-           "expected Remote UI inquiry responses to use the normal user label")
+    assert(js[:body].include?('return inquiryResponseBlock(block) ? "user answers" : blockLabel(block);'),
+           "expected Remote UI inquiry answers to keep the existing answer label")
     assert(js[:body].include?("function renderQueueReadConversationBlock") &&
            js[:body].include?('data-queue-read-block') &&
            js[:body].include?('class="message-group queue-read-block"') &&
