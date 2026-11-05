@@ -8587,6 +8587,24 @@ body:has(.inquiry-form-full-screen) {
   gap: 8px;
 }
 
+.quick-agent-peers {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  min-width: 0;
+  padding-top: 4px;
+  font-size: .8125rem;
+}
+
+.quick-agent-peers:empty { display: none; }
+
+.quick-agent-peers button {
+  min-height: 32px;
+  margin-left: 4px;
+}
+
 .quick-agent-toggle {
   display: inline-flex;
   align-items: center;

@@ -160,6 +160,14 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     await addPeers("offline");
     assert.equal(await page.locator("#quick-agent-project").inputValue(), "fixture-peer0/web");
     assert(await page.locator('#quick-agent-form button[value=create-run]').isDisabled());
+    assert.equal(await page.locator("[data-quick-agent-peers]").evaluate(el => el.closest("#quick-agent-options") !== null), true);
+    assert.equal(await page.locator('[data-quick-agent-peer-retry="fixture-peer0"]').count(), 1);
+    await page.locator("#quick-agent-model").focus();
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Tab");
+    assert.equal(await page.locator('[data-quick-agent-peer-retry="fixture-peer0"]').evaluate(el => el === document.activeElement), true,
+      "Retry must remain reachable by keyboard");
+    await capture("stale-peer-controls");
     const peerRefreshes = [];
     await page.route(`${baseUrl}/servers/*/resources/refresh`, async route => {
       peerRefreshes.push(new URL(route.request().url()).pathname);
