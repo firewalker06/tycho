@@ -815,6 +815,11 @@ module RemoteServerTest
       server.instance_variable_set(:@client_header_timeout, read_timeout) if read_timeout
       server.instance_variable_set(:@client_read_timeout, read_timeout) if read_timeout
       server.instance_variable_set(:@max_client_workers, max_workers) if max_workers
+      readiness_workers = Queue.new
+      server.define_singleton_method(:handle_client) do |client, **client_options|
+        readiness_workers << Thread.current
+        super(client, **client_options)
+      end
       thread = Thread.new { server.start }
       deadline = Time.now + 5
       begin
@@ -826,6 +831,13 @@ module RemoteServerTest
         retry
       end
       begin
+        # TCP close does not wait for the server worker to release its address slot.
+        # Observe admission first, then join that worker before opening test sockets.
+        readiness_worker = readiness_workers.pop(timeout: 5)
+        assert(readiness_worker && readiness_worker.join(5), "expected readiness worker to finish")
+        server.instance_variable_get(:@client_workers_mutex).synchronize do
+          assert(server.instance_variable_get(:@client_addresses).empty?, "expected no readiness address slots")
+        end
         yield server, port
       ensure
         server.shutdown
