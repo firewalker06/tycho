@@ -52,8 +52,18 @@ prompt text.
 The runner reads `get_state.sessionId` and emits the session event used by
 Tycho's recorder. It forwards native event lines without changes and waits
 for `agent_settled`, which includes automatic retries and compaction, before
-closing stdin to request normal EOF shutdown. An early process exit or a
-rejected RPC request fails the run. Cancellation stops the process group.
+closing stdin to request normal EOF shutdown. After prompt acceptance, the
+runner also checks `get_state`: idle input handled by an extension can finish
+without an agent run or `agent_settled`. Once an agent starts, an idle snapshot
+does not replace `agent_settled`, so retries and compaction can finish.
+
+RPC input and output use binary IO with explicit UTF-8 message encoding and
+reply decoding. Unicode delivery does not depend on `LANG` or `LC_ALL`.
+After completion, stdout drain and process exit have a five-second limit.
+An early process exit, rejected request, or shutdown timeout fails the run.
+On error or cancellation, the runner closes stdin and stops only its child
+PID, with bounded TERM and KILL waits. Managed cancellation also stops the
+owned process group.
 
 Pi 0.84.4 is the validated baseline. Later versions must keep `get_state`,
 `prompt`, `agent_settled`, native session resume, and EOF shutdown. Older

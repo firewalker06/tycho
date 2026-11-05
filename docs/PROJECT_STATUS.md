@@ -18,8 +18,10 @@ Command builders declare the prompt transport. Codex managed runs use stdin
 with `exec -` or `exec resume ID -`; Claude uses print-mode text stdin; agy
 uses `--print --input-format text` with stdin for new and resumed runs. Pi uses JSONL RPC
 over stdin, including resume and correction. Pi 0.84.4 is the validated
-baseline. The runner waits for `agent_settled` before EOF shutdown and maps
-`get_state.sessionId` to the existing session event. OpenCode retains argv.
+baseline. The runner waits for `agent_settled`, or confirms idle handled input
+after acceptance, before EOF shutdown. It bounds process exit and stops only
+its child PID if needed. Explicit UTF-8 RPC bytes also work with the C locale.
+It maps `get_state.sessionId` to the existing session event. OpenCode retains argv.
 Pi prompt files are not used: file expansion wraps and changes the input.
 The correction runner receives its configuration through stdin, so command
 arrays with prompt text do not enter the runner environment. Pipe writers run
