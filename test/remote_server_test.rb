@@ -63,6 +63,7 @@ module RemoteServerTest
     assert_remote_inquiry_dismiss_restore_and_retirement_lifecycle
     assert_remote_agent_payload_includes_attachments
     assert_attachment_reads_skip_lifecycle_lock
+    assert_agent_list_reads_skip_lifecycle_lock
     assert_attachment_reads_exclude_restored_retired_owner
     assert_json_attachment_download_preserves_raw_bytes
     assert_attachment_download_uses_original_filename
@@ -891,7 +892,7 @@ module RemoteServerTest
       stored = stored_agents.find { |candidate| candidate.key == agent[:key] }
       stored.mark_unread!
       HQ::AgentStore.new([]).save(stored_agents)
-      service.agents
+      service.dispatch_agent_push_notifications!
 
       server = HQ::RemoteServer.new(agent_activity_snapshot: snapshot)
       response = server.send(:route, service, "GET", "/servers/activity", {}, nil)
@@ -2936,6 +2937,55 @@ module RemoteServerTest
              "expected old attachment records to fall back to the source path basename")
       assert(service.attachment_blob(legacy.fetch("id")).dig(:headers, "Content-Disposition").include?('filename="out.mp4"'),
              "expected old attachments to download with their source filename")
+    end
+  end
+
+  def assert_agent_list_reads_skip_lifecycle_lock
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      store = HQ::AgentStore.new(registry.projects)
+      agent = HQ::ManagedAgent.new(key: "list-read", name: "Read", project_key: "web",
+                                   template_key: "custom", workspace: workspace, prompt: "Work.")
+      retired = HQ::ManagedAgent.from_hash(agent.to_hash.merge("key" => "retired-list-read"))
+      store.save([agent, retired])
+      restored = JSON.parse(File.read(HQ::AGENTS_FILE))
+      service = HQ::RemoteService.new(registry: registry, web_push_notifier: RecordingPushNotifier.new)
+      assert(service.agents.length == 2, "expected both active records before archive")
+      store.archive_agent!(retired.key, root: File.join(dir, "archive"))
+      assert(service.agents.map { |item| item[:key] } == [agent.key], "warm list retained archived record")
+      archived = agent.to_hash.merge("key" => "archived-list-read", "archived" => true)
+      completed = agent.to_hash.merge("key" => "completed-list-read", "started_at" => Time.now.iso8601,
+                                      "last_exit_code" => 0, "structured_result" => { "status" => "success" })
+      HQ::FileStore.write_json(HQ::AGENTS_FILE, restored + [archived, completed])
+      service.instance_variable_get(:@agent_store).define_singleton_method(:load_with_poll_events) do |**|
+        raise "list read entered lifecycle maintenance"
+      end
+      files = lambda do
+        Dir.glob(File.join(dir, "**", "*"), File::FNM_DOTMATCH).select { |path| File.file?(path) }
+           .to_h { |path| [path, [File.binread(path), File.stat(path).mtime]] }
+      end
+      before = files.call
+      locked = Queue.new
+      release = Queue.new
+      holder = Thread.new do
+        store.send(:with_exclusive_lock) { locked << true; release.pop }
+      end
+      locked.pop
+      begin
+        reader = Thread.new { service.agents }
+        assert(reader.join(1), "agent list waited for the lifecycle lock")
+        payload = reader.value.to_h { |item| [item[:key], item] }
+        assert(payload.keys.sort == ["completed-list-read", "list-read"], "list exposed archived or retired records")
+        assert(payload[agent.key][:status] == "idle" && payload["completed-list-read"][:status] == "succeeded",
+               "snapshot changed stored statuses")
+        assert(files.call == before, "list read created or changed store files")
+      ensure
+        release << true
+        holder.join
+        reader&.join
+      end
     end
   end
 
