@@ -2090,7 +2090,6 @@ module HQ
     end
 
     def agents
-      # List reads observe committed state; polling and mutations own reconciliation.
       all_agents = read_all_agents.reject(&:archived?)
       context = delegation_reference_context(all_agents)
       relationships = delegation_relationship_context
