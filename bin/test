@@ -1,39 +1,14 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-require "open3"
 require "tmpdir"
 
 ROOT = File.expand_path("..", __dir__)
 require File.join(ROOT, "test/support/test_environment")
 
 # Check tracked Markdown before starting the slower regression suite.
-markdown_files, git_status = Open3.capture2("git", "ls-files", "-z", chdir: ROOT)
-abort "Cannot list tracked Markdown files" unless git_status.success?
-local_path = %r{(?<![\w~\}])/(?:Users|home|tmp|absolute|opt|var|usr|etc|Volumes|private|root|mnt|srv|Applications|Library|workspace|workspaces)/|file://|\b[A-Za-z]:[\\/]}
-absolute_link = %r{\]\(\s*<?/(?!/)|(?:href|src)=["']/|\]:\s*<?/(?!/)}
-violations = []
-markdown_files.split("\0").select { |path| path.downcase.end_with?(".md") }.each do |path|
-  fence = nil
-  example_block = false
-  previous_example = false
-  File.foreach(File.join(ROOT, path)).with_index(1) do |line, number|
-    example = line.match?(/<!-- local-path-example: .+ -->/)
-    if (delimiter = line[/^\s{0,3}(`{3,}|~{3,})/, 1])
-      if fence.nil?
-        fence = delimiter
-        example_block = previous_example
-      elsif delimiter.start_with?(fence[0]) && delimiter.length >= fence.length
-        fence = nil
-        example_block = false
-      end
-    end
-    if line.match?(absolute_link) || (line.match?(local_path) && !example && !example_block)
-      violations << "#{path}:#{number}: #{line.strip}"
-    end
-    previous_example = example
-  end
-end
+require File.join(ROOT, "test/support/markdown_paths")
+violations = MarkdownPaths.check(ROOT)
 abort "Absolute local paths in tracked Markdown:\n#{violations.join("\n")}" unless violations.empty?
 puts "Tracked Markdown paths: ok"
 

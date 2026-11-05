@@ -17,7 +17,14 @@ image targets fail the check, including targets in marked examples.
 
 The check also rejects local path text with common Unix directory roots,
 Windows drive paths, or a file URI scheme. Remote URLs and home-relative
-runtime paths remain valid. For a required command example or API sample,
+runtime paths remain valid. The text check excludes complete scheme URLs,
+except file URIs and Windows drive paths. Local-looking URL paths, queries,
+and fragments do not count as local files. HTML attributes are checked with
+case-insensitive names, whitespace around the equals sign, quoted or unquoted
+values, and line breaks. Attribute order does not affect the check.
+`test/markdown_paths_test.rb` covers these rules and the review reproductions.
+
+For a required command example or API sample,
 put `<!-- local-path-example: REASON -->` on the same line, or immediately
 before its fenced code block. Use a specific reason. This exception permits
 sample path text only; do not use it to retain machine-specific links.
