@@ -31,8 +31,12 @@ module.exports = async ({browser, baseUrl}) => {
         if (writes.length === 1) return route.abort("connectionreset");
         return route.fulfill({response});
       }
-      if (scenario === "blocker-multiselect-comma" && writes.length === 1) {
+      if (["blocker-multiselect-comma", "blocker-durable-rejection-correction"].includes(scenario) && writes.length === 1) {
         return route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"Synthetic failure before acceptance"})});
+      }
+      if (scenario === "blocker-durable-rejection-correction" && writes.length === 2) {
+        const response = await context.request.post(`${baseUrl}/agents/${key}/inquiries/${inquiryId}/dismiss`,{data:{}});
+        assert.equal(response.status(),200,"the same inquiry is dismissed before the retry reaches the server");
       }
       const response = await route.fetch();
       return route.fulfill({response});
@@ -44,6 +48,10 @@ module.exports = async ({browser, baseUrl}) => {
     if (scenario === "blocker-multiselect-comma") {
       await page.locator('#inquiry-form input[type="checkbox"]').first().check();
       await page.locator('input[type="file"]').first().setInputFiles({name:"regions.png",mimeType:"image/png",buffer:Buffer.from("synthetic image")});
+    } else if (scenario === "blocker-durable-rejection-correction") {
+      await page.locator('#inquiry-form input[type="text"]').fill("Original answer");
+      await page.locator('#inquiry-form input[type="checkbox"]').first().check();
+      await page.locator('input[type="file"]').first().setInputFiles({name:"saved.txt",mimeType:"text/plain",buffer:Buffer.from("Saved bytes")});
     } else {
       await page.locator('#inquiry-form input[type="text"]').fill("Original answer");
     }
@@ -122,6 +130,44 @@ module.exports = async ({browser, baseUrl}) => {
       assert.equal(await page.evaluate(() => globalThis.__store.entries.size),0,"late success does not recreate a cancelled entry");
       assert.equal((await page.evaluate(() => globalThis.__store.store.all())).length,0);
       assert.equal(writes.length,2,"cancelled retry does not send another answer request");
+      return;
+    }
+
+    if (scenario === "blocker-durable-rejection-correction") {
+      await page.waitForFunction(key => inquiryAnswerStore().entries.get(key)?.status === "uncertain",key);
+      await page.locator('[data-edit-inquiry-answer][data-answer-field="choice"]').fill("Corrected answer after failure");
+      const recovery = page.locator("[data-inquiry-answer-recovery]");
+      await recovery.locator('input[type="checkbox"]').nth(0).uncheck();
+      await recovery.locator('input[type="checkbox"]').nth(1).check();
+      await page.locator("[data-retry-inquiry-answer]").click();
+      const confirmation = page.locator("#confirmation-dialog");
+      await confirmation.waitFor({state:"visible"});
+      await confirmation.locator("[data-confirmation-accept]").click();
+      await page.waitForFunction(key => inquiryAnswerStore().entries.get(key)?.status === "rejected",key);
+
+      const restored = await context.request.post(`${baseUrl}/agents/${key}/inquiries/${inquiryId}/restore`,{data:{}});
+      assert.equal(restored.status(),200,"the rejected inquiry can return to the answer form");
+      await page.reload({waitUntil:"networkidle"});
+      await page.waitForSelector("#inquiry-form",{state:"attached"});
+      const form = page.locator("#inquiry-form");
+      assert.equal(await form.locator('input[type="text"]').inputValue(),"Corrected answer after failure");
+      assert.equal(await form.locator('input[type="checkbox"]').nth(0).isChecked(),false);
+      assert.equal(await form.locator('input[type="checkbox"]').nth(1).isChecked(),true);
+      assert.equal(await form.locator('[name="feedback"]').inputValue(),"Original feedback");
+      assert.equal(await form.locator("[data-remove-prompt-attachment]").count(),1,"the original attachment remains available after rejection");
+
+      await form.locator('button[type="submit"]').click();
+      await page.waitForFunction(() => inquiryAnswerStore().entries.size === 0);
+      assert.equal(writes.length,3,"corrected fields submit as one new answer");
+      assert.notEqual(writes[2].client_request_id,writes[1].client_request_id,"the correction uses a new intent after durable rejection");
+      assert.notEqual(writes[2].client_request_id,writes[0].client_request_id);
+      assert.deepEqual(JSON.parse(writes[2].answer),{
+        choice:"Corrected answer after failure",
+        regions:["Tokyo"],
+        user_feedback:"Original feedback"
+      });
+      assert.equal(writes[2].feedback,"Original feedback");
+      assert.equal(writes[2].attachments[0]?.filename,"saved.txt");
       return;
     }
 
