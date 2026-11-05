@@ -100,17 +100,20 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForIn
             assert.deepEqual(recovered.pending.map(block=>block.intent),[JSON.parse(payloads[0]).client_request_id],"saved entry restores its original inquiry intent block");
             assert.equal(await page.locator(".message.user.inquiry-response").count(),1,"failed answer is restored to the conversation after reload");
             assert.match(await page.locator(".message.user.inquiry-response").innerText(),/Synthetic answer retained/);
-            assert.match(await page.locator(".message-send-status").innerText(),/Answer not confirmed/);
+            assert.equal(await page.locator("[data-inquiry-answer-recovery] > p").first().innerText(),"Failed to submit answer, retry or remove");
+            assert.equal(await page.locator(".message-send-status").count(),0,"failed answer block has no extra status message");
+            assert.equal(await page.locator(".message.user.inquiry-response").getAttribute("aria-label"),"Failed answer");
+            assert.equal(await page.locator("[data-inquiry-answer-recovery]").getByText("Edit your answer. Retry checks the saved answer.").count(),0);
             if (scenario === "failed-edit-retry" || scenario === "failed-reload-edit") {
               const editor = page.locator("[data-edit-inquiry-answer]").first();
               assert.equal(await editor.inputValue(), "Synthetic answer retained");
+              assert.equal(await page.locator(`label[for="${await editor.getAttribute("id")}"]`).innerText(),"Your answer","the editor keeps an accessible field label");
               await editor.fill("Edited synthetic answer");
-              assert.match(await page.locator("[data-inquiry-correction-notice]").innerText(),/original saved answer/i);
               if (scenario === "failed-reload-edit") {
                 await page.reload({waitUntil:"networkidle"});
                 await page.waitForSelector("[data-edit-inquiry-answer]");
                 assert.equal(await page.locator("[data-edit-inquiry-answer]").first().inputValue(), "Edited synthetic answer");
-                assert.match(await page.locator("[data-inquiry-correction-notice]").innerText(),/not sent/i);
+                assert.equal(await page.locator("[data-inquiry-answer-recovery] > p").first().innerText(),"Failed to submit answer, retry or remove");
               }
             }
             if (scenario === "failed-cancel") {
