@@ -8590,8 +8590,13 @@ body:has(.inquiry-form-full-screen) {
 .quick-agent-peers {
   grid-column: 1 / -1;
   display: grid;
+  max-height: 220px;
   min-width: 0;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--ds-border-strong, var(--border)) transparent;
+  scrollbar-width: thin;
   border: 1px solid var(--ds-border-subtle, var(--border));
   border-radius: 8px;
   background: var(--ds-background-surface-sunken, var(--bg));
@@ -8629,6 +8634,7 @@ body:has(.inquiry-form-full-screen) {
 .quick-agent-peer-status {
   min-height: 24px;
   padding: 2px 7px;
+  color: var(--ds-text-primary, var(--text));
   font-size: .6875rem;
 }
 
@@ -8725,6 +8731,9 @@ body:has(.inquiry-form-full-screen) {
     border-radius: 0;
     padding: calc(16px + env(safe-area-inset-top, 0px)) 16px calc(16px + env(safe-area-inset-bottom, 0px));
     box-shadow: none;
+  }
+  .quick-agent-peers {
+    max-height: min(168px, 20dvh);
   }
   .quick-agent-advanced {
     grid-template-columns: 1fr;

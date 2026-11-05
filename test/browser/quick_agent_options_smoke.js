@@ -56,7 +56,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       peerStatus = status; peerCount = count;
       return page.evaluate(({status, count}) => {
       const local = { ...resourceServer("local"), local: true, projects: state.projects.filter(p => p.server_key === "local"), agents: state.agents.filter(a => a.server_key === "local") };
-      const peers = Array.from({ length: count }, (_, i) => ({ key: `fixture-peer${i}`, name: `Peer ${i}`, local: false, status, stale: status !== "online", refreshing: status === "loading", agents: [], projects: [{ key: "web", name: "Web" }] }));
+      const peers = Array.from({ length: count }, (_, i) => ({ key: `fixture-peer${i}`, name: `Peer ${i} — a very long remote host name for narrow layouts`, local: false, status, stale: status !== "online", refreshing: status === "loading", agents: [], projects: [{ key: "web", name: "Web" }] }));
       applyResourceCatalog({ servers: [local, ...peers] });
     }, {status, count});
     };
@@ -66,6 +66,49 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       assert(rect.x >= 0 && rect.x + rect.width <= width + 1, "submit horizontal overflow");
       if (captureDir) await page.screenshot({ path: path.join(captureDir, `quick-options-${label}-${width}.png`) });
     };
+    for (const count of [1, 3, 10]) {
+      await resetDraft();
+      await addPeers("offline", count);
+      await page.evaluate(() => openQuickAgent());
+      await ready();
+      await expand();
+      const rows = page.locator(".quick-agent-peer-row");
+      assert.equal(await rows.count(), count, `expected ${count} remote host rows`);
+      const name = await rows.first().locator(".quick-agent-peer-name");
+      assert.match(await name.getAttribute("title"), /very long remote host name/);
+      if (count === 10) {
+        const list = await page.locator("[data-quick-agent-peers]").evaluate(el => ({client:el.clientHeight, scroll:el.scrollHeight, overflow:getComputedStyle(el).overflowY}));
+        assert(list.scroll > list.client && ["auto", "scroll"].includes(list.overflow), JSON.stringify(list));
+      }
+      if (width <= 640) {
+        const layout = await page.evaluate(() => ({
+          listBottom:document.querySelector("[data-quick-agent-peers]").getBoundingClientRect().bottom,
+          footerTop:document.querySelector(".quick-agent-actions").getBoundingClientRect().top,
+        }));
+        assert(layout.listBottom <= layout.footerTop, `host list must stay above the sticky footer: ${JSON.stringify(layout)}`);
+      }
+      await capture(`hosts-${count}`);
+      const lastRetry = rows.last().locator("[data-quick-agent-peer-retry]");
+      await lastRetry.focus();
+      const lastRetryVisible = await lastRetry.evaluate(el => {
+        const rect = el.getBoundingClientRect();
+        const list = el.closest("[data-quick-agent-peers]").getBoundingClientRect();
+        return rect.top >= list.top && rect.bottom <= list.bottom && rect.top >= 0 && rect.bottom <= innerHeight;
+      });
+      assert(lastRetryVisible, `last Retry must be visible with ${count} hosts at ${width}px`);
+      await page.keyboard.press("Tab");
+      assert.equal(await page.locator('#quick-agent-form button[value="create"]').evaluate(el => el === document.activeElement), true,
+        "Create must follow the last Retry button in keyboard order");
+      await page.keyboard.press("Tab");
+      assert.equal(await page.locator('#quick-agent-form button[value="create-run"]').evaluate(el => el === document.activeElement), true,
+        "Create and run must follow Create in keyboard order");
+      const actionVisible = await page.locator('#quick-agent-form button[value="create-run"]').evaluate(el => {
+        const rect = el.getBoundingClientRect();
+        return rect.top >= 0 && rect.bottom <= innerHeight;
+      });
+      assert(actionVisible, `form actions must be in view with ${count} hosts at ${width}px`);
+      results.push({width, hostCount:count, actionsVisible:actionVisible, lastRetryReachable:true});
+    }
     // Cold/warm editable time is distinct from actual local option readiness.
     for (const cold of [true, false]) {
       await resetDraft();
@@ -163,7 +206,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     assert.equal(await page.locator("[data-quick-agent-peers]").evaluate(el => el.closest("#quick-agent-options") !== null), true);
     assert.equal(await page.locator('[data-quick-agent-peer-retry="fixture-peer0"]').count(), 1);
     assert.equal(await page.locator('[data-quick-agent-peer-retry="fixture-peer0"]').evaluate(el =>
-      el.closest(".quick-agent-peer-row")?.querySelector(".quick-agent-peer-name")?.textContent === "Peer 0"), true,
+      el.closest(".quick-agent-peer-row")?.querySelector(".quick-agent-peer-name")?.textContent.startsWith("Peer 0")), true,
       "host label and Retry must stay in the same row");
     await page.locator("#quick-agent-model").focus();
     await page.keyboard.press("Tab");
