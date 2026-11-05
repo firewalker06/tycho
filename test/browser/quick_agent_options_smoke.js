@@ -58,6 +58,10 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     const expand = async () => {
       if (await page.locator("#quick-agent-options").isHidden()) await page.locator("[data-quick-agent-toggle]").click();
     };
+    const expandHosts = async () => {
+      const toggle = page.locator("[data-quick-agent-hosts-toggle]");
+      if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
+    };
     const addPeers = async (status = "online", count = 3) => {
       peerStatus = status; peerCount = count;
       return page.evaluate(({status, count}) => {
@@ -78,6 +82,24 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       await page.evaluate(() => openQuickAgent());
       await ready();
       await expand();
+      const hostsToggle = page.locator("[data-quick-agent-hosts-toggle]");
+      const hostList = page.locator("[data-quick-agent-peers]");
+      assert.equal(await hostsToggle.getAttribute("aria-controls"), "quick-agent-peers");
+      assert.equal(await hostsToggle.getAttribute("aria-expanded"), "false", "remote hosts must start collapsed");
+      assert.equal(await hostList.isVisible(), false, "remote-host rows must start hidden");
+      assert.match(await hostsToggle.innerText(), new RegExp(`${count} hosts?, ${count} need attention`));
+      await capture(`hosts-${count}-collapsed`);
+      await hostsToggle.click();
+      assert.equal(await hostsToggle.getAttribute("aria-expanded"), "true");
+      assert.equal(await hostList.isVisible(), true, JSON.stringify(await hostList.evaluate(el => ({hidden:el.hidden, html:el.innerHTML.slice(0,120), display:getComputedStyle(el).display, parentHidden:el.parentElement.hidden, parentDisplay:getComputedStyle(el.parentElement).display}))));
+      assert.equal(await hostsToggle.evaluate(el => el === document.activeElement), true, "click must keep focus on the trigger");
+      await page.keyboard.press("Space");
+      assert.equal(await hostsToggle.getAttribute("aria-expanded"), "false", "Space must collapse the host list");
+      assert.equal(await hostsToggle.evaluate(el => el === document.activeElement), true, "Space must keep focus on the trigger");
+      await page.keyboard.press("Enter");
+      assert.equal(await hostsToggle.getAttribute("aria-expanded"), "true", "Enter must expand the host list");
+      assert.equal(await hostsToggle.evaluate(el => el === document.activeElement), true, "Enter must keep focus on the trigger");
+      if (count === 10) await capture(`hosts-${count}-expanded`);
       const rows = page.locator(".quick-agent-peer-row");
       assert.equal(await rows.count(), count, `expected ${count} remote host rows`);
       const name = await rows.first().locator(".quick-agent-peer-name");
@@ -89,7 +111,6 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
         assert(["auto", "scroll"].includes(body.overflow), JSON.stringify(body));
         if (height <= 768) assert(body.scroll > body.client, JSON.stringify(body));
       }
-      await capture(`hosts-${count}`);
       const frameVisible = await page.evaluate(() => {
         const rect = el => el.getBoundingClientRect();
         const form = rect(document.querySelector("#quick-agent-form"));
@@ -129,6 +150,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     await page.evaluate(() => openQuickAgent());
     await ready();
     await expand();
+    await expandHosts();
     const contrastResults = [];
     const originalAppearance = await page.evaluate(() => document.documentElement.dataset.appearance || "dark");
     for (const theme of ["dark", "light"]) {
@@ -237,6 +259,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     await page.evaluate(() => loadQuickAgentLocalOptions()); await ready();
     // Delayed catalog arrivals update the selector without replacing the form.
     await expand();
+    await expandHosts();
     await page.locator("#quick-agent-name").fill("Keep name");
     await page.evaluate(() => { window.formProbe = document.querySelector("#quick-agent-form"); });
     await addPeers("loading");
@@ -268,6 +291,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     await page.locator("#quick-agent-model").focus();
     await page.keyboard.press("Tab");
     await page.keyboard.press("Tab");
+    await page.keyboard.press("Tab");
     assert.equal(await page.locator('[data-quick-agent-peer-retry="fixture-peer0"]').evaluate(el => el === document.activeElement), true,
       "Retry must remain reachable by keyboard");
     await capture("stale-peer-controls");
@@ -286,6 +310,9 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     await page.locator("#quick-agent-project").selectOption("fixture-peer1/web");
     await page.evaluate(() => { closeQuickAgent(); openQuickAgent(); openQuickAgent(); });
     await expand();
+    assert.equal(await page.locator("[data-quick-agent-hosts-toggle]").getAttribute("aria-expanded"), "false",
+      "remote-host disclosure must reset to collapsed when the form reopens");
+    await expandHosts();
     await page.locator("#quick-agent-model").evaluate(el => { el.add(new Option("Reopened model", "reopened-model")); el.value = "reopened-model"; el.dispatchEvent(new Event("change", {bubbles:true})); });
     await ready();
     assert.equal(peerReads, readsBefore + 1, "same-scope read must coalesce across reopen");
@@ -323,6 +350,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     await page.route(`${baseUrl}/servers/*/projects/*`, async route => { await new Promise(resolve => held.push(resolve)); await route.abort(); });
     const before = (await (await context.request.get(`${baseUrl}/agents`)).json()).agents.length;
     await expand();
+    await expandHosts();
     await page.locator("#quick-agent-project").selectOption("fixture-peer0/web");
     await page.locator("#quick-agent-project").selectOption("fixture-peer1/web");
     await page.locator("#quick-agent-project").selectOption("fixture-peer2/web");
