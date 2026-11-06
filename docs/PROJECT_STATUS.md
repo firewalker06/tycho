@@ -295,6 +295,16 @@ Key references:
 
 ## Current Focus
 
+**v0.15.0 release preparation**: a minor release for native stdin prompt
+transport, custom transport contracts, experimental agy support, message and
+inquiry recovery, faster Remote reads, Nord Light appearance, attachment
+filters, and delegated Summary actions. Pi now targets the 0.84.4 RPC contract;
+custom wrappers must preserve the selected input protocol. The release-prep
+PR updates version, changelog, release notes, and upgrade guidance. Operator
+merge, tag, GitHub release, Homebrew, and website delivery remain pending.
+Website work starts in the registered `tycho-site` project after merge and the
+exact tag exists. See [v0.15.0 notes](releases/v0.15.0.md).
+
 **v0.14.1 release preparation**: a patch release for delegation-grouped Agents,
 harness marks, cached Remote reads, optimistic archive, Quick Agent naming, and
 the Ruby 4.0.9 floor. The floor and the new `jwt` direct dependency are

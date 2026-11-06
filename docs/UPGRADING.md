@@ -7,6 +7,76 @@
 Ruby 4.0.9 or later is required. Upgrade Ruby before running `bundle install`
 or the setup script.
 
+## 0.15.0
+
+Upgrade through Homebrew or update the source checkout. Ruby 4.0.9 or later
+remains required. No new Ruby gem dependency or manual data conversion is
+required for existing projects, agents, schedules, queues, credentials,
+attachments, or memory.
+
+### Check harness input contracts
+
+Managed prompts now use stdin for all five built-in harnesses. Codex CLI
+0.166.0, Claude Code 2.1.312, OpenCode 1.19.3, and agy 1.5.1 are validated
+baselines. Compatible later versions must keep their input, event, schema,
+and native resume behavior.
+
+Pi now uses `@earendil-works/pi-coding-agent` 0.84.4 and JSONL RPC:
+
+```bash
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.84.4
+pi --list-models
+```
+
+Older Pi versions that emit only `agent_end` are unsupported. Restricted Pi
+modes keep the `read,grep,find,ls` tool allowlist; this is not filesystem
+isolation. See [Pi requirements](PI_CODING_AGENT.md).
+
+Check custom wrappers before starting managed work. Omitted `prompt_transport`
+uses native text stdin for Codex, Claude, OpenCode, and agy, and RPC for Pi.
+Wrappers that require a final prompt argument can select:
+
+```yaml
+prompt_transport:
+  version: 1
+  mode: argv
+```
+
+Argv keeps process visibility and OS size limits. Raw stdin and private file
+modes avoid prompt text in arguments. See [custom harness migration](CUSTOM_HARNESSES.md#migration).
+
+The built-in `agy` key now reserves that name. Rename any custom profile named
+`agy` and update its references. Native agy is experimental, with unverified
+sandbox isolation and unknown authentication status. Create fresh native
+agents; old bridge session aliases are not migrated. See [agy limits](AGY.md).
+
+### Check templates, appearance, and recovery
+
+- Project-level `agent_templates` now take effect. Check entries that were
+  previously ignored. Non-mapping entries fail configuration loading.
+- Select Light (Nord) or System in Settings > Configuration > Appearance if
+  required. Dark remains the default.
+- After an uncertain send, use the saved request's Retry control. Cancel retry
+  stops browser retry, but keeps any work already accepted by the server.
+- New Claude cost estimates use compatible session baselines. Saved history is
+  unchanged, and missing evidence stays unavailable.
+- Servers can tune `TYCHO_REMOTE_HEADER_TIMEOUT` (default `1.0` seconds) and
+  `TYCHO_REMOTE_CONNECTIONS_PER_ADDRESS` (default `24`). Check shared-proxy
+  limits if many clients use one peer address. See [Remote Sessions](REMOTE_SERVER.md).
+
+### Verify the upgrade
+
+```bash
+tycho --version
+tycho doctor
+tycho agent list
+tycho schedule list
+```
+
+Expect version `0.15.0`. In a disposable workspace, check a new run and native
+resume with each harness or wrapper you use. Confirm a Unicode prompt arrives
+intact. Existing projects, schedules, and credentials need no reset.
+
 ## 0.14.1
 
 Upgrade through Homebrew or update the source checkout. Ruby 4.0.9 or later is

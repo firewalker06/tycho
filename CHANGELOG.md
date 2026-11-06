@@ -4,10 +4,76 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
-### Remote UI polling
+## 0.15.0 - 2026-11-06
 
-- Let an in-flight poll finish when the window loses focus, so the status no
-  longer stays on Refreshing. Only the next poll waits until focus returns.
+### Prompt transport and harnesses
+
+- Send managed Codex, Claude, OpenCode, Pi, and agy prompts through stdin for
+  new runs, native resume, and correction. Preserve Unicode and large prompts.
+  Keep prompt text out of process arguments and environment variables.
+- Add version 1 `argv`, `stdin`, and private `file` transports for custom
+  profiles. Keep raw logs and canonical memory, with redacted command descriptions.
+- Add experimental native agy support with conversation resume, structured
+  results, models, and skills. Authentication status and sandbox isolation
+  remain unverified. Do not use this adapter in production.
+- Honor project-level `agent_templates`. Reject invalid entries and warn on
+  missing template keys before fallback.
+- Show the agent key in short managed runner process titles.
+
+### Message, inquiry, and queue recovery
+
+- Confirm messages with small acceptance receipts. Keep exact retries safe
+  after acceptance, and clear retries when server reads prove delivery.
+- Add Cancel retry across tabs that share browser storage. Keep accepted work.
+- Show inquiry answers in Conversation before the response arrives. Preserve
+  answer fields, feedback, and files for recovery after failure or reload.
+- Hide recovery panels during normal sends. Keep Retry and Remove after
+  failures. Clear stale rejected answers without losing newer inquiry drafts.
+- Confirm manual queue results only for proved message IDs. Keep recovery for
+  partial or uncertain results. Show processor status and relative wait times.
+- Use one refresh after schedule saves and preserve newer state on late replies.
+
+### Agent creation and navigation
+
+- Open Quick Agent before local and peer options load. Open a pending
+  Conversation on create, with same-ID retry and no duplicate start.
+- Separate older archive health from creation receipts, so historical gaps do
+  not block new agents. Keep strict checks for receipt-bearing archives.
+- Simplify project forms, move remote hosts into Options, and keep actions visible.
+- Add Dark, Light (Nord), and System appearance with readable light logos.
+- Add attachment type filters, intact code lines, and lossless JSON formatting.
+- Collapse delegated groups and archived or disconnected linked agents. Count
+  active links in the badge and preserve focus during refresh.
+- Show saved delegated actions in Summary with target, host, and project details.
+- Copy the Tycho Session ID from Conversation. Reduce repeated text and utility
+  borders, and keep inquiry focus rings clear in regular and split layouts.
+
+### Remote reads and diagnostics
+
+- Read agent lists, detail, conversation, and attachments from committed
+  snapshots without unrelated lifecycle maintenance. Load Conversation before
+  nonessential setup reads. Keep concurrent attachment downloads available.
+- Pause new polling in inactive windows. Let in-flight polls finish on blur.
+- Refresh project Git metadata on demand with a shared 10-second cache and
+  at most two workers. Cancel demand when its view ends.
+- Add configurable header deadlines and per-address connection limits to
+  protect server worker slots from slow clients.
+- Add authenticated serve timing diagnostics and an optional Interaction Profiler.
+
+### Costs and compatibility
+
+- Fix new Claude resumed-run estimates without rewriting saved history. Show
+  saved cumulative Summary cost through the selected run.
+- Keep the Ruby 4.0.9 floor and existing gem dependencies.
+- Update Pi to the `@earendil-works/pi-coding-agent` 0.84.4 RPC contract.
+  Restricted Pi modes remain tool allowlists, without filesystem isolation.
+- Custom wrappers must support native stdin or select an explicit version 1
+  transport. Rename any custom profile named `agy` to avoid the built-in key.
+- No manual data migration is required. Apple Silicon macOS and Linux remain
+  the bottle targets; v0.11.0 is the final Intel macOS bottle.
+
+See [v0.15.0 release notes](docs/releases/v0.15.0.md) and the
+[upgrade guide](docs/UPGRADING.md#0150) for contracts and verification.
 
 ## 0.14.1 - 2026-10-26
 
