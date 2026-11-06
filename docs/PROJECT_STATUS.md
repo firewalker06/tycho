@@ -17,8 +17,9 @@ type: project
 Custom profiles can select a validated version 1 `argv`, raw `stdin`, or
 private `file` transport. An omitted setting preserves the current native
 adapter behavior, including Pi RPC. File mode uses the shared stdin and
-UTF-8 correction path and removes its private file on normal and handled
-cancellation exits. See [Custom harness profiles](CUSTOM_HARNESSES.md).
+UTF-8 correction path. Durable ownership records and process locks allow
+parent cleanup after managed cancellation and stale-file recovery at startup
+and the next run, while preserving active files. See [Custom harness profiles](CUSTOM_HARNESSES.md).
 
 
 Command builders declare the prompt transport. Codex managed runs use stdin

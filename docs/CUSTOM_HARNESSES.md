@@ -95,13 +95,22 @@ Claude and agy keep print mode and their output flags; agy also keeps
 
 File mode uses the shared stdin seam to send bytes to a small runner.
 The runner creates an exclusive file with mode `0600` in a new private
-directory with mode `0700`. The file stays available for reading by the wrapper
-until that child exits. Tycho removes the file and directory after success,
-failure, a failed child launch, or handled TERM, INT, and HUP cancellation.
-On cancellation it stops only its owned child PID. SIGKILL, a host crash,
-or power loss can prevent cleanup. An operator can remove a remaining
-`tycho-custom-prompt-*` directory from the system temporary directory after
-checking that its run has stopped. Files are never reused across attempts.
+directory with mode `0700`, under `HOME/logs/custom_prompt_files` in the
+Tycho home (or the configured logs root). The private root also has mode
+`0700`. Each attempt has a unique directory and an ownership record with
+runner and wrapper PIDs. Both processes hold a file lock while using the file.
+Files are never reused across attempts.
+
+The runner removes the file after success, failure, a failed child launch,
+or handled TERM, INT, and HUP cancellation. The managed parent also removes
+stopped-run files after its child exits, including when a process-group KILL
+prevents the runner's cleanup. Stop and archive use this same cleanup.
+After SIGKILL, a host crash, or power loss, Tycho recovers stale files at
+startup, agent-store recovery, and the next agent run. Recovery checks the
+ownership marker, PIDs, private permissions, regular file types, and lock.
+It preserves files used by a running process and ignores symlinks, unknown
+files, and directories outside its own private root. No operator cleanup is
+needed for owned files after recovery.
 
 Each new run, resume, and structured-output correction uses the same selected
 mode. Correction configuration and stdin/file prompts pass through the shared

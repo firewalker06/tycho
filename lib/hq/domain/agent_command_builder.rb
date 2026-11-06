@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "rbconfig"
+require_relative "custom_prompt_files"
 
 module HQ
   class AgentCommandBuilder
@@ -45,7 +46,8 @@ module HQ
         command << "-" if codex_agent?
         execution(command).merge(prompt_transport: "stdin", stdin_data: @prompt)
       when "file"
-        runner = [RbConfig.ruby, "--disable-gems", File.expand_path("custom_prompt_file_runner.rb", __dir__)]
+        runner = [RbConfig.ruby, "--disable-gems", File.expand_path("custom_prompt_file_runner.rb", __dir__),
+                  "--tycho-prompt-root", CustomPromptFiles.root]
         execution(runner + command).merge(prompt_transport: "stdin", stdin_data: @prompt)
       else
         raise ArgumentError, "Unsupported custom prompt transport #{mode.inspect}"

@@ -5,6 +5,7 @@ require "uri"
 require_relative "harness_registry"
 require_relative "domain/constants"
 require_relative "domain/file_store"
+require_relative "domain/custom_prompt_files"
 
 module HQ
   class ConfigError < StandardError; end
@@ -81,6 +82,7 @@ module HQ
     end
 
     def initialize(path: HQ.env_present("CONFIG_PATH", DEFAULT_PATH), system_prompts_path: nil)
+      CustomPromptFiles.recover!
       @path = File.expand_path(path)
       default_prompts_path = if @path == File.expand_path(DEFAULT_PATH)
                                HQ.default_system_prompts_path(@path)

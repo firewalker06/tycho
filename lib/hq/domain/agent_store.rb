@@ -47,6 +47,7 @@ module HQ
     attr_reader :delegation_coordinator, :usage_metrics_store
 
     def initialize(projects, usage_metrics_store: nil, delegation_coordinator: nil, recovery: nil)
+      CustomPromptFiles.recover!
       @projects = projects
       @usage_metrics_store = usage_metrics_store || UsageMetrics.store(
         path: File.join(File.dirname(AGENTS_FILE), "usage_metrics.json")

@@ -211,13 +211,11 @@ module CustomPromptTransportTest
       end
 
       # Failed spawn also releases its private directory.
-      temporary_root = File.join(dir, "file-temp")
-      Dir.mkdir(temporary_root)
-      output, error, status = Open3.capture3({ "TMPDIR" => temporary_root }, RbConfig.ruby, "--disable-gems",
+      output, error, status = Open3.capture3(RbConfig.ruby, "--disable-gems",
         File.expand_path("../lib/hq/domain/custom_prompt_file_runner.rb", __dir__),
         File.join(dir, "missing"), stdin_data: "private")
       assert(!status.success?, "missing wrapper accepted")
-      assert(Dir.children(temporary_root).empty?, "failed spawn left private file")
+      assert(Dir.children(HQ::CustomPromptFiles.root).empty?, "failed spawn left private file")
     ensure
       HQ.custom_harnesses = []
     end
