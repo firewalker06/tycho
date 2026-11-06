@@ -477,7 +477,8 @@ module RemoteUIAssetSnapshotTest
       'delegationOrderedAgents(agents)',
       'data-set-delegation-connection',
       'iconSvg(connected ? "unlink" : "link")',
-      'renderAgentReference(reference, { embedded: true, relationshipRole })',
+      'renderAgentRow(agent, {',
+      'renderAgentReference(resolved, { embedded: true, relationshipRole })',
       'function updateDelegationConnection',
       '/delegation`, { connected: nextConnected }',
       'agent?.archived) return { dock: "", overlay: "" }'

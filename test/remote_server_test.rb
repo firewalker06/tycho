@@ -10454,7 +10454,8 @@ module RemoteServerTest
            js[:body].include?("els.title.innerHTML = agentNameHtml(options.agentTitle);"),
            "expected Conversation headers to render agent role icons")
     assert(js[:body].include?("function agentReferenceNameHtml") &&
-           js[:body].include?("renderAgentReference(reference, { embedded: true, relationshipRole })"),
+           js[:body].include?("renderAgentRow(agent, {") &&
+           js[:body].include?("renderAgentReference(resolved, { embedded: true, relationshipRole })"),
            "expected connected-agent references to render delegation role icons")
     assert(!js[:body].include?("function renderAgentRelationshipContext") &&
            !js[:body].include?("${renderAgentRelationshipContext(agent)}") &&

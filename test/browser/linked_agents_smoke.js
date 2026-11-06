@@ -17,7 +17,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       window.linkedFixtureOwner = structuredClone(findAgent(key));
       window.installLinkedFixture = (mode = "mixed") => {
         const owner = structuredClone(window.linkedFixtureOwner);
-        const ref = (key, name, extra = {}) => ({ key, agent_key: key, name, server_key: "local", state: "active", connected: true, status: "succeeded", ...extra });
+        const ref = (key, name, extra = {}) => ({ key, agent_key: key, name, server_key: "local", project_key: "web", state: "active", connected: true, status: "succeeded", ...extra });
         const refs = [
           ref("fixture-idle", "Linked idle", { status: "idle" }),
           ref("fixture-input", "Linked awaiting input", { status: "awaiting-input", owner: "user" }),
@@ -130,6 +130,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       const capture = async suffix => { if (captureDir) await page.screenshot({ path: path.join(captureDir, `${device}-${preference}-${suffix}.png`) }); };
       await summary.scrollIntoViewIfNeeded();
       await capture("closed");
+      assert(await flyout.getByText("Host - Web - Online", { exact: true }).first().isVisible(), "delegated agent meta line includes host, project, and server status");
       await summary.focus();
       await page.keyboard.press("Enter");
       assert(await flyout.locator("details").evaluate(el => el.open), "Enter expands native disclosure");
@@ -260,9 +261,9 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     assert.equal(await page.locator(".linked-agents-count").innerText(), "0", "inactive-only links retain a zero-count badge control");
     const inactiveHistory = page.locator(".linked-agent-history > summary");
     assert.equal(await inactiveHistory.innerText(), "Archived or disconnected (2)");
-    assert.equal(await page.locator("[data-linked-agents-flyout] .agent-reference:visible").count(), 0, "inactive history starts collapsed");
+    assert.equal(await page.locator("[data-linked-agents-flyout] .agent-relationship-row:visible .agent-row:visible").count(), 0, "inactive history starts collapsed");
     await inactiveHistory.click();
-    assert.equal(await page.locator("[data-linked-agents-flyout] .agent-reference:visible").count(), 2, "inactive linked agents remain visible in the expanded history");
+    assert.equal(await page.locator("[data-linked-agents-flyout] .agent-relationship-row:visible .agent-row:visible").count(), 2, "inactive linked agents remain visible in the expanded history");
     await page.evaluate(() => window.installLinkedFixture("empty"));
     assert.equal(await page.locator("[data-toggle-linked-agents]").count(), 0);
     // Restore the server-backed fixture and check a real forced refresh.

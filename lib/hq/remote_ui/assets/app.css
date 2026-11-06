@@ -4335,6 +4335,18 @@ button[data-toggle-pr-diff-full-view],
   padding: 6px 8px;
 }
 
+.agent-relationship-row:has(> .agent-row) {
+  grid-template-columns: minmax(0, 1fr) auto;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.agent-relationship-row > .agent-row {
+  min-height: 58px;
+  padding: 7px 10px 7px 12px;
+}
+
 .agent-relationship-row.disconnected {
   border-style: dashed;
 }
