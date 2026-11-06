@@ -18,6 +18,8 @@ module GemPackageTest
       unpacked = File.join(dir, "unpacked")
       FileUtils.mkdir_p(unpacked)
       Gem::Package.new(gem_path).extract_files(unpacked)
+      runner_path = File.join(unpacked, "lib", "hq", "domain", "agent_runner.rb")
+      raise "packaged gem is missing the standalone agent runner" unless File.file?(runner_path)
       verify_packaged_schemas!(unpacked)
       verify_packaged_fonts!(unpacked)
       verify_packaged_installer!(unpacked, File.join(dir, "home"))
