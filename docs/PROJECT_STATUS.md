@@ -10,9 +10,17 @@ type: project
 
 ## Last Updated
 
-2026-11-05
+2026-11-06
 
 ## Managed prompt transport
+
+Custom profiles can select a validated version 1 `argv`, raw `stdin`, or
+private `file` transport. An omitted setting preserves the current native
+adapter behavior, including Pi RPC. File mode uses the shared stdin and
+UTF-8 correction path. Durable ownership records and process locks allow
+parent cleanup after managed cancellation and stale-file recovery at startup
+and the next run, while preserving active files. See [Custom harness profiles](CUSTOM_HARNESSES.md).
+
 
 Command builders declare the prompt transport. Codex managed runs use stdin
 with `exec -` or `exec resume ID -`; Claude uses print-mode text stdin; agy

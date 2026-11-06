@@ -1,7 +1,7 @@
 # Custom harness profiles
 
-Tycho can run a local wrapper or gateway through one of its four supported
-native harness families: `codex`, `claude`, `opencode`, or `pi`. A profile is
+Tycho can run a local wrapper or gateway through one of its five supported
+native harness families: `codex`, `claude`, `opencode`, `pi`, or `agy`. A profile is
 an executable prefix, not a new protocol. Tycho owns the command flags,
 stream parser, native-session resume, structured-result handling, metrics,
 catalog probing, permissions, readiness, and skill installation for the
@@ -55,6 +55,83 @@ custom_harnesses:
     adapter: claude
     execution_command: HOME/bin/claude-wrapper
 ```
+
+## Version 1 prompt transport
+
+A profile can set an explicit managed prompt transport:
+
+```yaml
+custom_harnesses:
+  - key: private-wrapper
+    adapter: claude
+    execution_command: HOME/bin/private-wrapper
+    prompt_transport:
+      version: 1
+      mode: file
+```
+
+The setting must have exactly two keys: integer `version: 1` and `mode`.
+The supported modes are `argv`, `stdin`, and `file`. Unknown versions,
+unknown modes, extra keys, null, and shorthand strings cause a configuration
+error that names the profile. Interactive terminal sessions and catalog
+probes keep their existing adapter contract.
+
+| Mode | Managed wrapper input | Limits |
+| --- | --- | --- |
+| `argv` | Exact prompt in the final argument; stdin is closed | Process tools can read the prompt. OS argument limits apply. |
+| `stdin` | Exact prompt bytes on stdin, followed by EOF | No prompt text in argv or environment. Read to EOF without trimming. |
+| `file` | Final arguments `--tycho-prompt-file PATH`; stdin is closed | Read the file as binary. The path is an argument; the prompt text is not. |
+
+Tycho still supplies native adapter flags, model settings, schema settings,
+and session resume arguments. Codex keeps its `--` separator and uses
+`-` only for stdin mode. For Pi, an explicit transport selects
+`--mode json` and bypasses the native RPC bridge. The wrapper must emit
+Pi JSON events, including the session event, and translate its selected input
+to the provider. Other wrappers must also translate their selected transport
+if their native CLI does not support it. In particular, the file option is a
+Tycho wrapper contract, not a native provider file-attachment option.
+Claude and agy keep print mode and their output flags; agy also keeps
+`--input-format text`.
+
+File mode uses the shared stdin seam to send bytes to a small runner.
+The runner creates an exclusive file with mode `0600` in a new private
+directory with mode `0700`, under `HOME/logs/custom_prompt_files` in the
+Tycho home (or the configured logs root). The private root also has mode
+`0700`. Each attempt has a unique directory and an ownership record with
+runner and wrapper PIDs. Both processes hold a file lock while using the file.
+Files are never reused across attempts.
+
+The runner removes the file after success, failure, a failed child launch,
+or handled TERM, INT, and HUP cancellation. The managed parent also removes
+stopped-run files after its child exits, including when a process-group KILL
+prevents the runner's cleanup. Stop and archive use this same cleanup.
+After SIGKILL, a host crash, or power loss, Tycho recovers stale files at
+startup, agent-store recovery, and the next agent run. Recovery checks the
+ownership marker, PIDs, private permissions, regular file types, and lock.
+It preserves files used by a running process and ignores symlinks, unknown
+files, and directories outside its own private root. No operator cleanup is
+needed for owned files after recovery.
+
+Each new run, resume, and structured-output correction uses the same selected
+mode. Correction configuration and stdin/file prompts pass through the shared
+UTF-8 runner on stdin, including under `LANG=C`. The wrapper must preserve
+multiline text, Unicode, trailing newlines, and empty input. Stdin and file
+mode support prompts above 1 MB. Argv mode cannot promise this because OS
+limits also include the environment. Tycho keeps the exact prompt in its raw
+log and canonical transcript. Saved command descriptions redact argv prompt
+text and do not contain stdin/file prompt text.
+
+### Migration
+
+Omit `prompt_transport` to keep the current adapter behavior without changes:
+Codex, Claude, agy, and OpenCode use native text stdin; Pi uses native stdin
+RPC. There is no automatic switch to argv. Existing profiles need no edit.
+
+For an older wrapper that requires a final prompt argument, explicitly select
+version 1 `argv`. To remove prompt text from process arguments, update that
+wrapper to read raw stdin or the file option, then select the matching mode.
+Do not put prompt text or prompt-bearing runner configuration in environment
+variables.
 
 ## Environment and security
 

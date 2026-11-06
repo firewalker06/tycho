@@ -6,6 +6,7 @@ require_relative "attachment_normalizer"
 require_relative "queue_work"
 require_relative "agent_command_builder"
 require_relative "agent_prompt_transport"
+require_relative "custom_prompt_files"
 require_relative "harness_execution"
 require_relative "agent_memory"
 require_relative "agent_stream_projector"
@@ -1314,6 +1315,7 @@ module HQ
                before_native_spawn: nil, native_spawn_failed: nil)
       return if running?
 
+      CustomPromptFiles.recover!
       finalize_previous_run!
       reconcile_session_bootstrap!
       if missing_native_session_identity?
@@ -1476,9 +1478,12 @@ module HQ
       end
 
       finalize_retired_run!
+    ensure
+      CustomPromptFiles.recover!
     end
 
     def poll!
+      CustomPromptFiles.recover!
       return unless @pid
       stop_stale_direct_output_wait! if running?
       return if running?
@@ -2138,6 +2143,7 @@ module HQ
         prompt: prompt,
         harness_command_prefix: execution.fetch(:command),
         harness_command_environment: execution.fetch(:env),
+        prompt_transport: HQ.custom_harness(@agent)&.prompt_transport,
         last_message_file_path: last_message_file_path,
         result_schema_path: command_result_schema_path,
         claude_result_schema: canonical_result_schema_json
@@ -2448,6 +2454,8 @@ module HQ
         end
       rescue Errno::ECHILD
         nil
+      ensure
+        CustomPromptFiles.recover!
       end
       (@process_monitors ||= {})[pid] = thread
       thread
