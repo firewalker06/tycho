@@ -2183,7 +2183,7 @@ module HQ
       ]
       {
         command: runner_command,
-        stdin_data: JSON.generate(config),
+        stdin_data: JSON.generate(config).encode(Encoding::UTF_8),
         env: environment.merge(
           "TYCHO_AGENT_RUNNER_CONFIG" => nil,
           "TYCHO_NATIVE_ACK_DELEGATED" => "1"
@@ -2192,7 +2192,7 @@ module HQ
     end
 
     def structured_output_correction_supported?
-      File.file?(result_schema_path) && %w[codex claude pi agy].include?(harness_adapter)
+      File.file?(result_schema_path) && %w[codex claude opencode pi agy].include?(harness_adapter)
     end
 
     def structured_output_correction_limit

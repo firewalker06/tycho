@@ -33,12 +33,15 @@ compatible with the selected adapter's native CLI and event protocol:
 | --- | --- | --- |
 | `codex` | `exec` / `exec resume`, JSON output, schema output | Codex JSON events and thread IDs |
 | `claude` | `--print --output-format stream-json --verbose` | Claude stream-JSON events and session IDs |
-| `opencode` | `run --format json` | OpenCode JSON events and session IDs |
+| `opencode` | `run --format json`, prompt on stdin | OpenCode text stdin, JSON events, and session IDs |
 | `pi` | `--mode rpc`, prompt on stdin | Pi JSONL RPC, session state, and `agent_settled` |
 
 Tycho adds each family’s model, reasoning, sandbox or permission, workspace,
-structured-output, and resume arguments after `execution_command`. Codex, Claude, agy, and Pi receive prompts through stdin; OpenCode receives
-the prompt as the final argument. Pi uses the RPC contract described in
+structured-output, and resume arguments after `execution_command`. Codex,
+Claude, agy, OpenCode, and Pi receive prompts through stdin. OpenCode
+1.19.3 is the tested baseline; its `run` command reads a pipe with no positional
+message. Custom wrappers must keep this behavior, including native resume.
+Pi uses the RPC contract described in
 [Pi Coding Agent](PI_CODING_AGENT.md). A profile must accept the native arguments in the same order
 and emit the native event format. If a provider needs different flags or a
 different wire format, implement that translation inside its wrapper rather

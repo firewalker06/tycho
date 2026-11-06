@@ -89,8 +89,7 @@ module HQ
       command.concat(opencode_variant_arguments)
       command << "--auto" if @sandbox_mode == "danger-full-access"
       command.concat(["--session", @session_id]) unless @session_id.empty?
-      command << @prompt
-      execution(command)
+      execution(command).merge(prompt_transport: "stdin", stdin_data: @prompt)
     end
 
     def build_pi_command

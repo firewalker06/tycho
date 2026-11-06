@@ -162,6 +162,10 @@ module HQ
         if parsed["type"] == "item.completed" && item.is_a?(Hash) && item["type"] == "agent_message"
           return item["text"]
         end
+        if parsed["type"] == "text" && parsed.dig("part", "type") == "text" &&
+           (parsed["sessionID"] || parsed.dig("part", "sessionID"))
+          return parsed.dig("part", "text")
+        end
         return parsed["result"] if parsed["type"] == "result" && parsed.key?("result")
 
         nil

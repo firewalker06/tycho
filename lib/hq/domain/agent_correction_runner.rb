@@ -13,7 +13,7 @@ module HQ
     VALIDATION_FAILURE_EXIT_CODE = 65
 
     def self.run_from_stdin!
-      config = JSON.parse(STDIN.read)
+      config = JSON.parse(STDIN.binmode.read.force_encoding(Encoding::UTF_8))
       exit(new(config).run)
     rescue StandardError => e
       warn "Tycho agent runner failed: #{e.class}: #{e.message}"
@@ -23,7 +23,8 @@ module HQ
     def initialize(config, output: $stdout)
       @config = config
       @output = output
-      schema = JSON.parse(File.read(config.fetch("schema_path")))
+      @output.binmode
+      schema = JSON.parse(File.binread(config.fetch("schema_path")).force_encoding(Encoding::UTF_8))
       @validator = AgentStructuredOutputValidator.new(schema:)
     end
 
@@ -70,14 +71,15 @@ module HQ
       lines = []
       status = nil
       stream, child_output = IO.pipe
+      stream.binmode
       prompt_input = AgentPromptTransport.input(input)
       pid = Process.spawn(*command, in: prompt_input || File::NULL, out: child_output, err: [:child, :out])
       prompt_input&.close
       acknowledge_native_start!(pid)
       child_output.close
       stream.each_line do |line|
-        lines << line.chomp
-        @output.write(line)
+        lines << line.dup.force_encoding(Encoding::UTF_8).chomp
+        @output.write(line.b)
         @output.flush
       end
       _waited_pid, status = Process.wait2(pid)
@@ -111,7 +113,7 @@ module HQ
     def candidate_for(lines)
       if @config.fetch("harness_adapter") == "codex"
         path = @config["last_message_path"].to_s
-        return File.read(path) if !path.empty? && File.file?(path)
+        return File.binread(path).force_encoding(Encoding::UTF_8) if !path.empty? && File.file?(path)
       end
       AgentStructuredResult.candidate_from_log_lines(lines)
     rescue StandardError
@@ -124,6 +126,8 @@ module HQ
         parsed = JSON.parse(line)
         id = if adapter == "codex"
                parsed["thread_id"] || parsed["session_id"]
+             elsif adapter == "opencode"
+               parsed["sessionID"] || parsed.dig("part", "sessionID")
              elsif adapter == "pi"
                parsed["id"] if parsed["type"] == "session"
              elsif adapter == "agy"
@@ -146,11 +150,11 @@ module HQ
         "errors" => errors,
         "instruction" => "Return one complete corrected JSON payload matching the configured schema. Include every required field."
       }
-      @correction_input = @config["prompt_transport"] == "stdin" ? JSON.generate(feedback) : nil
+      @correction_input = @config["prompt_transport"] == "stdin" ? JSON.generate(feedback).encode(Encoding::UTF_8) : nil
       @config.fetch("correction_command").map do |argument|
         argument.to_s
                 .gsub(SESSION_PLACEHOLDER, session_id)
-                .gsub(PROMPT_PLACEHOLDER, JSON.generate(feedback))
+                .gsub(PROMPT_PLACEHOLDER, JSON.generate(feedback).encode(Encoding::UTF_8))
       end
     end
 
@@ -169,7 +173,8 @@ module HQ
       path = @config.fetch("invalid_response_path")
       FileUtils.mkdir_p(File.dirname(path))
       File.open(path, File::WRONLY | File::CREAT | File::TRUNC, 0o600) do |file|
-        file.write(raw_text.to_s)
+        file.binmode
+        file.write(raw_text.to_s.b)
       end
       File.chmod(0o600, path)
     end
@@ -194,7 +199,7 @@ module HQ
     end
 
     def emit(event)
-      @output.puts(JSON.generate(event))
+      @output.write(JSON.generate(event).encode(Encoding::UTF_8).b + "\n".b)
       @output.flush
     end
   end
