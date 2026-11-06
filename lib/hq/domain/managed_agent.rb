@@ -2138,6 +2138,7 @@ module HQ
         prompt: prompt,
         harness_command_prefix: execution.fetch(:command),
         harness_command_environment: execution.fetch(:env),
+        prompt_transport: HQ.custom_harness(@agent)&.prompt_transport,
         last_message_file_path: last_message_file_path,
         result_schema_path: command_result_schema_path,
         claude_result_schema: canonical_result_schema_json

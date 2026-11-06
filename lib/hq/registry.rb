@@ -549,7 +549,15 @@ module HQ
           raise ConfigError, "Custom harness #{key} must define execution_command as a string or list"
         end
 
-        config = HarnessConfig.new(key: key, adapter: adapter, execution_command: execution_command)
+        transport = harness["prompt_transport"]
+        if harness.key?("prompt_transport") &&
+           !(transport.is_a?(Hash) && transport.keys.length == 2 &&
+             transport["version"].is_a?(Integer) && transport["version"] == 1 &&
+             %w[argv stdin file].include?(transport["mode"]))
+          raise ConfigError, "Custom harness #{key} prompt_transport must be {version: 1, mode: argv|stdin|file}"
+        end
+        config = HarnessConfig.new(key: key, adapter: adapter, execution_command: execution_command,
+                                   prompt_transport: transport)
         if config.command_parts.empty?
           raise ConfigError, "Custom harness #{key} execution_command cannot be empty"
         end

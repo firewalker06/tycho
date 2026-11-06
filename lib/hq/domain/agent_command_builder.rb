@@ -6,7 +6,8 @@ module HQ
   class AgentCommandBuilder
     def initialize(agent:, harness_adapter:, workspace:, sandbox_mode:, model:, reasoning_effort:,
                    session_id:, session_bootstrapped:, prompt:, harness_command_prefix:,
-                   harness_command_environment: {}, last_message_file_path:, result_schema_path:, claude_result_schema:)
+                   harness_command_environment: {}, prompt_transport: nil, last_message_file_path:, result_schema_path:, claude_result_schema:)
+      @custom_prompt_transport = prompt_transport
       @agent = agent
       @harness_adapter = harness_adapter
       @workspace = workspace
@@ -24,13 +25,31 @@ module HQ
     end
 
     def build
-      return build_claude_command if claude_like_agent?
-      return build_codex_command if codex_agent?
-      return build_opencode_command if opencode_agent?
-      return build_pi_command if pi_agent?
-      return build_agy_command if agy_agent?
+      result = case @harness_adapter
+               when "claude" then build_claude_command
+               when "codex" then build_codex_command
+               when "opencode" then build_opencode_command
+               when "pi" then build_pi_command
+               when "agy" then build_agy_command
+               else raise "Unsupported managed-agent harness #{@agent.inspect}"
+               end
+      return result unless @custom_prompt_transport
 
-      raise "Unsupported managed-agent harness #{@agent.inspect}"
+      mode = @custom_prompt_transport.fetch("mode")
+      command = result.fetch(:command).dup
+      command.pop if codex_agent? # Remove the native stdin selector, keep --.
+      case mode
+      when "argv"
+        execution(command + [@prompt])
+      when "stdin"
+        command << "-" if codex_agent?
+        execution(command).merge(prompt_transport: "stdin", stdin_data: @prompt)
+      when "file"
+        runner = [RbConfig.ruby, "--disable-gems", File.expand_path("custom_prompt_file_runner.rb", __dir__)]
+        execution(runner + command).merge(prompt_transport: "stdin", stdin_data: @prompt)
+      else
+        raise ArgumentError, "Unsupported custom prompt transport #{mode.inspect}"
+      end
     end
 
     def interactive
@@ -93,13 +112,14 @@ module HQ
     end
 
     def build_pi_command
-      command = harness_command_prefix + ["--mode", "rpc"]
+      command = harness_command_prefix + ["--mode", @custom_prompt_transport ? "json" : "rpc"]
       command.concat(model_arguments)
       command.concat(pi_thinking_arguments)
       command.concat(pi_safety_arguments)
       command.concat(["--session", @session_id]) unless @session_id.empty?
       runner = [RbConfig.ruby, "--disable-gems", File.expand_path("pi_rpc_runner.rb", __dir__)]
-      execution(runner + command).merge(prompt_transport: "stdin", stdin_data: @prompt)
+      command = runner + command unless @custom_prompt_transport
+      execution(command).merge(prompt_transport: "stdin", stdin_data: @prompt)
     end
 
     def build_agy_command(interactive: false)
