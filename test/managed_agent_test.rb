@@ -2167,7 +2167,8 @@ module ManagedAgentTest
 
       output = IO.popen(
         { "TYCHO_STATUS_PATH" => status_path, "TYCHO_AGENT_KEY" => agent.key },
-        [RbConfig.ruby, "--disable-gems", HQ::ManagedAgent::AGENT_RUNNER_PATH, missing_command],
+        [RbConfig.ruby, "--disable-gems", HQ::ManagedAgent::CLI_EXECUTABLE_PATH,
+         "agent-runner", agent.key, "--", missing_command],
         err: %i[child out],
         &:read
       )

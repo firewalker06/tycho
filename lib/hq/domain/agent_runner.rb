@@ -1,6 +1,5 @@
 agent_key = ENV.fetch("TYCHO_AGENT_KEY")
-Process.setproctitle("ruby --disable-gems #{__FILE__} tycho-agent-runner #{agent_key}") if
-  Process.respond_to?(:setproctitle)
+Process.setproctitle("tycho agent-runner #{agent_key}") if Process.respond_to?(:setproctitle)
 
 begin
   File.write(ENV.fetch("TYCHO_PID_PATH"), Process.pid.to_s)

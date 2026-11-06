@@ -1,8 +1,20 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-require "fileutils"
 require "rbconfig"
+
+if ARGV.first == "agent-runner"
+  ARGV.shift
+  agent_key = ARGV.shift
+  separator = ARGV.shift
+  abort "usage: tycho agent-runner <agent-key> -- <harness command...>" unless
+    !agent_key.to_s.empty? && separator == "--" && !ARGV.empty?
+  abort "agent key does not match runner environment" unless ENV["TYCHO_AGENT_KEY"] == agent_key
+
+  load File.expand_path("../lib/hq/domain/agent_runner.rb", __dir__)
+end
+
+require "fileutils"
 
 def tycho_process_runtime
   logs_root = ENV["TYCHO_LOGS_ROOT"].to_s

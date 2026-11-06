@@ -35,7 +35,7 @@ require "rbconfig"
 module HQ
   class ManagedAgent
     NativeStartError = Class.new(StandardError)
-    AGENT_RUNNER_PATH = File.expand_path("agent_runner.rb", __dir__)
+    CLI_EXECUTABLE_PATH = File.expand_path("../../../bin/tycho", __dir__)
     FALLBACK_SUMMARY_CONTEXT_MAX_CHARS = 800
     FALLBACK_SUMMARY_CONTEXT_MAX_LINES = 12
     AgentMessage = Struct.new(:role, :content, :created_at, :streaming, :kind, :tool_name, :tool_use_id, :metadata,
@@ -1399,7 +1399,7 @@ module HQ
           "TYCHO_STATUS_PATH" => status_path,
           "TYCHO_PID_PATH" => pid_path,
           "TYCHO_AGENT_KEY" => @key,
-          "TYCHO_EXECUTABLE" => File.join(ROOT_DIR, "bin", "tycho"),
+          "TYCHO_EXECUTABLE" => CLI_EXECUTABLE_PATH,
           "TYCHO_STREAM_RECORDER_PATH" => File.expand_path("agent_stream_recorder", __dir__),
           "TYCHO_RAW_LOG_PATH" => @log_path,
           "TYCHO_MEMORY_PATH" => memory_path,
@@ -1411,7 +1411,8 @@ module HQ
           "TYCHO_NATIVE_OWNED_PATH" => native_owned_path,
           "TYCHO_LAUNCH_OWNER_PID" => Process.pid.to_s
         ),
-        current_ruby_executable, "--disable-gems", AGENT_RUNNER_PATH, *launch.fetch(:command),
+        current_ruby_executable, "--disable-gems", CLI_EXECUTABLE_PATH,
+        "agent-runner", @key, "--", *launch.fetch(:command),
         in: launch_input || File::NULL, chdir: @workspace, out: log_file, err: %i[child out], pgroup: true
       )
       launch_input&.close
