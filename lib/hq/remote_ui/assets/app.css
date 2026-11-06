@@ -7075,7 +7075,7 @@ details.queue-read-block:not([open]) > .queue-read-body {
     max-height: min(50dvh, 430px);
     overflow-y: auto;
     overscroll-behavior: contain;
-    padding-right: 2px;
+    padding: 4px 2px 12px;
   }
 
   .agent-dock:has(.inquiry-form) .send-row {
@@ -7606,6 +7606,7 @@ body:has(.inquiry-form-full-screen) {
   position: relative;
   display: grid;
   gap: 8px;
+  padding: 4px 4px 8px;
 }
 
 .inquiry-loading-skeleton {

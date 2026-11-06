@@ -155,6 +155,8 @@ Also call out changes to Bubbletea input handling, bracketed paste behavior, or 
 
 - Set `TYCHO_REMOTE_UI_INQUIRY_RECEIPT_ONLY=1 TYCHO_REMOTE_UI_INQUIRY_DELAYED_ONLY=1` with `bin/remote-ui-smoke` to hold the accepted POST response through later detail, activity, mutation, completion, navigation, and archive updates. Covers desktop/mobile Dark/Nord Light and local/synthetic peer routes. Use `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the repository. Optional `TYCHO_REMOTE_UI_INQUIRY_DELAYED_CASE=detail|activity|mutation|retire` runs one focused local desktop case.
 
+- Set `TYCHO_REMOTE_UI_INQUIRY_CARD_PADDING_ONLY=1` with `bin/remote-ui-smoke` to check inquiry button clearance and failed-answer Retry/Remove controls on desktop split, desktop non-split, and mobile. Set `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the repository to save screenshots.
+
 - Set `TYCHO_REMOTE_UI_QUEUE_RESULT_ONLY=1` with `bin/remote-ui-smoke` to check manual queue process/remove result validation, partial IDs, uncertain recovery, delayed responses, and desktop/mobile Dark/Light controls. Use `TYCHO_REMOTE_UI_CAPTURE_DIR` for evidence outside the repository.
 
 - Set `TYCHO_REMOTE_UI_PROMPT_RECEIPT_ONLY=1 TYCHO_REMOTE_UI_PROMPT_RETRY_ONLY=1` with `bin/remote-ui-smoke` to check message delivery proof, local retry cancellation, late replies, distinct IDs, reload/navigation, and local/synthetic peer routes in desktop/mobile Dark/Nord Light. Set `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the repository for evidence. Optional `TYCHO_REMOTE_UI_PROMPT_RETRY_BASELINE=path/to/path/ui.js` serves a pinned full UI bundle for a before comparison.
