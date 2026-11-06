@@ -49,7 +49,7 @@ The system follows the repository rather than adding a framework:
 3. `design_system.html.erb` is a zero-build component preview at `/design-system`.
 4. `app.js` keeps product behavior and incrementally adds system classes to existing markup.
 
-The CSS is served as one `/ui.css` response so deployment, cache-busting, and the no-build runtime stay unchanged. `HQ::RemoteUI.asset_version` includes the new assets.
+The CSS is served as one `/ui.css` response so deployment, cache-busting, and the no-build runtime stay unchanged. `HQ::RemoteUI.asset_version` includes the new assets. <!-- local-path-ok -->
 
 ## Tokens
 

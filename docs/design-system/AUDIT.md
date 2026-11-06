@@ -11,7 +11,7 @@ Scope: the browser Remote UI served by `bin/tycho serve`; the Bubbletea TUI was 
 | Rendering | Server-rendered ERB shell, then client-side rendering from one vanilla JavaScript application |
 | Package manager | Bundler; no JavaScript package or build step |
 | Routing | Hash router in `app_helpers.js`/`app.js`; top-level Now, Agents, Settings plus project, agent, diff, attachment, archive, schedule, and hidden-setting subroutes |
-| Styling | Plain CSS served at `/ui.css`; formerly one 5,930-line product stylesheet |
+| Styling | Plain CSS served at `/ui.css`; formerly one 5,930-line product stylesheet | <!-- local-path-ok -->
 | Existing tokens | A small Dracula variable set in `app.css`, plus control-size variables appended in an audit-remediation section |
 | Components | String-render functions in `app.js`; no framework component runtime |
 | UI dependencies | No browser UI/headless dependency; native `dialog`, `details`, inputs, links, and buttons |

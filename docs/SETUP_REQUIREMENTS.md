@@ -26,7 +26,7 @@ install/build dependency, not a Tycho runtime subprocess dependency.
 
 | Dependency | Used by | Current failure behavior | Setup behavior |
 |------------|---------|--------------------------|----------------|
-| `git` | Project metadata: branch, commit SHA, dirty file count | Soft fail. Tycho checks for `.git`, redirects Git stderr to `/dev/null`, and falls back to `n/a` / clean-looking values | Warn if missing; do not block basic TUI usage |
+| `git` | Project metadata: branch, commit SHA, dirty file count | Soft fail. Tycho checks for `.git`, redirects Git stderr to `/dev/null`, and falls back to `n/a` / clean-looking values | Warn if missing; do not block basic TUI usage | <!-- local-path-ok -->
 | `codex` | Built-in Codex managed-agent harness | Soft feature fail. Agent start records a failed run if the executable is missing | Warn if missing; hard fail only for a Codex-agent profile |
 | `claude` | Built-in Claude managed-agent harness | Soft feature fail. Agent start records a failed run if the executable is missing | Warn if missing; hard fail only for a Claude-agent profile |
 | `opencode` | Built-in OpenCode managed-agent harness | Soft feature fail. Agent start records a failed run if the executable is missing | Warn if missing; hard fail only for an OpenCode-agent profile |
@@ -50,7 +50,7 @@ The setup script should respect the same executable overrides that Tycho uses:
 
 | Variable | Purpose |
 |----------|---------|
-| `TYCHO_HOME` | Override default `~/.tycho` root |
+| `TYCHO_HOME` | Override default `HOME/.tycho` root |
 | `TYCHO_CONFIG_DIR` | Override default user config directory |
 | `TYCHO_CONFIG_PATH` | Override project registry path |
 | `TYCHO_SYSTEM_PROMPTS_PATH` | Override system prompt template path |
@@ -96,13 +96,13 @@ bin/setup --profile all
 ## Setup Phases
 
 1. Check baseline tools: Ruby, Bundler, Go, and native build tools.
-2. Create `~/.tycho/logs`, `~/.tycho/schedules`, `~/.tycho/workspaces`,
+2. Create `HOME/.tycho/logs`, `HOME/.tycho/schedules`, `HOME/.tycho/workspaces`,
    and missing sample config files:
-   - `config/hq.yml.example` to `~/.tycho/config/hq.yml`
-   - `config/system_prompts.yml.example` to `~/.tycho/config/system_prompts.yml`
-   - `config/response_style.md.example` to `~/.tycho/config/response_style.md`
-   - `config/schedules.yml.example` to `~/.tycho/config/schedules.yml`
-   - `config/hooks.example.yml` to `~/.tycho/config/hooks.yml`
+   - `config/hq.yml.example` to `HOME/.tycho/config/hq.yml`
+   - `config/system_prompts.yml.example` to `HOME/.tycho/config/system_prompts.yml`
+   - `config/response_style.md.example` to `HOME/.tycho/config/response_style.md`
+   - `config/schedules.yml.example` to `HOME/.tycho/config/schedules.yml`
+   - `config/hooks.example.yml` to `HOME/.tycho/config/hooks.yml`
 3. Check optional CLIs and print a feature readiness summary.
 5. For managed-agent projects, validate the selected built-in or custom harness profile. A custom profile is checked through its declared adapter family.
 6. For Remote UI setup, check `TYCHO_REMOTE_TOKEN` when binding outside loopback and

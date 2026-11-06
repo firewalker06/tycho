@@ -2,7 +2,7 @@
 
 [Card 770](https://fizzy.startkit.tech/1/cards/770) covers the Quick form fix and a
 separate completed inventory. The inventory and its original fixtures are in
-[the inventory report](/Users/didik/Code/personal/pull-request-reviews/firewalker06/tycho/agent-create-archive-inventory-770.md).
+the external inventory report.
 This change covers Quick opening, options, and the two footer create actions. Clone, archive, schedules,
 TUI, CLI, and creation receipt/store transitions keep their existing behavior.
 
@@ -13,7 +13,7 @@ project detail before drawing the form. A selected peer added its detail read.
 Background peer refresh did not block a local open in these fixtures. These
 controlled tests do not prove the cause or delay size in the live app.
 
-The form now opens synchronously. `GET /quick-agent/options` returns local
+The form now opens synchronously. `GET /quick-agent/options` returns local <!-- local-path-ok -->
 eligibility, saved default, project/template defaults, and shared offline
 harness/model/effort catalogs. It does not run executable, skill, tool, provider,
 or peer discovery. Server create validation remains authoritative. Create stays
@@ -92,7 +92,7 @@ disabled states. X, Escape, and overlay close preserve the page draft.
 Run from the repository root:
 
 ```sh
-TYCHO_REMOTE_UI_QUICK_OPTIONS_ONLY=1 TYCHO_REMOTE_UI_CAPTURE_DIR=/tmp/tycho-770-options bin/remote-ui-smoke
+TYCHO_REMOTE_UI_QUICK_OPTIONS_ONLY=1 TYCHO_REMOTE_UI_CAPTURE_DIR=path/to/temp/tycho-770-options bin/remote-ui-smoke
 TYCHO_REMOTE_UI_AUTO_NAME_ONLY=1 bin/remote-ui-smoke
 TYCHO_REMOTE_UI_OPTIMISTIC_CREATE_ONLY=1 bin/remote-ui-smoke
 bundle exec ruby test/remote_server_test.rb

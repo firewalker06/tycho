@@ -80,7 +80,7 @@ After the release-prep PR is merged:
 3. Create the GitHub release:
 
    ```sh
-   gh release create v<next-version> --title "Tycho v<next-version>" --notes-file /path/to/notes.md
+   gh release create v<next-version> --title "Tycho v<next-version>" --notes-file path/to/notes.md
    ```
 
 Release notes should summarize user-visible changes, compatibility notes, and

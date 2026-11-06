@@ -2,13 +2,13 @@
 
 ## Where Tycho writes files
 
-Both Homebrew and source installs use `~/.tycho` by default:
+Both Homebrew and source installs use `HOME/.tycho` by default:
 
-- Config: `~/.tycho/config/hq.yml`, `system_prompts.yml`, `schedules.yml`, and `hooks.yml`.
-- Schedule prompt files: `~/.tycho/schedules/`.
-- Runtime state and logs: `~/.tycho/logs/`.
-- Project logs: `~/.tycho/logs/projects/`.
-- Agent logs and artifacts: `~/.tycho/logs/agents/`.
+- Config: `HOME/.tycho/config/hq.yml`, `system_prompts.yml`, `schedules.yml`, and `hooks.yml`.
+- Schedule prompt files: `HOME/.tycho/schedules/`.
+- Runtime state and logs: `HOME/.tycho/logs/`.
+- Project logs: `HOME/.tycho/logs/projects/`.
+- Agent logs and artifacts: `HOME/.tycho/logs/agents/`.
 
 Use `TYCHO_HOME`, `TYCHO_CONFIG_PATH`, `TYCHO_SYSTEM_PROMPTS_PATH`,
 `TYCHO_SCHEDULES_PATH`, `TYCHO_HOOKS_PATH`, and `TYCHO_LOGS_ROOT` for temporary
@@ -118,7 +118,7 @@ same ownership check, not just a `kill(0)` liveness probe.
 Replacing `HQ::AGENTS_FILE`, `HQ::AGENT_LOGS_DIR`, or other Ruby constants
 isolates only the current test process. If that fixture can start a managed
 harness, `bin/tycho`, or another Ruby process, the child resolves constants
-again and uses the real `~/.tycho` paths unless the fixture also exports
+again and uses the real `HOME/.tycho` paths unless the fixture also exports
 isolated `TYCHO_CONFIG_PATH`, `TYCHO_SYSTEM_PROMPTS_PATH`,
 `TYCHO_LOGS_ROOT`, and schedule paths.
 

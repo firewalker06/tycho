@@ -1,11 +1,16 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-require "open3"
 require "tmpdir"
 
 ROOT = File.expand_path("..", __dir__)
 require File.join(ROOT, "test/support/test_environment")
+
+# Check tracked Markdown before starting the slower regression suite.
+require File.join(ROOT, "test/support/markdown_paths")
+violations = MarkdownPaths.check(ROOT)
+abort "Absolute local paths in tracked Markdown:\n#{violations.join("\n")}" unless violations.empty?
+puts "Tracked Markdown paths: ok"
 
 test_files = Dir.glob(File.join(ROOT, "test", "*_test.rb")).sort.map do |path|
   path.delete_prefix("#{ROOT}/")

@@ -6,7 +6,41 @@ GitHub's enforced `signoff` ruleset on the default branch requires the
 force pushes and branch deletion. This is a trusted-maintainer workflow, not a
 replacement for independent review where that is needed.
 
-The [Interaction Profiler](/Users/didik/Code/personal/tycho/docs/REMOTE_UI_INTERACTION_PROFILER.md) is optional verification for interaction feature work. Its profiling runs and Chrome smoke check are outside `bin/test`, normal CI, and the required signoff. Lightweight configuration and report-code checks remain in `bin/test`; they do not launch Chrome or run feature profiles.
+The [Interaction Profiler](REMOTE_UI_INTERACTION_PROFILER.md) is optional verification for interaction feature work. Its profiling runs and Chrome smoke check are outside `bin/test`, normal CI, and the required signoff. Lightweight configuration and report-code checks remain in `bin/test`; they do not launch Chrome or run feature profiles.
+
+## Markdown path check
+
+`bin/test` first scans every line of every tracked Markdown file, including
+root files, `docs/`, and bundled skill Markdown. There are no fenced-code,
+inline-code, HTML, quote, list, or table exemptions. Use repository-relative
+links, resolved from the file that contains the link.
+
+The guard decodes backslash punctuation escapes and HTML named, decimal,
+and hexadecimal character references once. It removes scheme URLs, including
+their paths, queries, and fragments. File URIs and Windows drive paths remain
+subject to the check. The named-reference table is local test data; no network
+request is needed. Escaped ampersands and generated references are not decoded
+again.
+
+Remaining absolute local path tokens fail, including home-relative paths,
+file URIs, Windows drive paths, and slash-rooted paths with a directory
+separator or filename extension. Code formatting never exempts a token.
+
+For examples, use relative placeholders such as `path/to/workspace` or
+`HOME`. No token-level placeholder exemption exists. The end-of-line marker
+below is the only allow mechanism.
+
+If an exact literal is required, put `<!-- local-path-ok -->` at the end of
+that source line. This is an explicit, line-only exception. Use it for a
+required path literal, API route, or sample log route; it also works inside a
+code block. Only trailing spaces or tabs may follow it. A marker on an earlier
+line, a marker followed by more text, an encoded marker, or the old
+`local-path-example` comment does not grant an exception.
+
+The check prints each failed file, original line number, and source text,
+then stops before the regression suite. `test/markdown_paths_test.rb` covers
+the strict policy, marker scope, placeholders, URLs, decoding, and all review
+reproductions, including code containers that end without a closing fence.
 
 ## Test notification safety
 
@@ -20,7 +54,7 @@ fixtures inject fake notifiers. Push delivery contract tests must install
 their own explicit transport fake. Do not remove these boundaries when
 adding a scheduler or notification fixture. The guard records denied transport
 attempts and fails at process exit even if production code catches the exception.
-Set `TYCHO_TEST_PUSH_AUDIT_FILE=/absolute/temp/path.jsonl` to capture redacted
+Set `TYCHO_TEST_PUSH_AUDIT_FILE=path/to/temp/path.jsonl` to capture redacted
 per-process attempt counts. An intentional guard probe clears only its own
 expected denial. For standalone tests not already requiring the helper, use
 `bundle exec ruby -r ./test/support/push_safety.rb test/NAME_test.rb`.
