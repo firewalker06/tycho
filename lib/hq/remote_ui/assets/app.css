@@ -7607,6 +7607,18 @@ body:has(.inquiry-form-full-screen) {
   display: grid;
   gap: 8px;
   padding: 4px 4px 8px;
+  --inquiry-expand-button-size: 44px;
+  --inquiry-focus-outline-width: 2px;
+  --inquiry-focus-outline-offset: 2px;
+  --inquiry-focus-clearance: 2px;
+  --inquiry-banner-border-width: 1px;
+  --inquiry-form-top-padding: 4px;
+  --inquiry-banner-min-height: calc(
+    var(--inquiry-expand-button-size) +
+    var(--inquiry-focus-outline-width) + var(--inquiry-focus-outline-offset) + var(--inquiry-focus-clearance) +
+    var(--inquiry-focus-outline-width) + var(--inquiry-focus-outline-offset) + var(--inquiry-focus-clearance) +
+    var(--inquiry-banner-border-width) + var(--inquiry-banner-border-width)
+  );
 }
 
 .inquiry-loading-skeleton {
@@ -7777,8 +7789,10 @@ body:has(.inquiry-form-full-screen) {
 }
 
 .inquiry-full-screen-button {
-  top: 12px;
+  top: calc(var(--inquiry-form-top-padding) + (var(--inquiry-banner-min-height) - var(--inquiry-expand-button-size)) / 2);
   right: 12px;
+  width: var(--inquiry-expand-button-size);
+  height: var(--inquiry-expand-button-size);
 }
 
 .inquiry-close-button {
@@ -7913,6 +7927,7 @@ body:has(.inquiry-form-full-screen) {
 .inquiry-banner {
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
+  min-height: var(--inquiry-banner-min-height);
 }
 
 .inquiry-mark {
