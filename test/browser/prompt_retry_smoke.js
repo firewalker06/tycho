@@ -15,7 +15,7 @@ module.exports = async ({browser, baseUrl, captureDir}) => {
     const context=await browser.newContext({viewport:{width,height:900},isMobile:width<500,hasTouch:width<500});
     const page=await context.newPage();page.setDefaultTimeout(12000);
     let late=gate();const errors=[];page.on("pageerror",e=>errors.push(e.message));
-    let writes=0,mode="lost", readFailure=false, captured, allowProof=false, baselineServed=false;
+    let writes=0,mode="held", readFailure=false, captured, allowProof=false, baselineServed=false;
     const trace=[];
     const acceptedGates=new Map();
     const acceptanceFor=id=>{if(!acceptedGates.has(id))acceptedGates.set(id,gate());return acceptedGates.get(id);};
@@ -46,6 +46,7 @@ module.exports = async ({browser, baseUrl, captureDir}) => {
         }
         if(pathname===`/agents/${raw}/messages`){
           writes++;assert.equal(routed,peer);captured=request.postDataJSON();
+          await page.evaluate(() => {window.__retryPostStarted=true;});
           note("post-start",{id:captured.client_request_id,mode});
           assert.equal(captured.expected_server_id,agent.delegation.server_id);
           if(mode==="auth")return route.fulfill({status:401,json:{error:"Synthetic auth error"}});
@@ -65,6 +66,7 @@ module.exports = async ({browser, baseUrl, captureDir}) => {
       await page.waitForSelector("#composer");
       if(baseline)assert(baselineServed,"pinned baseline bundle was served");
       await page.evaluate(()=>clearTimeout(state.timer));
+      if(delivery==="queued") await page.waitForFunction(key=>findAgent(key)?.running===true,key);
       const send=async text=>{
         await page.evaluate(()=>{
           if(globalThis.__retryEvents) return;
@@ -82,11 +84,48 @@ module.exports = async ({browser, baseUrl, captureDir}) => {
       };
       const refresh=()=>page.evaluate(key=>ensureAgentDetail(key,true),key);
       await send("Same synthetic message");
-      await page.locator("[data-retry-prompt]").waitFor();
+      await page.waitForFunction(() => [...state.promptOutbox.entries.values()][0]?.status === "sending");
+      await page.waitForFunction(() => window.__retryPostStarted === true);
       const firstId=captured.client_request_id;
+      assert.equal(await page.locator("[data-composer-submission-error]").count(),0,"a normal send has no composer recovery panel");
+      if(delivery==="queued"){
+        const summary=page.locator("details[data-prompt-queue] > summary");
+        await summary.filter({hasText:/queueing/i}).waitFor();
+        await summary.click();
+        await page.locator(".prompt-queue-entry-meta").filter({hasText:/Queueing/}).last().waitFor();
+      }else{
+        await page.locator(".message-send-status").filter({hasText:"Sending"}).waitFor();
+      }
+      await acceptanceFor(firstId).promise;
       const accepted=await (await context.request.get(`${baseUrl}/agents/${raw}`)).json();
       assert.equal(accepted.agent.prompt_acceptances.filter(p=>p.receipt.client_request_id===firstId).length,1,"one durable acceptance");
       assert.equal(accepted.agent.prompt_queue.entries.filter(e=>e.id===firstId).length,delivery==="queued"?1:0,"queued acceptance is distinct from immediate delivery");
+      const timingCapture = captureDir && repeat === 0 && theme === "dark" && !peer && delivery === "immediate";
+      const timedFrames = [];
+      if (timingCapture) {
+        const started = Date.now();
+        for (const target of [0, 100, 300, 600, 1000, 2000]) {
+          if (target) await page.waitForTimeout(Math.max(0, target - (Date.now() - started)));
+          const image = await page.screenshot({path:path.join(captureDir,`prompt-send-${width}-${target}ms.png`)});
+          timedFrames.push({label:`${target} ms`, image:image.toString("base64")});
+        }
+        await page.waitForTimeout(Math.max(0, 2500 - (Date.now() - started)));
+      }
+      allowProof=true;
+      await refresh();
+      await page.waitForFunction(()=>state.promptOutbox.entries.size===0);
+      late.release();
+      if (timingCapture) {
+        await page.waitForFunction(()=>!document.querySelector("[data-composer-submission-error]") && document.querySelector(".message-send-status")?.textContent.includes("Sent"));
+        const image = await page.screenshot({path:path.join(captureDir,`prompt-send-${width}-after-response.png`)});
+        timedFrames.push({label:"After response (2.5 s hold)", image:image.toString("base64")});
+        const sheet = await context.newPage();
+        await sheet.setViewportSize({width:Math.max(390,width),height:1000});
+        const columns = width < 500 ? 1 : 2;
+        await sheet.setContent(`<meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;padding:12px;font:13px system-ui;background:#f3f4f6;color:#111}.grid{display:grid;grid-template-columns:repeat(${columns},minmax(0,1fr));gap:12px}.frame{min-width:0}.frame strong{display:block;padding:5px 2px}.frame img{display:block;width:100%;height:auto;border:1px solid #ccd0d5;border-radius:4px}</style><main class="grid">${timedFrames.map(frame=>`<section class="frame"><strong>${frame.label}</strong><img src="data:image/png;base64,${frame.image}"></section>`).join("")}</main>`);
+        await sheet.screenshot({path:path.join(captureDir,`prompt-send-${width}-contact-sheet.png`),fullPage:true});
+        await sheet.close();
+      }
       // Consume through the real service so conversation now proves original delivery.
       if(delivery==="queued"){
         const read=await context.request.post(`${baseUrl}/agents/${raw}/prompt-queue/read`,{data:{}});
@@ -95,12 +134,6 @@ module.exports = async ({browser, baseUrl, captureDir}) => {
       const conversation=await (await context.request.get(`${baseUrl}/agents/${raw}/conversation`)).json();
       assert(JSON.stringify(conversation).includes(firstId),"delivered queue identity is in conversation");
       await page.locator("#prompt-input").fill("Keep newer draft");
-      readFailure=true;await refresh().catch(()=>{});
-      assert.equal(await page.locator("[data-retry-prompt]").count(),1,"read failure keeps uncertainty");
-      readFailure=false;allowProof=true;
-      await refresh();
-      await page.waitForFunction(()=>state.promptOutbox.entries.size===0);
-      assert.equal(writes,1,"proof uses no replay POST");
       assert.equal(await page.locator("[data-retry-prompt]").count(),0,"delivered message leaves retry UI");
       assert.equal(await page.locator("#prompt-input").inputValue(),"Keep newer draft");
       await page.evaluate(async()=>{await refresh({force:true,forceConversation:true});});
@@ -120,14 +153,29 @@ module.exports = async ({browser, baseUrl, captureDir}) => {
       mode="malformed";allowProof=false;
       await send("Same synthetic message");
       await page.locator("[data-retry-prompt]").waitFor();
+      if(delivery==="queued"){
+        const queue=page.locator("details[data-prompt-queue]");
+        const summary=queue.locator(":scope > summary");
+        await summary.filter({hasText:/not confirmed/i}).waitFor();
+        if(!await queue.evaluate(element=>element.open)) await summary.click();
+        await page.locator(".prompt-queue-entry-meta").filter({hasText:/Not confirmed/i}).last().waitFor();
+      }
       const secondId=captured.client_request_id;
       assert.notEqual(firstId,secondId);
+      assert.equal(await page.locator("[data-composer-submission-error][data-state=failed]").count(),1,"an uncertain send has one recovery notice");
+      assert.equal(await page.locator("[data-retry-prompt]").count(),1,"an uncertain send can retry");
+      assert.equal(await page.locator("[data-cancel-prompt]").count(),1,"an uncertain send can be cancelled");
+      readFailure=true;await refresh().catch(()=>{});
+      assert.equal(await page.locator("[data-retry-prompt]").count(),1,"read failure keeps uncertainty");
+      readFailure=false;
       await page.evaluate(async ({key,proof})=>{const agent=findAgent(key);reconcilePromptSubmissions({...agent,prompt_acceptances:[proof]});},{key,proof:accepted.agent.prompt_acceptances.find(p=>p.receipt.client_request_id===firstId)});
       assert.equal(await page.locator("[data-retry-prompt]").count(),1,"same text remains a distinct intent");
       // Exact in-flight retry is cancelled with the keyboard, while a newer draft/file stays.
-      mode="held";
+      late=gate();mode="held";
       await page.locator("[data-retry-prompt]").click();
       await page.waitForFunction(()=>[...state.promptOutbox.entries.values()][0]?.status==="sending");
+      assert.equal(await page.locator("[data-composer-submission-error][data-state=retrying]").count(),1,"an active retry has one recovery notice");
+      assert.equal((await page.locator("[data-composer-submission-error]").innerText()).replace(/\s+/g," ").trim(),"Retrying message Cancel retry");
       await page.locator("#prompt-input").fill("Preserve newer cancel draft");
       await page.locator("[data-prompt-attachment-input]").setInputFiles({name:"newer.txt",mimeType:"text/plain",buffer:Buffer.from("Synthetic newer file")});
       const cancel=page.locator("[data-cancel-prompt]");await cancel.focus();

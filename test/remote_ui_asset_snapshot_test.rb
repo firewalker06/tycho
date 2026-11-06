@@ -41,12 +41,15 @@ module RemoteUIAssetSnapshotTest
       "function composerDetailSubmissionRoute",
       "if (!agentSplitRoute(route) || workspaceRoute?.key !== agentKey) return null;",
       "function restoreComposerSubmissionFailure",
+      'entry?.retrying === true && ["waiting", "sending"].includes(entry.status)',
+      'if (!message || (!uncertain && !retrying && !submissionError)) return "";',
+      'data-state="${retrying ? "retrying" : "failed"}"',
       'if (form.dataset.submitting === "true") return;',
       'form.dataset.submitting = "true";',
       'if (navigatedOptimistically) navigate({ type: "agent", key });',
       "function acceptComposerPrompt(entry, receipt)",
       "state.composerRecoveryDrafts.set(entry.key, entry.payload.prompt)",
-      'role="${sending ? "status" : "alert"}"',
+      'role="${retrying ? "status" : "alert"}"',
       'data-composer-submission-error',
       'data-cancel-prompt="${escapeAttr(entry.id)}"',
       'escapeHtml(block.send_status || "sending...")',
@@ -54,6 +57,9 @@ module RemoteUIAssetSnapshotTest
     ]
     missing = required.reject { |fragment| javascript.include?(fragment) }
     raise "missing optimistic detail-composer contract: #{missing.join(", ")}" unless missing.empty?
+    raise "normal prompt sends must not show a composer sending panel" if javascript.include?('(entry ? "Sending message…" : "")')
+    submissions = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "prompt_submissions.js"))
+    raise "exact prompt retries must mark the active retry state" unless submissions.include?("entry.retrying = true;")
     raise "missing detail-composer failure styling" unless css.include?(".composer-submission-error")
   end
 

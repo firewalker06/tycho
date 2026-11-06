@@ -93,10 +93,10 @@ def write_fixture(dir)
     require "json"
     exit 0 if ARGV == ["auth", "status"]
     File.open("#{__FILE__}.launches", "a") { |file| file.puts(ENV["TYCHO_AGENT_KEY"]) }
-    arguments = ARGV.join(" ")
+    prompt = STDIN.read
     hold_marker = "#{__FILE__}.#{ENV.fetch("TYCHO_AGENT_KEY", "unknown")}.held"
     prior_queue_smoke_runs = File.exist?(hold_marker) ? File.read(hold_marker).to_i : 0
-    queue_smoke_run = if arguments.include?("QUEUE_SMOKE_HOLD") || prior_queue_smoke_runs.positive?
+    queue_smoke_run = if prompt.include?("QUEUE_SMOKE_HOLD") || prior_queue_smoke_runs.positive?
                         prior_queue_smoke_runs + 1
                       else
                         0
