@@ -3098,6 +3098,11 @@ button[data-toggle-pr-diff-full-view],
   padding: 0;
 }
 
+.agent-flat-list .agent-row {
+  min-height: 58px;
+  padding: 7px 10px 7px 12px;
+}
+
 .agent-server-inline {
   display: inline-flex;
   align-items: center;
@@ -4330,19 +4335,6 @@ button[data-toggle-pr-diff-full-view],
   padding: 6px 8px;
 }
 
-.agent-relationship-row:has(> .agent-row) {
-  grid-template-columns: minmax(0, 1fr) auto;
-  border: 0;
-  background: transparent;
-  padding: 0;
-}
-
-.agent-relationship-row > .agent-row,
-.agent-flat-list .agent-row {
-  min-height: 58px;
-  padding: 7px 10px 7px 12px;
-}
-
 .agent-relationship-row.disconnected {
   border-style: dashed;
 }
@@ -5426,23 +5418,8 @@ details.queue-read-block:not([open]) > .queue-read-body {
   min-width: 0;
 }
 
-.summary-delegated-actions ul {
-  list-style: none;
+.summary-delegated-actions-list {
   margin: .5rem 0 0;
-  padding: 0;
-}
-
-.summary-delegated-actions li {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr) auto;
-  align-items: center;
-  gap: .5rem;
-  margin-top: .4rem;
-  overflow-wrap: anywhere;
-}
-
-.summary-delegated-actions li > span {
-  color: var(--muted);
 }
 
 .message.run_summary {

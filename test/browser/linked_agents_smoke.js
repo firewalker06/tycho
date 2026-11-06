@@ -17,7 +17,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       window.linkedFixtureOwner = structuredClone(findAgent(key));
       window.installLinkedFixture = (mode = "mixed") => {
         const owner = structuredClone(window.linkedFixtureOwner);
-        const ref = (key, name, extra = {}) => ({ key, agent_key: key, name, server_key: "local", project_key: "web", state: "active", connected: true, status: "succeeded", ...extra });
+        const ref = (key, name, extra = {}) => ({ key, agent_key: key, name, server_key: "local", state: "active", connected: true, status: "succeeded", ...extra });
         const refs = [
           ref("fixture-idle", "Linked idle", { status: "idle" }),
           ref("fixture-input", "Linked awaiting input", { status: "awaiting-input", owner: "user" }),
@@ -124,44 +124,12 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       const summary = flyout.locator(".linked-agent-history > summary");
       assert.equal(await summary.innerText(), "Archived or disconnected (2)");
       for (const key of ["idle", "input", "running"]) assert(await flyout.locator(`[data-open-agent='fixture-${key}']`).isVisible(), `linked ${key} stays visible`);
-      const selectionModeRow = await page.evaluate(() => {
-        state.bulkArchiveMode = true;
-        const owner = state.agentDetails[window.linkedFixtureOwner.key];
-        const reference = owner.delegation.children.find(item => item.key === "fixture-idle");
-        const row = renderAgentRelationshipRow(owner, reference, reference.key);
-        state.bulkArchiveMode = false;
-        return { row, hasNavigation: row.includes('data-open-agent="fixture-idle"') && row.includes('href="#agent/fixture-idle"'), hasCheckbox: row.includes("data-select-agent") };
-      });
-      assert(selectionModeRow.hasNavigation, "selection mode keeps linked-agent navigation");
-      assert(!selectionModeRow.hasCheckbox, "selection mode does not replace linked-agent navigation with a checkbox");
       assert(await flyout.getByText("Unknown catalog entry", { exact: true }).isVisible());
       assert(!await flyout.getByText("Archived review", { exact: true }).isVisible());
       assert(!await flyout.getByText("Disconnected reports", { exact: true }).isVisible());
       const capture = async suffix => { if (captureDir) await page.screenshot({ path: path.join(captureDir, `${device}-${preference}-${suffix}.png`) }); };
       await summary.scrollIntoViewIfNeeded();
       await capture("closed");
-      assert(await flyout.getByText("Host - Web - Online", { exact: true }).first().isVisible(), "delegated agent meta line includes host, project, and server status");
-      const archivedPeerMeta = await page.evaluate(() => {
-        const peer = { key: "review-peer", name: "Review Peer", local: false, status: "online" };
-        state.servers = [...state.servers.filter(server => server.key !== peer.key), peer];
-        const peerProject = { key: "review-peer/web", resource_key: "web", name: "Peer Project", server_key: peer.key };
-        state.projects = [...state.projects.filter(project => project.key !== peerProject.key), peerProject];
-        state.projectDetails[peerProject.key] = peerProject;
-        const owner = state.agentDetails[window.linkedFixtureOwner.key];
-        const reference = normalizeAgentReferenceResource({
-          agent_key: "peer-archived",
-          name: "Archived peer",
-          project_key: "web",
-          state: "archived",
-          status: "succeeded",
-          connected: true,
-        }, peer);
-        const row = renderAgentRelationshipRow(owner, reference, reference.key, { archived: true });
-        return { projectKey: reference.project_key, correctProject: row.includes("Review Peer - Peer Project - Online"), hostProject: row.includes("Review Peer - Web - Online") };
-      });
-      assert.equal(archivedPeerMeta.projectKey, "review-peer/web", "peer project keys include their owning server");
-      assert(archivedPeerMeta.correctProject, "archived peer rows show the peer project name");
-      assert(!archivedPeerMeta.hostProject, "archived peer rows do not use the Host project name");
       await summary.focus();
       await page.keyboard.press("Enter");
       assert(await flyout.locator("details").evaluate(el => el.open), "Enter expands native disclosure");
@@ -292,9 +260,9 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     assert.equal(await page.locator(".linked-agents-count").innerText(), "0", "inactive-only links retain a zero-count badge control");
     const inactiveHistory = page.locator(".linked-agent-history > summary");
     assert.equal(await inactiveHistory.innerText(), "Archived or disconnected (2)");
-    assert.equal(await page.locator("[data-linked-agents-flyout] .agent-relationship-row:visible .agent-row:visible").count(), 0, "inactive history starts collapsed");
+    assert.equal(await page.locator("[data-linked-agents-flyout] .agent-reference:visible").count(), 0, "inactive history starts collapsed");
     await inactiveHistory.click();
-    assert.equal(await page.locator("[data-linked-agents-flyout] .agent-relationship-row:visible .agent-row:visible").count(), 2, "inactive linked agents remain visible in the expanded history");
+    assert.equal(await page.locator("[data-linked-agents-flyout] .agent-reference:visible").count(), 2, "inactive linked agents remain visible in the expanded history");
     await page.evaluate(() => window.installLinkedFixture("empty"));
     assert.equal(await page.locator("[data-toggle-linked-agents]").count(), 0);
     // Restore the server-backed fixture and check a real forced refresh.
