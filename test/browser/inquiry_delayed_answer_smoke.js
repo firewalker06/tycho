@@ -14,7 +14,7 @@ module.exports = async ({browser, baseUrl, captureDir, waitForInquiryRuns}) => {
     const rawKey=`web-inquiry-recovery-${index++}`,key=peer?`fixture-peer/${rawKey}`:rawKey;
     const context=await browser.newContext({viewport:{width,height:900},isMobile:width<500,hasTouch:width<500});
     const page=await context.newPage();page.setDefaultTimeout(10000);
-    const answer=gate(),captured=gate(),reads=gate();let holdReads=false,projection,writes=0,activityAgent;const submittedIds=[];
+    const answer=gate(),captured=gate(),reads=gate();let holdReads=false,projection,writes=0,activityAgent,heldAt=0;const submittedIds=[];
     const errors=[];page.on("pageerror",error=>errors.push(error.message));
     console.log(`Delayed answer: ${width} ${theme} ${peer?"peer":"local"} ${scenario}`);
     try {
@@ -27,7 +27,7 @@ module.exports = async ({browser, baseUrl, captureDir, waitForInquiryRuns}) => {
         if(request.method()==="POST" && pathname.match(new RegExp(`/agents/${rawKey}/inquiries/[^/]+/answer$`))) {
           assert.equal(routed,peer);writes++;submittedIds.push(request.postDataJSON().client_request_id);
           const response=await fetchRoute();assert.equal(response.status(),200);
-          projection=(await response.json()).agent;captured.release();await answer.promise;
+          projection=(await response.json()).agent;heldAt=Date.now();captured.release();await answer.promise;
           return route.fulfill({response});
         }
         if(holdReads && request.method()==="GET" && /^\/(agents|servers|setup|schedules|projects)(\/|$)/.test(pathname)) await reads.promise;
@@ -71,9 +71,7 @@ module.exports = async ({browser, baseUrl, captureDir, waitForInquiryRuns}) => {
           duplicate.remove();
         });
         assert.equal(await page.locator("#inquiry-form").count(),0,"reserved inquiry closes before delayed local storage completes");
-        assert.equal(await page.locator("[data-inquiry-answer-recovery]").count(),1,"the existing sending information stays in the composer");
-        assert.match(await page.locator("[data-inquiry-answer-recovery]").innerText(),/Sending answer/);
-        assert.equal(await page.locator("[data-retry-inquiry-answer]").isDisabled(),true,"the existing pending retry control stays disabled");
+        assert.equal(await page.locator("[data-inquiry-answer-recovery]").count(),0,"normal send has no composer recovery panel");
         assert.equal(await page.locator(".message.user.inquiry-response").count(),1,"in-memory reservation shows the existing answer block during delayed storage");
         const reservedId=await page.evaluate(key=>state.pendingInquirySubmissionEntries.get(key)?.id,key);
         await page.evaluate(()=>globalThis.__releaseStorageWrite());
@@ -84,13 +82,19 @@ module.exports = async ({browser, baseUrl, captureDir, waitForInquiryRuns}) => {
       await captured.promise;
       assert.match(page.url(), /#agent\//, "answer submission should open the conversation before the POST returns");
       assert.equal(await page.locator("#inquiry-form").count(),0,"inquiry review form closes while the answer is pending");
-      assert.equal(await page.locator("[data-inquiry-answer-recovery]").count(),1,"the existing sending information stays in the composer");
-      assert.match(await page.locator("[data-inquiry-answer-recovery]").innerText(),/Sending answer/);
-      assert.equal(await page.locator("[data-retry-inquiry-answer]").isDisabled(),true,"the existing pending retry control stays disabled");
+      assert.equal(await page.locator("[data-inquiry-answer-recovery]").count(),0,"normal send has no composer recovery panel");
       assert.equal(await page.locator(".message.user.inquiry-response").count(),1,"the submitted answer uses the existing conversation answer block while pending");
       assert.match(await page.locator(".message.user.inquiry-response").innerText(),/Synthetic delayed answer/,
         "conversation shows the answer while the POST is held");
       assert.match(await page.locator(".message-send-status").innerText(),/Sending answer/,"pending message has a subtle send state");
+      if(captureDir && process.env.TYCHO_REMOTE_UI_INQUIRY_CONTACT_SHEET==="1" && !peer && scenario==="detail") {
+        fs.mkdirSync(captureDir,{recursive:true});
+        for(const delay of [0,100,300,600,1000,2000,2500]) {
+          const remaining=heldAt+delay-Date.now();
+          if(remaining>0) await new Promise(resolve=>setTimeout(resolve,remaining));
+          await page.screenshot({path:path.join(captureDir,`inquiry-${width}-${delay}.png`)});
+        }
+      }
       await page.keyboard.press("Tab");
       assert.equal(await page.evaluate(()=>document.activeElement !== document.body),true,"conversation keeps keyboard focus available after navigation");
       if(captureDir && !peer && scenario==="detail") await page.screenshot({path:path.join(captureDir,`pending-${width}-${theme}.png`)});
@@ -128,12 +132,15 @@ module.exports = async ({browser, baseUrl, captureDir, waitForInquiryRuns}) => {
         const shown=await page.locator(".message-list").innerText();
         assert.equal((shown.match(/Synthetic delayed answer/g)||[]).length,1,"refresh replaces the optimistic preview with one server answer");
         assert.equal(await page.locator(".message.user.inquiry-response").count(),1,"refresh keeps one answer message");
-        assert.equal(await page.locator("[data-inquiry-answer-recovery]").count(),1,"the existing sending information stays in the composer while the server answer loads");
+        assert.equal(await page.locator("[data-inquiry-answer-recovery]").count(),0,"normal send has no composer recovery panel while the server answer loads");
       }
       if(scenario==="retire") {assert.equal(before.active,false);assert.equal(before.archived,true);}
       else if(!["refresh-pending","storage-delay"].includes(scenario)) {assert.equal(before.name,"Newer canonical name");assert.equal(before.running,false);}
       holdReads=true;answer.release();
       await page.waitForFunction(()=>inquiryAnswerStore().entries.size===0);
+      if(captureDir && process.env.TYCHO_REMOTE_UI_INQUIRY_CONTACT_SHEET==="1" && !peer && scenario==="detail") {
+        await page.screenshot({path:path.join(captureDir,`inquiry-${width}-after-response.png`)});
+      }
       const after=await snapshot();
       assert.equal(await page.locator(".message.user.inquiry-response").count(),1,"confirmed answer remains once in the conversation");
       assert.equal(await page.locator("[data-inquiry-answer-recovery]").count(),0,"sending information closes after confirmation");
@@ -142,7 +149,9 @@ module.exports = async ({browser, baseUrl, captureDir, waitForInquiryRuns}) => {
       if(!["storage-delay","refresh-pending"].includes(scenario)) assert.equal(after.running,before.running,"delayed POST must preserve running state");
       assert.equal(after.archived,before.archived,"delayed POST must preserve archive state");
       assert.equal(after.active,before.active,"delayed POST must not reinsert retired agent");
-      assert.equal(after.retired,before.retired);assert.equal(after.pending,0);assert.equal(after.refreshes,1);assert.equal(writes,1);
+      assert.equal(after.retired,before.retired);assert.equal(after.pending,0);
+      if(process.env.TYCHO_REMOTE_UI_INQUIRY_CONTACT_SHEET!=="1") assert.equal(after.refreshes,1);
+      assert.equal(writes,1);
       const persisted=(await (await context.request.get(`${baseUrl}/agents/${rawKey}`)).json()).agent;
       assert.equal(persisted.archived,scenario==="retire");
       assert.equal(after.name,persisted.name);if(!["storage-delay","refresh-pending"].includes(scenario)) assert.equal(after.running,persisted.running);

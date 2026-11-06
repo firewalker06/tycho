@@ -58,6 +58,8 @@ module RemoteUIAssetSnapshotTest
     missing = required.reject { |fragment| javascript.include?(fragment) }
     raise "missing optimistic detail-composer contract: #{missing.join(", ")}" unless missing.empty?
     raise "normal prompt sends must not show a composer sending panel" if javascript.include?('(entry ? "Sending message…" : "")')
+    inquiry_recovery = javascript[/const showPendingAnswerRecovery = pendingAnswer && \(.*?\n  \);/m].to_s
+    raise "normal inquiry sends must not show a composer recovery panel" unless inquiry_recovery.include?('["uncertain", "rejected"].includes(pendingAnswer.status) || pendingAnswer.retrying === true')
     submissions = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "prompt_submissions.js"))
     raise "exact prompt retries must mark the active retry state" unless submissions.include?("entry.retrying = true;")
     raise "missing detail-composer failure styling" unless css.include?(".composer-submission-error")
