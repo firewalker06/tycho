@@ -10911,6 +10911,8 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     if ENV["TYCHO_REMOTE_UI_INQUIRY_RECEIPT_ONLY"] == "1"
       test_name = if ENV["TYCHO_REMOTE_UI_INQUIRY_BLOCKER_CASE"]
                     "inquiry_answer_blockers_smoke"
+                  elsif ENV["TYCHO_REMOTE_UI_INQUIRY_LATE_STORE_ONLY"] == "1"
+                    "inquiry_late_store_smoke"
                   elsif ENV["TYCHO_REMOTE_UI_INQUIRY_DELAYED_ONLY"] == "1"
                     "inquiry_delayed_answer_smoke"
                   elsif ENV["TYCHO_REMOTE_UI_INQUIRY_DISPLAY_ONLY"] == "1"

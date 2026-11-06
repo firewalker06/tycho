@@ -37,13 +37,13 @@ module.exports = async ({browser, baseUrl}) => {
         assert.equal(response.status(),200,"server accepts the original answer before its reply is lost");
         return route.abort("connectionreset");
       }
-      if (["blocker-retry-label", "blocker-attachment-correction", "blocker-file-add", "blocker-clear-feedback", "blocker-remove-rejected", "blocker-complete-draft", "blocker-rejected-remove-race"].includes(scenario) && writes.length === 1) {
+      if (["blocker-retry-label", "blocker-attachment-correction", "blocker-file-add", "blocker-clear-feedback", "blocker-remove-rejected", "blocker-complete-draft", "blocker-rejected-remove-race", "blocker-closed-rejection"].includes(scenario) && writes.length === 1) {
         return route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"Synthetic failure before acceptance"})});
       }
       if (scenario === "blocker-rejected-remove-race" && writes.length === 3) {
         return route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"Synthetic failure before acceptance"})});
       }
-      if (["blocker-retry-label", "blocker-attachment-correction", "blocker-remove-rejected", "blocker-complete-draft", "blocker-rejected-remove-race"].includes(scenario) && writes.length === 2) {
+      if (["blocker-retry-label", "blocker-attachment-correction", "blocker-remove-rejected", "blocker-complete-draft", "blocker-rejected-remove-race", "blocker-closed-rejection"].includes(scenario) && writes.length === 2) {
         const response = await context.request.post(`${baseUrl}/agents/${key}/inquiries/${inquiryId}/dismiss`,{data:{}});
         assert.equal(response.status(),200,"the same inquiry is dismissed before the retry reaches the server");
       }
@@ -65,7 +65,7 @@ module.exports = async ({browser, baseUrl}) => {
     await page.goto(`${baseUrl}/ui#agent/${key}`,{waitUntil:"networkidle"});
     await page.waitForSelector("#inquiry-form",{state:"attached"});
     if (!await page.locator("#inquiry-form").isVisible()) await page.locator("details.mobile-inquiry > summary").click();
-    if (["blocker-multiselect-comma", "blocker-schema-correction", "blocker-attachment-correction", "blocker-file-add", "blocker-remove-rejected", "blocker-complete-draft", "blocker-rejected-remove-race"].includes(scenario)) {
+    if (["blocker-multiselect-comma", "blocker-schema-correction", "blocker-attachment-correction", "blocker-file-add", "blocker-remove-rejected", "blocker-complete-draft", "blocker-rejected-remove-race", "blocker-closed-rejection"].includes(scenario)) {
       await page.locator('#inquiry-form input[type="checkbox"]').first().check();
       if (scenario !== "blocker-multiselect-comma") {
         await page.locator('#inquiry-form input[name="choice"]').fill("Original answer");
@@ -73,7 +73,7 @@ module.exports = async ({browser, baseUrl}) => {
       if (scenario === "blocker-multiselect-comma") {
         await page.locator('input[type="file"]').first().setInputFiles({name:"regions.png",mimeType:"image/png",buffer:Buffer.from("synthetic image")});
       }
-      if (["blocker-attachment-correction", "blocker-remove-rejected", "blocker-complete-draft"].includes(scenario)) {
+      if (["blocker-attachment-correction", "blocker-remove-rejected", "blocker-complete-draft", "blocker-closed-rejection"].includes(scenario)) {
         await page.locator('input[type="file"]').first().setInputFiles({name:"removed.txt",mimeType:"text/plain",buffer:Buffer.from("remove me")});
       }
       if (scenario === "blocker-complete-draft") {
@@ -283,6 +283,50 @@ module.exports = async ({browser, baseUrl}) => {
       await page.waitForFunction(() => !state.pendingInquirySubmissionKeys.size);
       assert.equal(await page.evaluate(key => Boolean(findAgent(key)?.latest_inquiry?.id),key),true,"late acceptance does not hide the unanswered inquiry");
       assert.equal(await page.locator(".message.user.inquiry-response").count(),0,"late acceptance does not restore the removed answer block");
+      return;
+    }
+
+    if (scenario === "blocker-closed-rejection") {
+      await page.waitForFunction(key => inquiryAnswerStore().entries.get(key)?.status === "uncertain",key);
+      await page.locator('#inquiry-form [name="choice"]').fill("Corrected before close");
+      await page.locator('#inquiry-form [data-retry-inquiry-answer]').click();
+      await page.locator("#confirmation-dialog [data-confirmation-accept]").click();
+      await page.waitForFunction(key => inquiryAnswerStore().entries.get(key)?.status === "rejected",key);
+      assert.equal(writes.length,2,"the answer is saved, then rejected after another path closes the inquiry");
+      assert.equal(await page.locator("[data-inquiry-answer-recovery]").count(),1);
+      const closedRecovery = await page.evaluate(key => {
+        const agent = findAgent(key);
+        const inquiry = agent.latest_inquiry;
+        agent.latest_inquiry = null;
+        const html = renderInquiryAnswerRecovery(inquiryAnswerStore().entries.get(key));
+        agent.latest_inquiry = inquiry;
+        return html;
+      },key);
+      assert.match(closedRecovery,/data-cancel-inquiry-answer/,"closed-inquiry rejection markup includes a Remove control");
+      if (process.env.TYCHO_REMOTE_UI_CAPTURE_DIR) {
+        const suffix = viewportWidth <= 600 ? "mobile" : "desktop";
+        await page.screenshot({path:require("node:path").join(process.env.TYCHO_REMOTE_UI_CAPTURE_DIR,`inquiry-rejected-${suffix}.png`),fullPage:false});
+      }
+      assert.equal(await page.locator("[data-cancel-inquiry-answer]").count(),1,"every rejected answer offers Remove, including a closed inquiry");
+
+      const current = await page.evaluate(key => {
+        const entry = inquiryAnswerStore().entries.get(key);
+        const legacy = {...entry};
+        ["answerFields", "correctionDraft", "correctionDraftRestored", "attemptGeneration", "retrying"].forEach(field => delete legacy[field]);
+        return legacy;
+      },key);
+      assert.ok(current.preview?.length,"the pre-#321 saved-answer format retains its preview");
+      await page.evaluate(async entry => {
+        await inquiryAnswerStore().store.put(entry);
+        await inquiryAnswerStore().pendingWrites.get(entry.key);
+      },current);
+      await page.reload({waitUntil:"networkidle"});
+      if (process.env.TYCHO_REMOTE_UI_CAPTURE_DIR) {
+        const suffix = viewportWidth <= 600 ? "mobile" : "desktop";
+        await page.screenshot({path:require("node:path").join(process.env.TYCHO_REMOTE_UI_CAPTURE_DIR,`inquiry-rejected-after-reload-${suffix}.png`),fullPage:false});
+      }
+      await page.waitForFunction(key => inquiryAnswerStore().loaded && !inquiryAnswerStore().entries.has(key),key);
+      assert.equal(await page.locator("[data-inquiry-answer-recovery]").count(),0,"a saved answer for a closed inquiry is removed after reload");
       return;
     }
 
