@@ -188,19 +188,26 @@ module CustomPromptTransportTest
         end
       end
 
-      # Cancellation must clean the private file while stopping only the owned child.
-      capture = File.join(dir, "cancel.json")
-      command = [RbConfig.ruby, "--disable-gems",
-        File.expand_path("../lib/hq/domain/custom_prompt_file_runner.rb", __dir__),
-        RbConfig.ruby, script, "file", capture]
-      Open3.popen3({ "BLOCK_CUSTOM" => "1" }, *command) do |input, output, error, waiter|
-        input.write("cancel 日本語")
-        input.close
-        assert(Timeout.timeout(10) { output.gets } == "ready\n", "cancel child not ready")
-        path = JSON.parse(File.read(capture))["path"]
-        Process.kill("TERM", waiter.pid)
-        Timeout.timeout(10) { waiter.value }
-        assert(!File.exist?(File.dirname(path)), "cancel left private file")
+      # Cancel each transport through its real wrapper process.
+      %w[argv stdin file].each do |mode|
+        capture = File.join(dir, "cancel-#{mode}.json")
+        command = [RbConfig.ruby, script, mode, capture]
+        if mode == "file"
+          command = [RbConfig.ruby, "--disable-gems",
+            File.expand_path("../lib/hq/domain/custom_prompt_file_runner.rb", __dir__)] + command
+        elsif mode == "argv"
+          command << "cancel 日本語"
+        end
+        Open3.popen3({ "BLOCK_CUSTOM" => "1" }, *command) do |input, output, error, waiter|
+          input.write("cancel 日本語") unless mode == "argv"
+          input.close
+          assert(Timeout.timeout(10) { output.gets } == "ready\n", "#{mode} cancel child not ready")
+          path = JSON.parse(File.read(capture))["path"]
+          Process.kill("TERM", waiter.pid)
+          status = Timeout.timeout(10) { waiter.value }
+          assert(!status.success?, "#{mode} cancel did not stop wrapper")
+          assert(!File.exist?(File.dirname(path)), "cancel left private file") if path
+        end
       end
 
       # Failed spawn also releases its private directory.
