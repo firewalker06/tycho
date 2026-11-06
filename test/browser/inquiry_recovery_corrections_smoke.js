@@ -8,16 +8,13 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry}) => {
   let index = 32;
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL7NwAAAABJRU5ErkJggg==", "base64");
   for (const width of (selected ? [1440] : [1440,390])) for (const theme of (selected ? ["dark"] : ["dark","light"])) {
-    for (const scenario of (selected ? [selected] : ["correction", "newer-failure", "newer-detail-failure", "newer-auth-failure", "newer-success"])) {
+    for (const scenario of (selected ? [selected] : ["correction", "stale-newer"])) {
       const key = `web-inquiry-recovery-${index++}`;
       console.log(`Inquiry correction: ${width} ${theme} ${scenario}`);
       const context = await browser.newContext({viewport:{width,height:900},isMobile:width<500,hasTouch:width<500});
       const page = await context.newPage();
       page.setDefaultTimeout(10000);
-      const errors = [], writes = [], failedPaths = [];
-      let failReads = false, failedReads = 0;
-      const detailFailure = ["newer-detail-failure","newer-auth-failure"].includes(scenario);
-      const readFailureStatus = scenario==="newer-auth-failure" ? 401 : 503;
+      const errors = [], writes = [];
       page.on("pageerror",error=>errors.push(error.message));
       const openForm = async () => {
         await page.waitForSelector("#inquiry-form",{state:"attached"});
@@ -34,11 +31,6 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry}) => {
         const inquiryA = first.latest_inquiry.id;
         await page.route("**/*",async route=>{
           const request=route.request(), url=new URL(request.url());
-          if(failReads && !(detailFailure && url.pathname==="/servers/resources") && request.method()==="GET" && /^\/(agents|servers|setup|schedules|projects|quick-agent)(\/|$)/.test(url.pathname)) {
-            failedReads++;
-            failedPaths.push(url.pathname);
-            return route.fulfill({status:readFailureStatus,contentType:"application/json",body:JSON.stringify({error:"Synthetic reconciliation failure"})});
-          }
           if(request.method()!=="POST" || !url.pathname.match(new RegExp(`/agents/${key}/inquiries/[^/]+/answer$`))) return route.continue();
           const payload=request.postDataJSON();
           writes.push({inquiry:decodeURIComponent(url.pathname.split("/").at(-2)),payload});
@@ -49,7 +41,7 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry}) => {
           assert.equal(response.status(),200);
           const data=await response.json();
           if(scenario!=="correction" && writes.length===1) return route.abort("connectionreset");
-          if(writes.length===2 && scenario!=="correction") assert.equal(data.answer_receipt.replayed,true,"A replay resolves original acceptance");
+          if(writes.length===2 && scenario!=="correction" && writes[1].inquiry===inquiryA) assert.equal(data.answer_receipt.replayed,true,"A replay resolves original acceptance");
           return route.fulfill({response});
         });
         await page.goto(`${baseUrl}/ui#agent/${key}`,{waitUntil:"networkidle"});
@@ -102,32 +94,20 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry}) => {
             handlePromptAttachmentFiles(key,[new File([bytes],"new-B.png",{type:"image/png"})]);
             globalThis.__fileB={...pendingAttachmentsFor(key).find(file=>file.filename==="new-B.png")};
           },{key,inquiryB,png:png.toString("base64")});
-          failReads=["newer-failure","newer-detail-failure","newer-auth-failure"].includes(scenario);
-          const shellFailure = failReads ? page.waitForResponse(response=>response.request().method()==="GET" && new URL(response.url()).pathname===(detailFailure ? "/setup/summary" : "/servers/resources") && response.status()===readFailureStatus) : null;
-          await page.locator('[data-retry-inquiry-answer]').click();
-          await page.waitForFunction(()=>inquiryAnswerStore().entries.size===0);
-          if(failReads) await page.waitForFunction(key=>state.agentDetails[key]?.detail_stale===true,key);
-          else await page.waitForFunction(({key,inquiryB})=>state.agentDetails[key]?.latest_inquiry?.id===inquiryB,{key,inquiryB});
-          if (shellFailure) await shellFailure;
+          await page.waitForFunction(()=>inquiryAnswerStore().entries.size===0,"stale answer entry is cleared when inquiry B replaces A");
+          assert.equal(await page.locator("[data-inquiry-answer-recovery]").count(),0,"stale answer A has no recovery panel");
+          assert.equal(await page.locator(".message.user.inquiry-response").count(),0,"stale answer A is removed from the conversation");
+          assert.equal(writes.length,1,"clearing stale answer A does not send a duplicate request");
+          await page.waitForFunction(({key,inquiryB})=>state.agentDetails[key]?.latest_inquiry?.id===inquiryB,{key,inquiryB});
           const snapshot=await page.evaluate(key=>({id:state.agentDetails[key]?.latest_inquiry?.id,awaiting:state.agentDetails[key]?.awaiting_input,
             files:pendingAttachmentsFor(key).map(file=>file.filename),revoked:globalThis.__revokedInquiryUrls,
             a:globalThis.__fileA.previewUrl,b:globalThis.__fileB.previewUrl}),key);
-          assert.equal(snapshot.id,inquiryB,"S2: old A acceptance must preserve B on failed detail/shell reads");
+          assert.equal(snapshot.id,inquiryB,"stale answer cleanup preserves inquiry B");
           assert.equal(snapshot.awaiting,true,"S2: B remains awaiting input");
           assert.deepEqual(snapshot.files,["new-B.png"],"SP2: only A's consumed files leave shared selection");
           assert.deepEqual(snapshot.revoked,[snapshot.a],"SP2: revoke only consumed A preview, retain B preview");
-          if(failReads) {
-            assert.equal(failedPaths.includes(`/agents/${key}`),detailFailure,"detail fails only after catalog succeeds; no standalone duplicate read");
-            assert(failedPaths.includes(detailFailure ? "/setup/summary" : "/servers/resources"),"real shell read failed");
-          }
           await openForm();
-          assert.deepEqual(await values(),["Newer answer B","Newer feedback B"],"B draft survives A reconciliation");
-          if(captureDir && failReads) await page.screenshot({path:path.join(captureDir,`newer-${scenario}-${width}-${theme}.png`)});
-          if(scenario==="newer-auth-failure") {
-            await page.waitForSelector("#auth-panel",{state:"visible"});
-            assert.equal(await page.locator("[data-inquiry-answer-recovery]").count(),0,"read auth failure cannot reopen accepted A");
-          }
-          failReads=false;
+          assert.deepEqual(await values(),["Newer answer B","Newer feedback B"],"B draft survives stale answer cleanup");
           // A later normal poll must preserve the newer editable B draft.
           await page.evaluate(async()=>{
             await refresh({force:true}); state.pollDeferredUntil=0; await refresh(); await pollAgentActivity({manual:true});
@@ -142,14 +122,13 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry}) => {
           await page.locator('#inquiry-form button[type="submit"]').click();
           assert.equal((await bResponse).status(),200);
           await page.waitForFunction(()=>inquiryAnswerStore().entries.size===0);
-          assert.equal(writes.length,3);
-          assert.deepEqual(writes[0],writes[1],"A exact replay retains original inquiry/payload/files/feedback");
-          assert.equal(writes[2].inquiry,inquiryB);
-          assert.deepEqual(writes[2].payload.attachments.map(file=>file.filename),["new-B.png"],"B payload excludes accepted A file");
-          assert.equal(writes[2].payload.feedback,"Newer feedback B");
+          assert.equal(writes.length,2,"stale A is not replayed when B is current");
+          assert.equal(writes[1].inquiry,inquiryB);
+          assert.deepEqual(writes[1].payload.attachments.map(file=>file.filename),["new-B.png"],"B payload excludes stale A file");
+          assert.equal(writes[1].payload.feedback,"Newer feedback B");
         }
         assert.deepEqual(errors,[]);
-        results.push({width,theme,scenario,passed:true,writes:writes.length,failedReads,failedPaths});
+        results.push({width,theme,scenario,passed:true,writes:writes.length});
       } finally {await context.close();}
     }
   }

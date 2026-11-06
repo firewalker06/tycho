@@ -74,7 +74,7 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForIn
         },agent.key);
         await page.waitForSelector("[data-inquiry-answer-recovery]");
         if(scenario==="rejection") {
-          assert.match(await page.locator("[data-inquiry-answer-recovery]").innerText(),/Answer not sent/);
+          assert.equal(await page.locator("[data-inquiry-answer-recovery]").innerText(),"Failed to submit answer, retry or remove");
           await context.request.post(`${baseUrl}/agents/${agent.key}/inquiries/${inquiryId}/restore`,{data:{}});
           await page.reload({waitUntil:"networkidle"});
           await page.waitForSelector("#inquiry-form",{state:"attached"});
@@ -159,6 +159,8 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForIn
               await confirmation.locator("[data-confirmation-accept]").click();
             }
             await retryDispatched;
+            assert.equal(await page.locator("[data-inquiry-answer-recovery]").count(),1,"an active exact retry keeps its recovery controls");
+            assert.equal(await page.locator("[data-retry-inquiry-answer]").isDisabled(),true,"the active retry cannot start a duplicate request");
             const response = await context.request.get(`${baseUrl}/agents/${agent.key}/conversation?limit=100`);
             assert.equal(response.status(),200);
             const conversation = await response.json();
@@ -209,7 +211,7 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForIn
     }
   }
   if(captureDir) fs.writeFileSync(path.join(captureDir,"inquiry-browser.json"),JSON.stringify(evidence,null,2));
-  if (!baseline && !selectedCase) await require("./inquiry_recovery_corrections_smoke")({browser, baseUrl, captureDir, advanceInquiry});
+  if (!baseline && (!selectedCase || process.env.TYCHO_REMOTE_UI_INQUIRY_CORRECTION_CASE)) await require("./inquiry_recovery_corrections_smoke")({browser, baseUrl, captureDir, advanceInquiry});
   if (waitForInquiryRuns) console.log(waitForInquiryRuns());
   console.log("inquiry_receipt_smoke: ok");
 };
