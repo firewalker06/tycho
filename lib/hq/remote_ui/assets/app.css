@@ -5418,23 +5418,16 @@ details.queue-read-block:not([open]) > .queue-read-body {
   min-width: 0;
 }
 
-.summary-delegated-actions ul {
-  list-style: none;
+.summary-delegated-actions-list {
   margin: .5rem 0 0;
-  padding: 0;
 }
 
-.summary-delegated-actions li {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr) auto;
-  align-items: center;
-  gap: .5rem;
-  margin-top: .4rem;
-  overflow-wrap: anywhere;
-}
-
-.summary-delegated-actions li > span {
-  color: var(--muted);
+.summary-delegated-actions .agent-row > .status-mark {
+  width: auto;
+  height: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .message.run_summary {

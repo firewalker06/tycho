@@ -34,16 +34,26 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     await popover.waitFor({ state: "visible" });
     const actions = popover.locator(".summary-delegated-actions");
     const check = async (actions) => {
-      assert.equal(await actions.locator("li").count(), 5);
+      assert.equal(await actions.locator(".agent-row").count(), 5);
       const text = await actions.innerText();
-      for (const label of ["Created", "Started", "Message queued", "Message sent", "API contract review", "Removed review"]) assert(text.includes(label), label);
+      for (const label of ["Created", "Started", "Queued", "Sent", "API contract review", "Removed review"]) assert(text.includes(label), label);
       assert(!text.includes("PRIVATE_PROMPT_SENTINEL"));
-      assert.equal(await actions.locator("li").filter({ hasText: "API contract review" }).filter({ hasText: "Created" }).count(), 0);
-      assert.equal(await actions.locator("li").filter({ hasText: "API contract review" }).filter({ hasText: "Started" }).count(), 2, "Distinct starts must remain");
-      assert.equal(await actions.locator("li").filter({ hasText: "Pending review" }).filter({ hasText: "Created" }).count(), 1, "Create-only must remain truthful");
-      assert.equal(await actions.locator("li").filter({ hasText: "Pending review" }).filter({ hasText: "Started" }).count(), 0);
-      assert.equal(await actions.locator('a[href="#agent/web-agent-api-review"]').count(), 3);
-      assert.equal(await actions.locator(".unavailable").count(), 2);
+      const outcomes = actions.locator(".summary-delegated-action-outcome");
+      assert.equal(await outcomes.filter({ hasText: "Message" }).count(), 0, "Message outcomes omit the word Message");
+      assert.equal(await outcomes.filter({ hasText: "Queued" }).count(), 1, "Queued outcome uses its short label");
+      assert.equal(await outcomes.filter({ hasText: "Sent" }).count(), 1, "Sent outcome uses its short label");
+      assert.equal(await actions.locator(".agent-row").filter({ hasText: "API contract review" }).locator(".summary-delegated-action-outcome").filter({ hasText: "Created" }).count(), 0);
+      assert.equal(await actions.locator(".agent-row").filter({ hasText: "API contract review" }).locator(".summary-delegated-action-outcome").filter({ hasText: "Started" }).count(), 2, "Distinct starts must remain");
+      assert.equal(await actions.locator(".agent-row").filter({ hasText: "Pending review" }).locator(".summary-delegated-action-outcome").filter({ hasText: "Created" }).count(), 1, "Create-only must remain truthful");
+      assert.equal(await actions.locator(".agent-row").filter({ hasText: "Pending review" }).locator(".summary-delegated-action-outcome").filter({ hasText: "Started" }).count(), 0);
+      assert.equal(await actions.locator('[data-open-agent="web-agent-api-review"]').count(), 3);
+      assert.equal(await actions.locator(".agent-row.unavailable").count(), 2);
+      assert.equal(await actions.getByText("Host - Web - Online", { exact: true }).count(), 5, "Each delegated row shows host, project, and server status");
+      assert.equal(await actions.locator(".agent-row > .status-mark").count(), 2);
+      assert(await actions.locator(".agent-row > .status-mark").first().evaluate(element => {
+        const style = getComputedStyle(element);
+        return style.borderWidth === "0px" && style.backgroundColor === "rgba(0, 0, 0, 0)";
+      }), "Summary agent icons have no box");
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1);
       assert(!overflow, `Overflow at ${viewport.width}`);
       assert(await actions.evaluate(element => element.scrollWidth <= element.clientWidth + 1), "Action rows must fit their disclosure");
@@ -51,7 +61,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     await check(actions);
     assert(await popover.evaluate(element => element === document.activeElement), "Keyboard disclosure must focus content");
     await page.keyboard.press("Tab");
-    assert(await popover.locator("a").first().evaluate(element => element === document.activeElement), "Action links must be keyboard reachable");
+    assert(await popover.locator("[data-open-agent]").first().evaluate(element => element === document.activeElement), "Agent rows must be keyboard reachable");
     await page.keyboard.press("Escape");
     assert(await trigger.evaluate(element => element === document.activeElement), "Escape must return focus");
     assert.equal(await trigger.getAttribute("aria-expanded"), "false");

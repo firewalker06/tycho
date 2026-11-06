@@ -39,6 +39,18 @@ module RemoteUISummaryDelegatedActionsTest
     output, status = Open3.capture2e("node", "-e", script, helpers)
     raise "Summary delegated action projection failed:\n#{output}" unless status.success?
 
+    assets = File.read(File.expand_path("../lib/hq/remote_ui/assets/app.js", __dir__))
+    renderer = assets.split("function renderSummaryDelegatedActions", 2).last.to_s.split("\nfunction ", 2).first
+    raise "Summary delegated actions must render the shared agent row" unless renderer.include?("renderAgentRow(delegatedAgent")
+    raise "Summary delegated rows must show host, project, and server status" unless assets.include?("if (options.summaryMeta)") &&
+      assets.include?("[serverDisplayName(server), project?.name || agent.project_key, serverHealthLabel(server)]") &&
+      assets.include?(".join(\" - \")")
+    raise "Summary message outcomes must use short labels" unless assets.include?("? \"Queued\" : \"Sent\"")
+    styles = File.read(File.expand_path("../lib/hq/remote_ui/assets/app.css", __dir__))
+    raise "Summary delegated icons must have no box" unless styles.include?(".summary-delegated-actions .agent-row > .status-mark") &&
+      styles.include?("  border: 0;\n  border-radius: 0;\n  background: transparent;")
+    raise "Conversation and detail Summary must use the delegated agent row renderer" unless assets.scan("renderSummaryDelegatedActions(").length >= 3
+
     puts "remote_ui_summary_delegated_actions_test: ok"
   end
 end
