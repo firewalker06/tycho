@@ -124,6 +124,16 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       const summary = flyout.locator(".linked-agent-history > summary");
       assert.equal(await summary.innerText(), "Archived or disconnected (2)");
       for (const key of ["idle", "input", "running"]) assert(await flyout.locator(`[data-open-agent='fixture-${key}']`).isVisible(), `linked ${key} stays visible`);
+      const selectionModeRow = await page.evaluate(() => {
+        state.bulkArchiveMode = true;
+        const owner = state.agentDetails[window.linkedFixtureOwner.key];
+        const reference = owner.delegation.children.find(item => item.key === "fixture-idle");
+        const row = renderAgentRelationshipRow(owner, reference, reference.key);
+        state.bulkArchiveMode = false;
+        return { row, hasNavigation: row.includes('data-open-agent="fixture-idle"') && row.includes('href="#agent/fixture-idle"'), hasCheckbox: row.includes("data-select-agent") };
+      });
+      assert(selectionModeRow.hasNavigation, "selection mode keeps linked-agent navigation");
+      assert(!selectionModeRow.hasCheckbox, "selection mode does not replace linked-agent navigation with a checkbox");
       assert(await flyout.getByText("Unknown catalog entry", { exact: true }).isVisible());
       assert(!await flyout.getByText("Archived review", { exact: true }).isVisible());
       assert(!await flyout.getByText("Disconnected reports", { exact: true }).isVisible());
@@ -131,6 +141,27 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       await summary.scrollIntoViewIfNeeded();
       await capture("closed");
       assert(await flyout.getByText("Host - Web - Online", { exact: true }).first().isVisible(), "delegated agent meta line includes host, project, and server status");
+      const archivedPeerMeta = await page.evaluate(() => {
+        const peer = { key: "review-peer", name: "Review Peer", local: false, status: "online" };
+        state.servers = [...state.servers.filter(server => server.key !== peer.key), peer];
+        const peerProject = { key: "review-peer/web", resource_key: "web", name: "Peer Project", server_key: peer.key };
+        state.projects = [...state.projects.filter(project => project.key !== peerProject.key), peerProject];
+        state.projectDetails[peerProject.key] = peerProject;
+        const owner = state.agentDetails[window.linkedFixtureOwner.key];
+        const reference = normalizeAgentReferenceResource({
+          agent_key: "peer-archived",
+          name: "Archived peer",
+          project_key: "web",
+          state: "archived",
+          status: "succeeded",
+          connected: true,
+        }, peer);
+        const row = renderAgentRelationshipRow(owner, reference, reference.key, { archived: true });
+        return { projectKey: reference.project_key, correctProject: row.includes("Review Peer - Peer Project - Online"), hostProject: row.includes("Review Peer - Web - Online") };
+      });
+      assert.equal(archivedPeerMeta.projectKey, "review-peer/web", "peer project keys include their owning server");
+      assert(archivedPeerMeta.correctProject, "archived peer rows show the peer project name");
+      assert(!archivedPeerMeta.hostProject, "archived peer rows do not use the Host project name");
       await summary.focus();
       await page.keyboard.press("Enter");
       assert(await flyout.locator("details").evaluate(el => el.open), "Enter expands native disclosure");

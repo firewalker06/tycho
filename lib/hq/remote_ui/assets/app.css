@@ -3098,11 +3098,6 @@ button[data-toggle-pr-diff-full-view],
   padding: 0;
 }
 
-.agent-flat-list .agent-row {
-  min-height: 58px;
-  padding: 7px 10px 7px 12px;
-}
-
 .agent-server-inline {
   display: inline-flex;
   align-items: center;
@@ -4342,7 +4337,8 @@ button[data-toggle-pr-diff-full-view],
   padding: 0;
 }
 
-.agent-relationship-row > .agent-row {
+.agent-relationship-row > .agent-row,
+.agent-flat-list .agent-row {
   min-height: 58px;
   padding: 7px 10px 7px 12px;
 }
