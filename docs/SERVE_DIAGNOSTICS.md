@@ -1,6 +1,6 @@
 # Serve measurements
 
-Authenticated `GET /diagnostics/serve` returns process-local measurements. It
+Authenticated `GET /diagnostics/serve` returns process-local measurements. It <!-- local-path-ok -->
 uses the normal Remote API bearer-token policy. It does not read agent state.
 The endpoint shares the same 32 worker slots as other requests.
 

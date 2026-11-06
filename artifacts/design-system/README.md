@@ -13,5 +13,5 @@ opens the preview in installed Google Chrome. It does not touch real agents or p
 configuration.
 
 Screenshots for pull requests are disposable review artifacts. Save them outside the
-repository, for example under `~/.tycho/logs/agents/assets/`, and upload them to the
+repository, for example under `HOME/.tycho/logs/agents/assets/`, and upload them to the
 pull request manually. Do not add generated screenshots to Git.

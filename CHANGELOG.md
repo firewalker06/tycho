@@ -44,7 +44,7 @@ All notable changes to Tycho will be documented in this file.
   scroll near the top. The tail payload is bounded by bytes.
 - Serve Remote requests concurrently, with read deadlines and clean shutdown for
   client workers.
-- Poll only the visible Remote UI screen. Make `PUT /agents/KEY/reading` cheap.
+- Poll only the visible Remote UI screen. Make `PUT /agents/KEY/reading` cheap. <!-- local-path-ok -->
 - Return `Server-Timing` headers on Remote responses. Requests at or above
   500 ms log a warning with the stage split.
 
@@ -729,7 +729,7 @@ All notable changes to Tycho will be documented in this file.
 ## 0.3.0 - 2026-05-31
 
 - Add first-run onboarding for pristine installs, including TUI and Remote UI
-  welcome sandbox creation under `~/.tycho/workspaces/welcome`.
+  welcome sandbox creation under `HOME/.tycho/workspaces/welcome`.
 - Simplify the Remote UI around `Now`, `Agents`, and `Settings`, with project
   and agent filtering consolidated into the Agents workspace.
 - Add Remote UI bulk archive for idle agents and keep zero-agent projects
@@ -785,11 +785,11 @@ All notable changes to Tycho will be documented in this file.
 - Add Remote UI warning for unauthenticated non-loopback binds.
 - Use `TYCHO_*` environment variables as the public runtime override contract.
 - Add `tycho serve` and `tycho schedule daemon` so packaged installs can use one `tycho` command.
-- Move default config, schedule prompts, runtime state, and logs under `~/.tycho`.
+- Move default config, schedule prompts, runtime state, and logs under `HOME/.tycho`.
 - Keep Homebrew installs from writing runtime process-shim files under the Cellar.
 
 Upgrade notes:
 
 - Homebrew users run `tycho`, `tycho serve`, and `tycho schedule daemon`.
 - Existing source-checkout users should move local config, schedules, and logs
-  into `~/.tycho` before relying on the new defaults.
+  into `HOME/.tycho` before relying on the new defaults.

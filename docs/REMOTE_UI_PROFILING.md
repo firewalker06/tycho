@@ -1,6 +1,6 @@
 # Remote UI profiling
 
-For selected actions and expected-state timing with screenshot reports, use the optional [Interaction Profiler](/Users/didik/Code/personal/tycho/docs/REMOTE_UI_INTERACTION_PROFILER.md).
+For selected actions and expected-state timing with screenshot reports, use the optional [Interaction Profiler](REMOTE_UI_INTERACTION_PROFILER.md).
 
 `bin/remote-ui-profile` is an opt-in browser performance suite for every Remote UI route. It is intentionally outside `bin/test` and normal CI because it installs Playwright in a temporary directory, launches local Chrome, and profiles a throwaway `tycho serve` fixture.
 
@@ -12,23 +12,23 @@ The fixture contains an 800-event conversation, a Markdown attachment, a changed
 bin/remote-ui-profile
 ```
 
-The command prints one row per route and writes `/tmp/tycho-remote-ui-profile.json`. It does not touch real Tycho config, agents, logs, schedules, or workspaces.
+The command prints one row per route and writes `tycho-remote-ui-profile.json` in the system temporary directory and prints its full path. It does not touch real Tycho config, agents, logs, schedules, or workspaces.
 
 Capture browser evidence when investigating a regression:
 
 ```sh
 bin/remote-ui-profile \
-  --output /tmp/tycho-remote-ui-profile.json \
-  --trace /tmp/tycho-remote-ui-trace.zip \
-  --screenshots /tmp/tycho-remote-ui-screenshots
+  --output path/to/temp/tycho-remote-ui-profile.json \
+  --trace path/to/temp/tycho-remote-ui-trace.zip \
+  --screenshots path/to/temp/tycho-remote-ui-screenshots
 ```
 
 To reproduce a problem with an existing archived agent without serving the real Tycho data root, pass its archive directory. The profiler copies the archive into its temporary fixture:
 
 ```sh
 bin/remote-ui-profile \
-  --archive ~/.tycho/logs/agents/archive/20260930-055309-example-agent \
-  --output /tmp/example-agent-profile.json
+  --archive HOME/.tycho/logs/agents/archive/20260930-055309-example-agent \
+  --output path/to/temp/example-agent-profile.json
 ```
 
 Set `CHROME_PATH` when Chrome, Chromium, or Edge is not installed in a standard macOS location. Set `TYCHO_PLAYWRIGHT_PATH` to reuse an existing Playwright package instead of installing a temporary copy.

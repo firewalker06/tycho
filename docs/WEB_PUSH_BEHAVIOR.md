@@ -8,7 +8,7 @@ This note explains how Tycho Remote UI uses browser push notifications, notifica
 2. When a running agent transitions to `awaiting-input`, `succeeded`, `partial`, `failed`, `stopped`, or `blocked`, Tycho marks that agent unread and records a push event, except for structured `no_action_needed` outcomes. Notification polling also recovers unsent events from durable unread terminal state, so another process polling the agent first cannot consume the notification transition.
 3. `RemoteService#dispatch_agent_push_events` uses `AgentNotification.build` for the compact payload and retained record. `deliver_agent_notification` records it and calls the notifier.
 4. `WebPushNotifier#send_payload!` sends that payload to every enabled browser subscription with VAPID authentication.
-5. `/service-worker.js` receives the push event, updates the installed-app badge when a `badge_count` is present, and calls `registration.showNotification(title, options)`.
+5. `/service-worker.js` receives the push event, updates the installed-app badge when a `badge_count` is present, and calls `registration.showNotification(title, options)`. <!-- local-path-ok -->
 6. When the Remote UI page is open, a compact activity poll reads the server-owned snapshot and calls `syncUnreadAlert()` to mirror the unread-agent count into the logo and app badge. Lifecycle mutations update that snapshot immediately, while the existing notification reconciliation pass catches external process completion; no additional server loop is created.
 7. Notification clicks navigate an existing Tycho Remote tab and wait for that navigation before focusing it, or open `/#notification/{id}` when no tab exists. For normal agent events, the notification route marks the retained event read, loads the active or archived agent and its conversation, and only then opens the Conversation. The retained notification record is cached separately from target loading: reopening the same notification retries a failed target load and opens the Conversation again after a successful prior visit. Queue failures stay on their diagnostic detail. Missing targets keep a bounded failure detail plus an Agents fallback.
 
@@ -86,13 +86,13 @@ coordinated reload of the serving process.
 
 The Remote server snapshots the Remote UI templates, JavaScript, service worker, icons, and their shared asset hash when the daemon starts. A source update therefore cannot make an old Ruby API serve a newer JavaScript client. Restart `tycho serve` after updating Tycho; the restarted daemon exposes its loaded version and asset hash in **Settings → Connection → Tycho build**, `/setup`, and the `X-Tycho-Asset-Version` response header.
 
-The service worker is served with `Service-Worker-Allowed: /` and cache revalidation, registers at `/service-worker.js`, and controls the root scope. `skipWaiting()` and `clients.claim()` activate an updated worker promptly after the daemon restarts.
+The service worker is served with `Service-Worker-Allowed: /` and cache revalidation, registers at `/service-worker.js`, and controls the root scope. `skipWaiting()` and `clients.claim()` activate an updated worker promptly after the daemon restarts. <!-- local-path-ok -->
 
 ## Subscription Lifecycle
 
 Push-service endpoints can expire while the browser still retains a local `PushSubscription`. Windows Edge subscriptions use Windows Notification Service endpoints, while Chrome commonly uses Firebase Cloud Messaging endpoints. Both can return HTTP 404 or 410 after invalidating an endpoint.
 
-Tycho treats those responses as permanent: it disables the saved endpoint instead of retrying it. Transient failures such as HTTP 429 or 5xx remain enabled and increment their failure count. Settings checks the current browser's endpoint through `POST /push/status`; it does not infer this browser's state from the global subscription count. If the server has retired the local endpoint, or its application-server key differs from Tycho's current VAPID public key, **Enable notifications** unsubscribes it and creates a fresh subscription.
+Tycho treats those responses as permanent: it disables the saved endpoint instead of retrying it. Transient failures such as HTTP 429 or 5xx remain enabled and increment their failure count. Settings checks the current browser's endpoint through `POST /push/status`; it does not infer this browser's state from the global subscription count. If the server has retired the local endpoint, or its application-server key differs from Tycho's current VAPID public key, **Enable notifications** unsubscribes it and creates a fresh subscription. <!-- local-path-ok -->
 
 Each send records the last attempt time, provider response code, provider acceptance or failure time, and error class on the saved subscription. A provider HTTP 2xx response proves that WNS, FCM, or APNs accepted the encrypted Web Push request; it does not prove that Windows displayed the notification. If an accepted push is not visible, continue at the service-worker, browser-permission, and Windows notification layers.
 
@@ -139,7 +139,7 @@ Important limitation: do not rely on Web Push as a fully silent background trans
 
 There are two different "badge" concepts:
 
-- `showNotification({ badge: "/pwa-icon-192.png" })` is the small notification-shelf icon used by some platforms.
+- `showNotification({ badge: "/pwa-icon-192.png" })` is the small notification-shelf icon used by some platforms. <!-- local-path-ok -->
 - `navigator.setAppBadge(count)` / `navigator.clearAppBadge()` update the installed PWA app icon badge when supported.
 
 Tycho uses both:
@@ -183,7 +183,7 @@ Example agent payload:
 3. If it says **Ready**, select **Enable notifications** and accept the Windows/browser permission prompt.
 4. Select **Send test**. Confirm a Tycho notification appears in Windows Notification Center while the PWA is minimized or closed.
 5. Complete a disposable agent run. Confirm one completion notification arrives and opens that agent when selected.
-6. If delivery fails, copy the **Tycho build** value, open DevTools in the PWA, select **Application → Service workers**, and confirm `/service-worker.js` is active with scope `/` for the Tycho origin. Then check Windows **Settings → System → Notifications** for both the browser and installed Tycho PWA, and inspect `~/.tycho/logs/hq.log` on the Tycho host for the endpoint host plus HTTP response code. Do not copy or share the full endpoint.
+6. If delivery fails, copy the **Tycho build** value, open DevTools in the PWA, select **Application → Service workers**, and confirm `/service-worker.js` is active with scope `/` for the Tycho origin. Then check Windows **Settings → System → Notifications** for both the browser and installed Tycho PWA, and inspect `HOME/.tycho/logs/hq.log` on the Tycho host for the endpoint host plus HTTP response code. Do not copy or share the full endpoint. <!-- local-path-ok -->
 
 ## Improvement Ideas
 

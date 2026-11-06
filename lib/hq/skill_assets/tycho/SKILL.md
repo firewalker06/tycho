@@ -286,7 +286,7 @@ Use `--server SERVER_KEY` to route supported project, schedule, update, doctor, 
 ## Project Keys
 
 ```bash
-grep "^- key:" ~/.tycho/config/hq.yml      # all projects (including agent-only)
+grep "^- key:" $HOME/.tycho/config/hq.yml      # all projects (including agent-only)
 ```
 
 ---
@@ -295,18 +295,18 @@ grep "^- key:" ~/.tycho/config/hq.yml      # all projects (including agent-only)
 
 | Artifact | Path |
 |----------|------|
-| App log | `~/.tycho/logs/hq.log` |
-| Action log | `~/.tycho/logs/projects/<project>/action.log` |
-| Agent raw stream | `~/.tycho/logs/agents/<key>.raw.log` |
-| Agent conversation | `~/.tycho/logs/agents/<key>.conversation.log` |
-| Agent system events | `~/.tycho/logs/agents/<key>.system.log` |
-| Managed agents store | `~/.tycho/logs/managed_agents.json` |
+| App log | `HOME/.tycho/logs/hq.log` |
+| Action log | `HOME/.tycho/logs/projects/PROJECT/action.log` |
+| Agent raw stream | `HOME/.tycho/logs/agents/<key>.raw.log` |
+| Agent conversation | `HOME/.tycho/logs/agents/<key>.conversation.log` |
+| Agent system events | `HOME/.tycho/logs/agents/<key>.system.log` |
+| Managed agents store | `HOME/.tycho/logs/managed_agents.json` |
 
 ---
 
 ## Workflow Summary
 
-1. **Find the project key** — `tycho project show <key>` or `grep "^- key:" ~/.tycho/config/hq.yml`
+1. **Find the project key** — `tycho project show <key>` or `grep "^- key:" $HOME/.tycho/config/hq.yml`
 2. **Create the agent** — `tycho agent create <key> "<task>" [--harness claude] [--run]`
 3. **Check status** — `tycho agent status <agent-key>` or `tycho agent list <project-key>`
 4. **Read output** — `tycho agent logs <agent-key> --type conversation`

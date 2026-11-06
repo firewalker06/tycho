@@ -14,7 +14,7 @@ custom_harnesses:
     execution_command:
       - env
       - COMPANY_GATEWAY=work
-      - /Users/you/bin/company-codex
+      - HOME/bin/company-codex
       - --profile
       - work
 ```
@@ -50,7 +50,7 @@ The old Claude-compatible configuration remains valid without changes:
 custom_harnesses:
   - key: claude-wrapper
     adapter: claude
-    execution_command: /Users/you/bin/claude-wrapper
+    execution_command: HOME/bin/claude-wrapper
 ```
 
 ## Environment and security

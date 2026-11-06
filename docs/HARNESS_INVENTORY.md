@@ -204,9 +204,9 @@ The canonical schema is `schemas/agent_result.json` for managed agents.
 
 | Function | Codex | Claude | Cursor adaptation | OpenCode adaptation |
 | --- | --- | --- | --- | --- |
-| Discovery roots | `~/.codex/skills`, `~/.agents/skills`, workspace `.agents/skills` | `~/.claude/skills`, workspace `.claude/skills` | Cursor skill roots are unverified; likely `.cursor` conventions, but do not assume `SKILL.md` support without local proof | Official docs list `.opencode/skills`, `~/.config/opencode/skills`, `.claude/skills`, `~/.claude/skills`, `.agents/skills`, and `~/.agents/skills` |
+| Discovery roots | `HOME/.codex/skills`, `HOME/.agents/skills`, workspace `.agents/skills` | `HOME/.claude/skills`, workspace `.claude/skills` | Cursor skill roots are unverified; likely `.cursor` conventions, but do not assume `SKILL.md` support without local proof | Official docs list `.opencode/skills`, `HOME/.config/opencode/skills`, `.claude/skills`, `HOME/.claude/skills`, `.agents/skills`, and `HOME/.agents/skills` |
 | Trigger character | `$` | `/` | Cursor UI uses `/` commands, but Tycho skill trigger needs verification against Cursor-compatible skill mechanism | No manual trigger character; OpenCode exposes skills to agents through the native `skill` tool, so Tycho autocomplete should use a harness-specific insertion/prompt strategy |
-| Remote skills endpoint | Generic `GET /projects/:key/skills/:harness` | Same | Reuse after `SkillDiscovery.roots_for` and trigger rules support Cursor | Reuse after `SkillDiscovery.roots_for` adds OpenCode roots and permissions/duplicates are handled |
+| Remote skills endpoint | Generic `GET /projects/:key/skills/:harness` | Same | Reuse after `SkillDiscovery.roots_for` and trigger rules support Cursor | Reuse after `SkillDiscovery.roots_for` adds OpenCode roots and permissions/duplicates are handled | <!-- local-path-ok -->
 
 ## UI And Operator Surfaces
 
@@ -260,7 +260,7 @@ The canonical schema is `schemas/agent_result.json` for managed agents.
 
 ## OpenCode Capability Inventory
 
-Local versions inspected: `opencode 1.15.13` at `/opt/homebrew/bin/opencode` during initial research, `opencode 1.17.10` during parser fixture capture, and `opencode 1.18.4` for the sleep-circuit-breaker pre-execution probe.
+Local versions inspected: `opencode 1.15.13` during initial research, `opencode 1.17.10` during parser fixture capture, and `opencode 1.18.4` for the sleep-circuit-breaker pre-execution probe.
 
 Primary docs inspected: OpenCode CLI, config, agents, permissions, MCP servers, commands, and skills docs at `https://opencode.ai/docs/`.
 
@@ -268,7 +268,7 @@ Primary docs inspected: OpenCode CLI, config, agents, permissions, MCP servers, 
 
 | Capability | Local/official fact | Tycho implication |
 | --- | --- | --- |
-| Executable | `opencode --version` prints `1.15.13`; command is available at `/opt/homebrew/bin/opencode` | Add built-in harness `opencode`, resolver env `TYCHO_OPENCODE_BIN`, fallback paths, and version command `opencode --version` |
+| Executable | `opencode --version` prints `1.15.13`; command is available as `opencode` | Add built-in harness `opencode`, resolver env `TYCHO_OPENCODE_BIN`, fallback paths, and version command `opencode --version` |
 | Non-interactive run | `opencode run [message..]` sends a prompt from argv | Implement headless command around `opencode run`; consider prompt length limits because there is no documented prompt-file flag |
 | Raw output | `opencode run --format json` is documented locally as raw JSON events | Add `HQ::Parser::OpenCode`; first implementation needs real NDJSON fixtures before treating parser mapping as stable |
 | Tool start timing | A live 1.18.4 `bash` probe emitted one `tool_use` record only after completion, with `state.status: completed`; no pending/running record appeared | Keep the sleep circuit breaker disabled for OpenCode until a real pre-execution fixture proves an earlier stable signal |
@@ -296,7 +296,7 @@ Primary docs inspected: OpenCode CLI, config, agents, permissions, MCP servers, 
 | Agent permissions | Official docs describe permission actions `allow`, `ask`, and `deny`; local `agent list` prints merged rules | Tycho sandbox mapping should rely on OpenCode permission config plus `--auto`; do not assume Tycho can fully emulate Codex sandbox modes |
 | Plan-style operation | Official docs position `plan` as analysis/review without edits by default | Tycho can recommend `--agent plan` for review-only templates once adapter-specific template options exist |
 | MCP | Official docs support local and remote MCP servers configured under `mcp`; local CLI has `opencode mcp add/list/auth/logout/debug` | Tycho should not manage OpenCode MCP directly in v1; readiness can mention MCP availability and rely on OpenCode config |
-| Commands | Official docs support custom slash commands in global `~/.config/opencode/commands/` and project `.opencode/commands/` | This is parallel to Tycho skills, not a direct replacement. Skill autocomplete should not surface commands unless Tycho intentionally indexes them |
+| Commands | Official docs support custom slash commands in global `HOME/.config/opencode/commands/` and project `.opencode/commands/` | This is parallel to Tycho skills, not a direct replacement. Skill autocomplete should not surface commands unless Tycho intentionally indexes them |
 | Skills | Official docs list OpenCode-native, Claude, and Agents skill roots; local CLI has `opencode debug skill` | Add OpenCode roots to discovery, but make the UI/prompt behavior harness-specific because OpenCode uses a native skill tool instead of manual `$` or `/` insertion |
 
 ### OpenCode Parser And Structured Result Plan
