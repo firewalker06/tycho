@@ -18,11 +18,39 @@ module GemPackageTest
       unpacked = File.join(dir, "unpacked")
       FileUtils.mkdir_p(unpacked)
       Gem::Package.new(gem_path).extract_files(unpacked)
+      runner_path = File.join(unpacked, "lib", "hq", "domain", "agent_runner.rb")
+      raise "packaged gem is missing the standalone agent runner" unless File.file?(runner_path)
+      verify_packaged_runner_entrypoint!(unpacked, dir)
       verify_packaged_schemas!(unpacked)
       verify_packaged_fonts!(unpacked)
       verify_packaged_installer!(unpacked, File.join(dir, "home"))
     end
     puts "gem_package_test: ok"
+  end
+
+  def verify_packaged_runner_entrypoint!(unpacked, dir)
+    executable = File.join(unpacked, "bin", "tycho")
+    raise "packaged gem is missing the Tycho executable" unless File.executable?(executable)
+
+    status_path = File.join(dir, "runner.status")
+    missing_command = File.join(dir, "missing-agent-command")
+    env = {
+      "TYCHO_AGENT_KEY" => "packaged-runner-test",
+      "TYCHO_STATUS_PATH" => status_path,
+      "TYCHO_EXECUTABLE" => "/bin/true",
+      "BUNDLE_GEMFILE" => File.join(dir, "missing-Gemfile"),
+      "RUBYOPT" => nil,
+      "PATH" => nil
+    }
+    stdout, stderr, status = Open3.capture3(
+      env, RbConfig.ruby, "--disable-gems", executable, "agent-runner", "packaged-runner-test", "--",
+      missing_command
+    )
+    raise "packaged CLI runner did not return 127" unless status.exitstatus == 127
+    raise "packaged CLI runner did not record status 127" unless File.read(status_path) == "127"
+    unless "#{stdout}#{stderr}".include?("failed to execute #{missing_command.inspect}")
+      raise "packaged CLI runner omitted the missing-command warning"
+    end
   end
 
   def verify_packaged_schemas!(unpacked)

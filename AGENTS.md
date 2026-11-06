@@ -20,6 +20,7 @@ The **Interaction Profiler** is optional verification when adding or changing a 
 
 - `bundle install`: install Ruby gems declared for Ruby 4.0.9+.
 - `bin/tycho`: start the TUI locally.
+- `bin/tycho agent-runner <agent-key> -- <harness command...>`: internal entry point. It is hidden from normal help and dispatches before Bundler, HQ, or gems load. Managed agents call it with `ruby --disable-gems`; do not use it as a user command.
 - `bundle exec bin/tycho`: run through Bundler when debugging gem resolution issues.
 - `bin/tycho harness list [--harness KEY] [--model MODEL] [--discover] [--json]`: list shared built-in and configured custom model/reasoning catalogs; offline by default, with optional Settings-style local tool discovery. See `docs/HARNESS_INVENTORY.md` for source and default limits.
 - `bin/tycho --version`: print the Tycho version from the current checkout or installation.
