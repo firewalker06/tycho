@@ -5422,6 +5422,14 @@ details.queue-read-block:not([open]) > .queue-read-body {
   margin: .5rem 0 0;
 }
 
+.summary-delegated-actions .agent-row > .status-mark {
+  width: auto;
+  height: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
 .message.run_summary {
   border-color: color-mix(in srgb, var(--accent-alt) 60%, var(--border));
   background: color-mix(in srgb, var(--accent-alt) 12%, var(--panel));
