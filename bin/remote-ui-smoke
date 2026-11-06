@@ -10909,7 +10909,16 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       next
     end
     if ENV["TYCHO_REMOTE_UI_INQUIRY_RECEIPT_ONLY"] == "1"
-      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: ENV["TYCHO_REMOTE_UI_INQUIRY_DELAYED_ONLY"] == "1" ? "inquiry_delayed_answer_smoke" : ENV["TYCHO_REMOTE_UI_INQUIRY_DISPLAY_ONLY"] == "1" ? "inquiry_display_smoke" : "inquiry_receipt_smoke", fixture_env: env)
+      test_name = if ENV["TYCHO_REMOTE_UI_INQUIRY_BLOCKER_CASE"]
+                    "inquiry_answer_blockers_smoke"
+                  elsif ENV["TYCHO_REMOTE_UI_INQUIRY_DELAYED_ONLY"] == "1"
+                    "inquiry_delayed_answer_smoke"
+                  elsif ENV["TYCHO_REMOTE_UI_INQUIRY_DISPLAY_ONLY"] == "1"
+                    "inquiry_display_smoke"
+                  else
+                    "inquiry_receipt_smoke"
+                  end
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name:, fixture_env: env)
       next
     end
     if ENV["TYCHO_REMOTE_UI_PROMPT_RECEIPT_ONLY"] == "1"

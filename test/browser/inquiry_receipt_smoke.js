@@ -4,15 +4,20 @@ const path = require("node:path");
 module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForInquiryRuns}) => {
   assert.equal(new URL(baseUrl).hostname,"127.0.0.1");
   const baseline = process.env.TYCHO_REMOTE_UI_INQUIRY_BASELINE;
+  const selectedCase = process.env.TYCHO_REMOTE_UI_INQUIRY_RECEIPT_CASE;
   const evidence = [];
   let fixtureIndex = 0;
-  for (const width of (process.env.TYCHO_REMOTE_UI_INQUIRY_CORRECTION_CASE ? [] : baseline ? [1440] : [1440,390])) for (const theme of (baseline ? ["dark"] : ["dark","light"])) {
-    for (const scenario of (baseline ? ["lost"] : ["lost", "malformed", "empty", "wrong-server", "wrong-inquiry", "auth", "unbound-conflict", "rejection"])) {
+  const selectedWidth = process.env.TYCHO_REMOTE_UI_INQUIRY_RECEIPT_VIEWPORT === "mobile" ? 390 : 1440;
+  for (const width of (selectedCase ? [selectedWidth] : process.env.TYCHO_REMOTE_UI_INQUIRY_CORRECTION_CASE ? [] : baseline ? [1440] : [1440,390])) for (const theme of (selectedCase || baseline ? ["dark"] : ["dark","light"])) {
+    for (const scenario of (selectedCase ? [selectedCase] : baseline ? ["lost"] : ["lost", "malformed", "empty", "wrong-server", "wrong-inquiry", "auth", "unbound-conflict", "rejection"])) {
       console.log(`Inquiry recovery: ${width} ${theme} ${scenario}`);
       const context = await browser.newContext({viewport:{width,height:900},isMobile:width<500,hasTouch:width<500});
       const page = await context.newPage();
       page.setDefaultTimeout(10000);
       const errors = [], payloads = [], receipts = [];
+      let releaseRetryResponse, markRetryDispatched;
+      const retryResponse = new Promise(resolve => { releaseRetryResponse = resolve; });
+      const retryDispatched = new Promise(resolve => { markRetryDispatched = resolve; });
       page.on("pageerror",e=>errors.push(e.message));
       try {
         if (baseline) await page.route(/\/ui.js(?:\?|$)/, route => route.fulfill({status:200, contentType:"application/javascript", body:fs.readFileSync(baseline,"utf8")}));
@@ -26,6 +31,9 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForIn
           const payload = route.request().postDataJSON();
           payloads.push(JSON.stringify(payload));
           if (!baseline) assert.equal(payload.response_mode,"answer_receipt");
+          if(payloads.length===1 && scenario.startsWith("failed-")) {
+            return route.fulfill({status:503,contentType:"application/json",body:JSON.stringify({error:"Synthetic failure before acceptance"})});
+          }
           if(payloads.length===1 && scenario==="auth") return route.fulfill({status:401,contentType:"application/json",body:JSON.stringify({error:"Synthetic authentication needed"})});
           if(payloads.length===1 && scenario==="unbound-conflict") return route.fulfill({status:409,contentType:"application/json",body:JSON.stringify({error:"Synthetic unbound conflict"})});
           if(payloads.length===1 && scenario==="rejection") {
@@ -35,6 +43,10 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForIn
           const response=await route.fetch();
           assert.equal(response.status(),200);
           const data=await response.json();
+          if(payloads.length===2 && scenario.startsWith("failed-")) {
+            markRetryDispatched();
+            await retryResponse;
+          }
           receipts.push(data.answer_receipt || data.answer_rejection);
           if(payloads.length===1) {
             if(scenario==="lost") return route.abort("connectionreset");
@@ -47,6 +59,10 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForIn
         await page.goto(`${baseUrl}/ui#agent/${agent.key}`,{waitUntil:"networkidle"});
         await page.waitForSelector("#inquiry-form",{state:"attached"});
         if (!await page.locator("#inquiry-form").isVisible()) await page.locator("details.mobile-inquiry > summary").click();
+        if (captureDir && scenario === "failed-edit-retry") {
+          fs.mkdirSync(captureDir,{recursive:true});
+          await page.screenshot({path:path.join(captureDir,`inquiry-required-${width}.png`),fullPage:true});
+        }
         await page.locator('#inquiry-form input[type="text"]').fill("Synthetic answer retained");
         await page.locator('#inquiry-form [name="feedback"]').fill("Synthetic feedback retained");
         // Use the actual attachment picker. File bytes must survive exact retry and reload.
@@ -71,17 +87,110 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForIn
           await page.waitForFunction(()=>inquiryAnswerStore().entries.size===0);
           assert.notEqual(JSON.parse(payloads[0]).client_request_id,JSON.parse(payloads[1]).client_request_id);
         } else {
-          await page.evaluate(()=>navigate({type:"tab",tab:"agents"}));
-          await page.goto(`${baseUrl}/ui#agent/${agent.key}`,{waitUntil:"networkidle"});
-          await page.waitForSelector("[data-retry-inquiry-answer]");
+          if (scenario.startsWith("failed-")) {
+            await page.waitForSelector('#inquiry-form [name="choice"]');
+            await page.reload({waitUntil:"networkidle"});
+          } else {
+            await page.evaluate(()=>navigate({type:"tab",tab:"agents"}));
+            await page.goto(`${baseUrl}/ui#agent/${agent.key}`,{waitUntil:"networkidle"});
+          }
+          await page.waitForSelector('[data-retry-inquiry-answer]', {state:"attached"});
+          if (!await page.locator('#inquiry-form [data-retry-inquiry-answer]').isVisible() &&
+              await page.locator("details.mobile-inquiry > summary").count()) {
+            await page.locator("details.mobile-inquiry > summary").click();
+          }
           assert.equal(payloads.length,1,"reload/navigation does not write automatically");
-          await page.locator("[data-inquiry-answer-recovery] summary").click();
-          const text = await page.locator("[data-inquiry-answer-recovery]").innerText();
-          assert.match(text,/Your answer/);
-          assert.match(text,/Synthetic answer retained/);
-          assert(!text.includes("user_feedback"),"saved preview uses field labels instead of serialized payload keys");
-          assert.match(text,/Synthetic feedback retained/);
-          assert.match(text,/synthetic.txt/);
+          if (scenario.startsWith("failed-")) {
+            const recovered = await page.evaluate(key=>({
+              entries: [...inquiryAnswerStore().entries.values()].map(entry=>({id:entry.id,status:entry.status})),
+              pending: (state.pendingConversationMessages[key] || []).map(block=>({id:block.id,intent:block.metadata?.inquiry_intent_id})),
+            }),agent.key);
+            assert.equal(recovered.entries.length,1,"failed answer remains saved after reload");
+            assert.deepEqual(recovered.pending.map(block=>block.intent),[JSON.parse(payloads[0]).client_request_id],"saved entry restores its original inquiry intent block");
+            assert.equal(await page.locator(".message.user.inquiry-response").count(),1,"failed answer is restored to the conversation after reload");
+            assert.match(await page.locator(".message.user.inquiry-response").innerText(),/Synthetic answer retained/);
+            assert.equal(await page.locator("[data-inquiry-answer-recovery]").innerText(),"Failed to submit answer, retry or remove");
+            assert.equal(await page.locator(".message-send-status").count(),0,"failed answer block has no extra status message");
+            assert.equal(await page.locator(".message.user.inquiry-response").getAttribute("aria-label"),"Failed answer");
+            assert.equal(await page.locator("[data-edit-inquiry-answer]").count(),0,"failure uses normal inquiry controls, not a custom recovery editor");
+            assert.equal(await page.locator('#inquiry-form [name="choice"]').count(),1);
+            if (scenario === "failed-edit-retry" || scenario === "failed-reload-edit") {
+              const editor = page.locator('#inquiry-form [name="choice"]');
+              assert.equal(await editor.inputValue(), "Synthetic answer retained");
+              assert.equal(await page.locator(`label[for="${await editor.getAttribute("id")}"]`).innerText().then(text=>text.includes("Your answer")),true,"the normal form keeps its accessible field label");
+              await editor.fill("Edited synthetic answer");
+              if (scenario === "failed-reload-edit") {
+                await page.reload({waitUntil:"networkidle"});
+                await page.waitForSelector('#inquiry-form [name="choice"]');
+                assert.equal(await page.locator('#inquiry-form [name="choice"]').inputValue(), "Edited synthetic answer");
+                assert.equal(await page.locator("[data-inquiry-answer-recovery]").innerText(),"Failed to submit answer, retry or remove");
+              }
+            }
+            if (captureDir && scenario === "failed-edit-retry") {
+              const formCapture = page.locator("#inquiry-form");
+              if (await formCapture.locator('input[name="choice"]').count()) {
+                await formCapture.locator('input[name="choice"]').fill("Synthetic answer retained");
+                await formCapture.locator('[name="feedback"]').fill("Synthetic feedback retained");
+              }
+              await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+              await page.waitForTimeout(100);
+              fs.mkdirSync(captureDir,{recursive:true});
+              await page.screenshot({path:path.join(captureDir,`inquiry-failure-${width}.png`),fullPage:true});
+            }
+            if (scenario === "failed-cancel") {
+              await page.locator("[data-cancel-inquiry-answer]").click();
+              await page.waitForSelector("[data-inquiry-answer-recovery]", {state:"detached"});
+              await page.waitForSelector("#inquiry-form");
+              assert.equal(await page.locator('#inquiry-form input[type="text"]').inputValue(), "");
+              assert.equal(await page.locator(".message.user.inquiry-response").count(), 0);
+              assert.equal(await page.evaluate(()=>inquiryAnswerStore().entries.size), 0);
+              assert.equal(payloads.length, 1, "cancel does not retry or create another answer");
+              evidence.push({width,theme,scenario,writes:payloads.length,cancelled:true});
+              continue;
+            }
+            if (scenario === "failed-edit-retry" || scenario === "failed-reload-edit") {
+              const editor = page.locator('#inquiry-form [name="choice"]');
+              if (await editor.count()) await editor.fill("Edited synthetic answer");
+            }
+            const retryClick = page.locator('#inquiry-form [data-retry-inquiry-answer]').click();
+            if (scenario === "failed-edit-retry" || scenario === "failed-reload-edit") {
+              const confirmation = page.locator("#confirmation-dialog");
+              await confirmation.waitFor({state:"visible"});
+              await confirmation.locator("[data-confirmation-accept]").click();
+            }
+            await retryDispatched;
+            const response = await context.request.get(`${baseUrl}/agents/${agent.key}/conversation?limit=100`);
+            assert.equal(response.status(),200);
+            const conversation = await response.json();
+            assert(conversation.conversation.some(block=>block.metadata?.inquiry_intent_id===JSON.parse(payloads[0]).client_request_id),"retry stores the original answer on the server");
+            await page.evaluate(({key,conversation})=>{
+              receiveConversationSnapshot(key,conversation.conversation,conversation.conversation_revision,{initial:true,digest:conversation.conversation_digest,
+                totalBlockCount:conversation.conversation_block_count,hasOlder:conversation.conversation_has_older===true});
+              render();
+            },{key:agent.key,conversation});
+            assert.equal(await page.locator(".message.user.inquiry-response").count(),1,"server copy replaces the restored answer block once");
+            const visibleAnswer = "Synthetic answer retained";
+            assert.equal((await page.locator(".message-list").innerText()).split(visibleAnswer).length-1,1,"answer text appears once when the server copy arrives");
+            releaseRetryResponse();
+            await retryClick;
+            await page.waitForFunction(()=>inquiryAnswerStore().entries.size===0);
+            assert.equal(await page.locator(".message.user.inquiry-response").count(),1,"successful retry leaves one conversation answer");
+            assert.equal(payloads.length,2);
+            assert.equal(JSON.parse(payloads[0]).client_request_id,JSON.parse(payloads[1]).client_request_id,"edited retry keeps the original request ID");
+            if (scenario === "failed-edit-retry" || scenario === "failed-reload-edit") {
+              assert.equal(payloads[0],payloads[1],"an edited correction does not change the immutable retry payload");
+              assert.equal(await page.locator(".message.user.inquiry-response").innerText().then(text=>text.includes("Edited synthetic answer")),false,"only the server-confirmed original appears in the answer block");
+            } else assert.equal(payloads[0],payloads[1],"retry after reload uses the exact saved request");
+            evidence.push({width,theme,scenario,writes:payloads.length,exactRetry:true,outcome:receipts.at(-1)?.accepted});
+            continue;
+          }
+          const formText = await page.locator("#inquiry-form").innerText();
+          assert.match(formText,/Your answer/);
+          assert((await page.locator('#inquiry-form [name="choice"]').inputValue()).includes("Synthetic answer retained"));
+          assert(!formText.includes("user_feedback"),"normal form uses field labels instead of serialized payload keys");
+          assert.equal(await page.locator('#inquiry-form [name="feedback"]').inputValue(),"Synthetic feedback retained");
+          assert.match(formText,/Leave feedback/);
+          assert.equal(await page.locator("#inquiry-form [data-remove-prompt-attachment]").count(),1);
           assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),"no horizontal overflow");
           if(scenario==="lost" && captureDir) {
             fs.mkdirSync(captureDir,{recursive:true});
@@ -100,7 +209,7 @@ module.exports = async ({browser, baseUrl, captureDir, advanceInquiry, waitForIn
     }
   }
   if(captureDir) fs.writeFileSync(path.join(captureDir,"inquiry-browser.json"),JSON.stringify(evidence,null,2));
-  if (!baseline) await require("./inquiry_recovery_corrections_smoke")({browser, baseUrl, captureDir, advanceInquiry});
+  if (!baseline && !selectedCase) await require("./inquiry_recovery_corrections_smoke")({browser, baseUrl, captureDir, advanceInquiry});
   if (waitForInquiryRuns) console.log(waitForInquiryRuns());
   console.log("inquiry_receipt_smoke: ok");
 };

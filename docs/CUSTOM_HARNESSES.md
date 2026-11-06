@@ -34,12 +34,12 @@ compatible with the selected adapter's native CLI and event protocol:
 | `codex` | `exec` / `exec resume`, JSON output, schema output | Codex JSON events and thread IDs |
 | `claude` | `--print --output-format stream-json --verbose` | Claude stream-JSON events and session IDs |
 | `opencode` | `run --format json` | OpenCode JSON events and session IDs |
-| `pi` | `--mode json` | Pi JSON events and session IDs |
+| `pi` | `--mode rpc`, prompt on stdin | Pi JSONL RPC, session state, and `agent_settled` |
 
 Tycho adds each family’s model, reasoning, sandbox or permission, workspace,
-structured-output, and resume arguments after `execution_command`. It passes
-the prompt as that command’s final argument rather than through standard
-input. A profile must therefore accept the native arguments in the same order
+structured-output, and resume arguments after `execution_command`. Codex, Claude, agy, and Pi receive prompts through stdin; OpenCode receives
+the prompt as the final argument. Pi uses the RPC contract described in
+[Pi Coding Agent](PI_CODING_AGENT.md). A profile must accept the native arguments in the same order
 and emit the native event format. If a provider needs different flags or a
 different wire format, implement that translation inside its wrapper rather
 than adding a Tycho-specific adapter template.
