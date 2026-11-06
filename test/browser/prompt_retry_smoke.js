@@ -66,6 +66,7 @@ module.exports = async ({browser, baseUrl, captureDir}) => {
       await page.waitForSelector("#composer");
       if(baseline)assert(baselineServed,"pinned baseline bundle was served");
       await page.evaluate(()=>clearTimeout(state.timer));
+      if(delivery==="queued") await page.waitForFunction(key=>findAgent(key)?.running===true,key);
       const send=async text=>{
         await page.evaluate(()=>{
           if(globalThis.__retryEvents) return;
@@ -87,7 +88,14 @@ module.exports = async ({browser, baseUrl, captureDir}) => {
       await page.waitForFunction(() => window.__retryPostStarted === true);
       const firstId=captured.client_request_id;
       assert.equal(await page.locator("[data-composer-submission-error]").count(),0,"a normal send has no composer recovery panel");
-      await page.locator(".message-send-status").filter({hasText:"Sending"}).waitFor();
+      if(delivery==="queued"){
+        const summary=page.locator("details[data-prompt-queue] > summary");
+        await summary.filter({hasText:/queueing/i}).waitFor();
+        await summary.click();
+        await page.locator(".prompt-queue-entry-meta").filter({hasText:/Queueing/}).last().waitFor();
+      }else{
+        await page.locator(".message-send-status").filter({hasText:"Sending"}).waitFor();
+      }
       await acceptanceFor(firstId).promise;
       const accepted=await (await context.request.get(`${baseUrl}/agents/${raw}`)).json();
       assert.equal(accepted.agent.prompt_acceptances.filter(p=>p.receipt.client_request_id===firstId).length,1,"one durable acceptance");
@@ -145,6 +153,13 @@ module.exports = async ({browser, baseUrl, captureDir}) => {
       mode="malformed";allowProof=false;
       await send("Same synthetic message");
       await page.locator("[data-retry-prompt]").waitFor();
+      if(delivery==="queued"){
+        const queue=page.locator("details[data-prompt-queue]");
+        const summary=queue.locator(":scope > summary");
+        await summary.filter({hasText:/not confirmed/i}).waitFor();
+        if(!await queue.evaluate(element=>element.open)) await summary.click();
+        await page.locator(".prompt-queue-entry-meta").filter({hasText:/Not confirmed/i}).last().waitFor();
+      }
       const secondId=captured.client_request_id;
       assert.notEqual(firstId,secondId);
       assert.equal(await page.locator("[data-composer-submission-error][data-state=failed]").count(),1,"an uncertain send has one recovery notice");
