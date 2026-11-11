@@ -25,6 +25,7 @@ module SchedulerTest
       assert_schedule_store_tracks_daemon_state
       assert_schedule_daemon_banner_labels_metadata_by_state
       assert_scheduler_run_reuses_schedule_agent_session
+      assert_startup_preserves_schedule_and_stopped_target_intent
       assert_scheduler_adopts_existing_session_and_expires_loop
       assert_archived_schedule_session_promotes_prompt_to_schedule
       assert_scheduler_stops_interactive_scheduled_agent_until_resume
@@ -53,6 +54,90 @@ module SchedulerTest
     assert_partial_scheduled_agent_continues_and_keeps_status
     assert_failed_scheduled_agent_stops_and_notifies
     puts "scheduler_test: ok"
+  end
+
+  def assert_startup_preserves_schedule_and_stopped_target_intent
+    ["paused", "stopped", "legacy-paused", "legacy-stopped", "stopped-target", "stopped-after-resume", "idle", "succeeded", "partial"].each do |scenario|
+      with_temp_runtime do |dir|
+        now = Time.new(2026, 11, 11, 9, 0, 0, "+00:00")
+        registry, schedule_path = write_registry_and_schedule(dir, <<~YAML)
+          schedules:
+            - key: startup
+              cron: "* * * * *"
+              target:
+                type: agent
+                project_key: web
+                agent_key: startup-target
+                message: "Run scheduled work."
+        YAML
+        project = HQ::Project.new(registry.projects.fetch(0))
+        stopped_target = scenario.start_with?("stopped-")
+        agent = HQ::ManagedAgent.new(
+          key: "startup-target", name: "Startup target", project_key: "web", template_key: "scheduled",
+          workspace: project.path, prompt: "Scheduled context", agent: "codex",
+          started_at: scenario == "idle" ? nil : now - 120,
+          finished_at: scenario == "idle" ? nil : now - 60,
+          last_exit_code: scenario == "idle" ? nil : stopped_target ? 143 : 0,
+          structured_result: scenario == "partial" ? { "status" => "partial" } : nil
+        )
+        agent.associate_schedule!("startup")
+        HQ::AgentStore.new([project]).save([agent])
+        state_hash = {
+          "key" => "startup", "status" => "scheduled", "enabled" => true,
+          "last_status" => "succeeded", "last_target_key" => agent.key,
+          "next_due_at" => (now - 3600).iso8601
+        }
+        if %w[paused stopped].include?(scenario)
+          state_hash.merge!("status" => scenario, "enabled" => false)
+        elsif scenario.start_with?("legacy-")
+          state_hash.delete("status")
+          state_hash["enabled"] = false
+          state_hash["last_status"] = "stopped" if scenario == "legacy-stopped"
+        end
+        state_hash["resumed_at"] = (now - 90).iso8601 if scenario == "stopped-after-resume"
+        File.write(HQ::SCHEDULES_STATE_FILE, JSON.generate([state_hash]))
+        if stopped_target
+          env = {
+            "TYCHO_CONFIG_PATH" => registry.path, "TYCHO_SCHEDULES_PATH" => schedule_path,
+            "TYCHO_SCHEDULES_STATE_PATH" => HQ::SCHEDULES_STATE_FILE,
+            "TYCHO_SCHEDULER_DAEMON_PATH" => File.join(dir, "daemon.json"),
+            "TYCHO_LOGS_ROOT" => File.join(dir, "logs")
+          }
+          # Use the same persisted target for the actual daemon entry point.
+          FileUtils.mkdir_p(File.join(dir, "logs"))
+          FileUtils.cp(HQ::AGENTS_FILE, File.join(dir, "logs", "managed_agents.json"))
+          FileUtils.cp(HQ::QueueStore.path, File.join(dir, "logs", "queues.json"))
+          out, err, status = Open3.capture3(env, RbConfig.ruby, "bin/tycho", "schedule", "daemon",
+                                          "--once", "--dry-run", chdir: ROOT)
+          assert(status.success?, "expected isolated startup to succeed: #{err}")
+          assert(out.include?("started=0 skipped=1"), "expected daemon to hold stopped target: #{out}")
+        end
+        held = !%w[idle succeeded partial].include?(scenario)
+
+        # A new scheduler instance is the daemon's startup path and every later tick.
+        2.times do |tick|
+          result = build_scheduler(registry, schedule_path).tick(now: now + tick)
+          assert(result[:started] == (held || tick.positive? ? 0 : 1),
+                 "expected startup to preserve #{scenario} intent, got #{result.inspect}")
+        end
+        persisted = HQ::ScheduleStore.new.load.fetch("startup")
+        if held
+          expected_status = scenario.include?("paused") ? "paused" : "stopped"
+          assert(persisted.status == expected_status, "expected #{scenario} status to survive restart")
+          assert(read_agents.fetch(0).run_count.zero?, "expected held target never to start")
+        end
+        next unless stopped_target
+
+        scheduler = build_scheduler(registry, schedule_path)
+        scheduler.resume("startup", now: now + 10)
+        assert(scheduler.tick(now: now + 11)[:started].zero?, "expected resume to wait for next due time")
+        assert(build_scheduler(registry, schedule_path).tick(now: now + 60)[:started] == 1,
+               "expected explicit resume to permit the stopped target at its next due time")
+        scheduler.pause("startup", now: now + 61)
+        assert(scheduler.run_now("startup", now: now + 62)[:status] == :started,
+               "expected explicit manual Run to remain available on a held schedule")
+      end
+    end
   end
 
   def assert_scheduler_adopts_existing_session_and_expires_loop

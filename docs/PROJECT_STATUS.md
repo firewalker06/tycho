@@ -12,6 +12,14 @@ type: project
 
 2026-11-11
 
+## Scheduler startup intent
+
+Daemon ticks preserve paused and stopped schedule state. A stopped target now
+holds due automatic work even when the saved schedule still reports success.
+An explicit schedule resume acknowledges the stop and waits for the next due
+time; manual Run remains available. Idle, successful, and partial targets keep
+normal scheduled execution. Restart regression tests use isolated runtime roots.
+
 ## Remote UI Schedules navigation
 
 Schedules now has a dedicated `#schedules` page with the existing status,

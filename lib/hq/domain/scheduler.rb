@@ -395,6 +395,16 @@ module HQ
           next unless runnable?(schedule, state)
           next unless state.next_due_at && state.next_due_at <= now
 
+          target = last_agent(schedule, state, agents)
+          if unacknowledged_stopped_target?(target, state)
+            state.last_status = "stopped"
+            state.last_error = "agent_stopped"
+            state.mark_stopped!(now:, reason: "agent_stopped")
+            publish("schedule.stopped", schedule, state, agent_key: target.key, reason: "agent_stopped")
+            totals[:skipped] += 1
+            next
+          end
+
           result = dispatch_schedule(schedule, state, agents, now:, dry_run:)
           totals[result.fetch(:status)] += 1 if totals.key?(result.fetch(:status))
         end
@@ -699,6 +709,15 @@ module HQ
       expire_schedule!(schedule, state, now:)
       store.save(states)
       raise ScheduleRegistry::Error, "Schedule #{schedule.key.inspect} ended at #{schedule.ends_at.iso8601}"
+    end
+
+    def unacknowledged_stopped_target?(agent, state)
+      return false unless agent&.status == "stopped"
+
+      stopped_at = agent.finished_at || agent.started_at
+      return false if state.resumed_at && (!stopped_at || state.resumed_at >= stopped_at)
+
+      true
     end
 
     def interactive_scheduled_session?(schedule, state, agent)

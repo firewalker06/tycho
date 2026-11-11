@@ -154,7 +154,8 @@ Schedule status:
 - `scheduled`: the schedule is eligible for daemon ticks. Current-run and last-run details are shown separately.
 - `paused`: the schedule is intentionally held by user action or config and will not run until resumed.
 - `stopped`: Tycho stopped the schedule because continuing is unsafe or impossible, such as a failed run, blocked/input-required result, start error, or interactive protection.
-- Paused and stopped schedules prevent subsequent scheduled jobs.
+- Paused and stopped schedules prevent subsequent scheduled jobs, including the first daemon tick after a restart.
+- A due schedule also holds a stopped target session when its schedule record still reports an earlier successful run. Tycho records `agent_stopped` and requires an explicit schedule resume or manual run. Resume acknowledges the latest stop and waits for the next due time; an earlier resume does not acknowledge a later stop. Idle, successful, and partial target sessions remain eligible for normal scheduled work.
 - Resuming a paused schedule marks it scheduled and recomputes the next due time.
 - Resuming a stopped schedule marks it scheduled, keeps the previous active scheduled session, records `resumed_at`, and waits until the next scheduled run.
 - Archiving a session for a `stopped` or `paused` schedule returns it to `scheduled` for future job execution.
