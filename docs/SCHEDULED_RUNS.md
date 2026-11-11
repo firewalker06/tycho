@@ -316,7 +316,7 @@ list. Use `tycho schedule list --include-archived` to inspect them. The status i
 There is no unarchive command; archive is distinct from a temporary pause.
 
 Both commands support `--json` and `--server SERVER_KEY`. The Remote API accepts
-`POST /schedules/SCHEDULE_KEY/archive` and
+`POST /schedules/SCHEDULE_KEY/archive` and <!-- local-path-ok -->
 `GET /schedules?include_archived=true`. <!-- local-path-ok -->
 
 This command does not archive the target agent. Archive that stopped agent
