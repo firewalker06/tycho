@@ -532,7 +532,7 @@ module HQ
       end
       return ok(agents: service.agents) if method == "GET" && parts == ["agents"]
       return created(agent: service.create_agent(body, actor:)) if method == "POST" && parts == ["agents"]
-      return ok(schedules: service.schedules, daemon: service.schedule_daemon) if method == "GET" && parts == ["schedules"]
+      return ok(schedules: service.schedules(include_archived: request&.query_params&.fetch("include_archived", nil) == "true"), daemon: service.schedule_daemon) if method == "GET" && parts == ["schedules"]
       return created(schedule: service.create_schedule(body)) if method == "POST" && parts == ["schedules"]
       return ok(service.archive_schedule_sessions) if method == "POST" && parts == ["schedules", "archive-sessions"]
       return ok(service.reload_schedules) if method == "POST" && parts == ["schedules", "reload"]
@@ -693,6 +693,7 @@ module HQ
         return ok(service.run_schedule(key)) if method == "POST" && tail == ["run"]
         return ok(service.archive_schedule_session(key)) if method == "POST" && tail == ["archive-session"]
         return ok(service.refresh_schedule_session(key)) if method == "POST" && tail == ["refresh-session"]
+        return ok(schedule: service.archive_schedule(key)) if method == "POST" && tail == ["archive"]
         return ok(schedule: service.pause_schedule(key)) if method == "POST" && tail == ["pause"]
         return ok(service.resume_schedule(key)) if method == "POST" && tail == ["resume"]
         return ok(service.resume_and_run_schedule(key)) if method == "POST" && tail == ["resume-and-run"]
@@ -2469,8 +2470,8 @@ module HQ
       { refreshed: refreshed, failed: failed }
     end
 
-    def schedules
-      scheduler.list(agents: cached_all_agents)
+    def schedules(include_archived: false)
+      scheduler.list(agents: cached_all_agents, include_archived:)
     rescue ScheduleRegistry::Error => e
       raise Error.new(e.message, status: 400)
     end
@@ -2628,6 +2629,12 @@ module HQ
       scheduler.archive_sessions
     rescue ScheduleRegistry::Error => e
       raise Error.new(e.message, status: 400)
+    end
+
+    def archive_schedule(key)
+      scheduler.archive(key)
+    rescue ScheduleRegistry::Error => e
+      raise Error.new(e.message, status: 409)
     end
 
     def pause_schedule(key)

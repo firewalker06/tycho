@@ -658,3 +658,10 @@ and queued-run push notification behavior. Schedule-management work remains on
 ## Known Issues
 
 Documented in [GOTCHAS.md](./GOTCHAS.md)
+
+### Schedule archive
+
+- Replaced schedules can be archived with configuration and run history intact.
+  Archive refuses running targets, hides schedules from default lists, and blocks
+  automatic and manual schedule execution. See [Scheduled runs](SCHEDULED_RUNS.md#archive-replaced-schedules).
+- Production schedule retirement remains a separate operator action after merge.

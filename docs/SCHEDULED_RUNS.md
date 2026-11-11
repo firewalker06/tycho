@@ -303,3 +303,22 @@ Hooks:
 
 - Emit `schedule.due`, `schedule.started`, `schedule.skipped`, `schedule.failed`, `schedule.stopped`, `schedule.completed`, `schedule.recovered`, `schedule.agent_archived`, and `schedule.resumed`.
 - Include `schedule_key`, `target_kind`, `target_key`, `project_key`, and timestamps.
+
+## Archive replaced schedules
+
+Use `tycho schedule archive SCHEDULE_KEY` to retain a replaced schedule without
+running it again. Archive keeps its YAML configuration, message file, target agent,
+and run history. It refuses a running target. Stop that target first.
+
+Archived schedules are hidden from normal lists, including the Remote UI schedule
+list. Use `tycho schedule list --include-archived` to inspect them. The status is
+`archived`. Run, resume, resume-and-run, and session refresh refuse archived schedules.
+There is no unarchive command; archive is distinct from a temporary pause.
+
+Both commands support `--json` and `--server SERVER_KEY`. The Remote API accepts
+`POST /schedules/SCHEDULE_KEY/archive` and
+`GET /schedules?include_archived=true`. <!-- local-path-ok -->
+
+This command does not archive the target agent. Archive that stopped agent
+separately if needed. Do not archive production schedules as part of deployment;
+make each operational change separately after merge.

@@ -26,6 +26,7 @@ The **Interaction Profiler** is optional verification when adding or changing a 
 - `bin/tycho --version`: print the Tycho version from the current checkout or installation.
 - `bundle exec bin/tycho serve [--host 127.0.0.1] [--port 7373]`: start the local Remote Sessions JSON API and web UI for managed-agent control.
 - `bundle exec bin/tycho project create <key> [options]` and `project list|show|update|archive`: manage project configuration from the CLI.
+- `bin/tycho schedule archive SCHEDULE_KEY [--server KEY] [--json]`: archive a stopped schedule while retaining configuration and history. Use `bin/tycho schedule list --include-archived` to inspect archived schedules.
 - `bundle exec bin/tycho schedule [list|daemon --once|daemon --dry-run]`: list schedules, run the scheduled-agent daemon, or run a single scheduler tick.
 - `bundle exec bin/tycho metrics query [filters] [--json]`: query normalized run/native-session usage metrics. `metrics backfill` is deprecated and no longer mutates data.
 - `bundle exec bin/tycho queue-work complete <agent-key> <batch-id> --dispositions-json JSON`: record durable source-appropriate outcomes for an open queue-work batch.

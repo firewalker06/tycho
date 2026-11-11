@@ -464,6 +464,18 @@ module CLICommandTest
         assert(paused_schedule.fetch(:status).success? && paused_schedule.fetch(:stdout) == "Paused daily.\n",
                "expected remote schedule pause human output")
 
+        archived_schedule = run_tycho(local_env, "schedule", "archive", "daily", "--server", "peer", "--json")
+        assert(archived_schedule.fetch(:status).success? &&
+               JSON.parse(archived_schedule.fetch(:stdout)).dig("schedule", "archived"), "expected remote archive JSON")
+        hidden = run_tycho(local_env, "schedule", "list", "--server", "peer", "--json")
+        assert(JSON.parse(hidden.fetch(:stdout)).fetch("schedules").empty?, "expected remote default hiding")
+        included = run_tycho(local_env, "schedule", "list", "--include-archived", "--server", "peer", "--json")
+        assert(included.fetch(:status).success?, "expected remote inclusion request: #{included.fetch(:stderr)}")
+        assert(JSON.parse(included.fetch(:stdout)).fetch("schedules").first.fetch("archived"), "expected remote inclusion")
+        refused = run_tycho(local_env, "schedule", "run", "daily", "--server", "peer", "--json")
+        assert(!refused.fetch(:status).success? && JSON.parse(refused.fetch(:stdout))["error"].include?("archived"),
+               "expected remote archived execution refusal")
+
         created = run_tycho(local_env, "agent", "create", "demo", "Remote CLI lifecycle test",
                             "--name", "Remote CLI test", "--server", "peer", "--json")
         assert(created.fetch(:status).success?, "expected remote agent create: #{created.fetch(:stderr)}")
