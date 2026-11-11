@@ -39,7 +39,7 @@ module ArchiveDelegationCallbacksTest
 
     archive_path = store.archive_agent!(agent.key)
     current, = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false)
-    manifest = JSON.parse(File.read(File.join(archive_path, "agent_manifest.json")))
+    manifest = HQ::QueueStore.new.hydrate(JSON.parse(File.read(File.join(archive_path, "agent_manifest.json"))))
     disposition = manifest.dig("queue_work", "batches", 0, "dispositions").values.first
     assert(current.none? { |item| item.key == agent.key } &&
              disposition["outcome"] == "declined_with_reason" &&
@@ -99,7 +99,7 @@ module ArchiveDelegationCallbacksTest
 
     archive_path = store.archive_agent!(agent.key)
     current, = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false)
-    manifest = JSON.parse(File.read(File.join(archive_path, "agent_manifest.json")))
+    manifest = HQ::QueueStore.new.hydrate(JSON.parse(File.read(File.join(archive_path, "agent_manifest.json"))))
     outcomes = manifest.dig("queue_work", "batches", 0, "dispositions").values.map { |item| item["outcome"] }.sort
     assert(current.none? { |item| item.key == agent.key } && outcomes == %w[declined_with_reason superseded_with_reason],
            "expected every mixed queue entry to remain in truthful archive history")

@@ -32,7 +32,7 @@ module CustomPromptFileLifecycleTest
         require "json"
         ready, gate = ARGV.shift(2)
         path = ARGV[ARGV.index("--tycho-prompt-file") + 1]
-        prompt = File.binread(path)
+        prompt = File.read(path, encoding: Encoding::UTF_8)
         if ARGV.include?("--close-lease")
           lease = File.stat(File.join(File.dirname(path), "lease"))
           (3..64).each do |fd|

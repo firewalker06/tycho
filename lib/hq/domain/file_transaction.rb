@@ -35,7 +35,9 @@ module HQ
     private
 
     def expanded_paths(paths)
-      Array(paths).compact.map { |path| File.expand_path(path) }.flat_map do |path|
+      paths = Array(paths).compact
+      paths += QueueStore.transaction_paths if defined?(QueueStore) && paths.include?(AGENTS_FILE)
+      paths.map { |path| File.expand_path(path) }.flat_map do |path|
         [path, FileStore.backup_path(path)]
       end.uniq
     end

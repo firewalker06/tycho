@@ -10,7 +10,17 @@ type: project
 
 ## Last Updated
 
-2026-11-06
+2026-11-11
+
+## Central queue storage
+
+Queue state now lives in `queues.json`, keyed by target agent. Active agent
+records and new archive manifests keep references and matching generations.
+A durable journal completes interrupted queue and agent writes before any new
+claim. Migration retains identifiers and checksums, while the existing server
+timer, scheduler daemon, and every dispatch gate remain in use. See
+[Central queue storage](QUEUE_STORE.md) for migration, deployment, and recovery
+boundaries. Development does not migrate operator data.
 
 ## Managed prompt transport
 
