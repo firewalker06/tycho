@@ -10366,3 +10366,34 @@ body:has(.inquiry-form-full-screen) {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+.sidebar-settings-link {
+  display: none;
+}
+
+.schedule-list .schedule-summary-row {
+  cursor: default;
+  padding-right: 10px;
+  background: transparent;
+  border-bottom: 1px solid var(--border);
+}
+
+@media (min-width: 1100px) {
+  .sidebar-settings-link {
+    position: sticky;
+    top: calc(var(--safe-area-top) + 180px);
+    display: block;
+    align-self: start;
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    margin-top: calc(var(--safe-area-top) + 180px);
+    padding: 8px 16px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  .sidebar-settings-link:hover,
+  .sidebar-settings-link[aria-current="page"] {
+    color: var(--text);
+  }
+}

@@ -32,7 +32,7 @@ module RemoteUIScheduleSaveTest
           findProject: () => ({ server_key: "local" }), resourceRawKey: () => "web",
           scheduleFormPayload: () => ({ key: "saved", project_key: "web" }), normalizeLocalSchedule: x => x,
           upsertSchedule: x => { applied++; assert.equal(x.name, "Normalized"); },
-          clearFormDraft: () => { clears++; draft = null; }, navigate: () => { c.location.hash = "#now"; },
+          clearFormDraft: () => { clears++; draft = null; }, navigate: route => { c.location.hash = `#${route.tab}`; },
         };
         vm.createContext(c);
         vm.runInContext(`let scheduleFormNavigationGeneration = 0; const scheduleStateVersions = new Map(); const scheduleMessageOrders = new Map();\n${model}\n${fn("mutate")}\n${fn("saveScheduleForm")}\n${fn("ensureScheduleMessage")}\nconst originalMutate = mutate; mutate = (...args) => { mutationResult = originalMutate(...args); };\napplyScheduleMessage("saved", {key: "saved", content: "Initial body"});`, c);
@@ -63,7 +63,7 @@ module RemoteUIScheduleSaveTest
           await f.finish(scenario === "invalid" ? {} : undefined);
           assert.equal(f.stats().refreshes, ["ok", "record", "deleted"].includes(scenario) ? 1 : 0);
           assert.equal(f.stats().clears, scenario === "ok" ? 1 : 0);
-          assert.equal(f.c.location.hash, scenario === "ok" ? "#now" : "#form");
+          assert.equal(f.c.location.hash, scenario === "ok" ? "#schedules" : "#form");
           cases++;
         }
         // Readers pending before or after dispatch lose to an eligible accepted

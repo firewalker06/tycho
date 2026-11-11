@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 module.exports = async ({ browser, baseUrl, captureDir }) => {
+  await require("./schedules_page_smoke")({ browser, baseUrl, captureDir });
   await require("./schedule_message_ordering_smoke")({ browser, baseUrl, captureDir });
   await require("./schedule_ordering_smoke")({ browser, baseUrl, captureDir });
   const results = [];
@@ -77,7 +78,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
         }), { message, key, expectedName, kind });
         assert.equal(pending.calls, 1, "one reconciliation before held shell read");
         assert.equal(pending.pending, 1, "pending lasts through deliberate reconciliation");
-        assert.equal(pending.hash, "#now");
+        assert.equal(pending.hash, "#schedules");
         if (message) assert.equal(pending.saved.content, `File body ${width} ${theme}\nSecond line.\n`);
         else {
           assert.equal(pending.saved.key, key);
@@ -94,7 +95,6 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
         assert.equal(await page.evaluate(() => scheduleSaveRefreshCalls.length), 1);
         results.push({ width, theme, kind, counts, forcedRefreshes: 1 });
         if (!message) {
-          await page.locator(".schedule-details").evaluate(details => { details.open = true; });
           assert((await page.locator("#view").innerText()).includes(expectedName));
           if (captureDir && kind === "edit") {
             fs.mkdirSync(captureDir, { recursive: true });
@@ -130,7 +130,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
         await settle();
         assert.equal(await page.locator(selector).inputValue(), `Draft ${fault}`);
         assert.equal(await page.locator(selector).isEnabled(), true);
-        assert.notEqual(new URL(page.url()).hash, "#now");
+        assert.notEqual(new URL(page.url()).hash, "#schedules");
         await page.reload({ waitUntil: "networkidle" });
         assert.equal(await page.locator(selector).inputValue(), `Draft ${fault}`);
         if (fault !== "validation") await page.unroute(endpoint, fail);
@@ -200,7 +200,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
         // A second submit event while pending must not write again.
         await page.locator(formSelector).evaluate(form => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
         assert.equal(writes, 1);
-        await open("#now");
+        await open("#schedules");
         await open(hash);
         await page.waitForFunction(() => state.pendingFormKeys.size === 1);
         // Inputs are still pending on the same route. Inject the user's newer
@@ -227,7 +227,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       const retiredKey = `retired-${width}-${theme}`;
       const created = await fetch(`${baseUrl}/schedules`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: retiredKey, cron: "0 9 * * *", project_key: "web", message: "Synthetic retirement" }) });
       assert.equal(created.status, 201);
-      await open("#now");
+      await open("#schedules");
       await page.evaluate(() => refresh({ force: true }));
       await open(`#schedule/${retiredKey}/edit`);
       await page.locator("#schedule-name").fill("Delayed retired schedule");
@@ -242,14 +242,14 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       await page.route(retiredEndpoint, holdRetired);
       await page.locator("#schedule-form button[type=submit]").click();
       await retiredSeen.promise;
-      await open("#now");
+      await open("#schedules");
       const removed = await fetch(retiredEndpoint, { method: "DELETE" });
       assert.equal(removed.status, 200);
       await page.evaluate(() => refresh({ force: true }));
       assert.equal(await page.evaluate(key => Boolean(findSchedule(key)), retiredKey), false);
       retiredHeld.release();
       await settle();
-      assert.equal(new URL(page.url()).hash, "#now");
+      assert.equal(new URL(page.url()).hash, "#schedules");
       assert.equal(await page.evaluate(key => Boolean(findSchedule(key)), retiredKey), false);
       await page.unroute(retiredEndpoint, holdRetired);
       results.push({ width, theme, retiredDelayedWrite: "schedule stays absent" });
@@ -263,7 +263,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
         await page.route(/\/setup(?:\/summary)?$/, failShell);
         await page.locator("#schedule-form button[type=submit]").click();
         await settle();
-        assert.equal(new URL(page.url()).hash, "#now");
+        assert.equal(new URL(page.url()).hash, "#schedules");
         assert.equal(await page.evaluate(key => findSchedule(key).name, key), `Saved before read ${status}`);
         if (status === 401) assert.equal(await page.locator("#auth-panel").isVisible(), true);
         await page.unroute(/\/setup(?:\/summary)?$/, failShell);

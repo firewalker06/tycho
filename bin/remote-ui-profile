@@ -330,6 +330,7 @@ Dir.mktmpdir("tycho-remote-ui-profile") do |dir|
     routes = [
       ["Now", "#now", "tab"],
       ["Agents", "#agents", "tab"],
+      ["Schedules", "#schedules", "tab"],
       ["Settings", "#settings", "tab"],
       ["Hidden settings", "#settings/hidden", "hiddenSettings"],
       ["Project detail", "#project/#{project_key}", "project"],

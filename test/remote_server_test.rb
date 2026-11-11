@@ -8086,11 +8086,12 @@ module RemoteServerTest
     assert(primary_nav.scan(/data-tab="/).length == 3 &&
            primary_nav.include?('data-tab="now"') &&
            primary_nav.include?('data-tab="agents"') &&
-           primary_nav.include?('data-tab="settings"') &&
-           primary_nav.include?('aria-label="Settings"'),
-           "expected primary navigation to contain accessible Now, Agents, and Settings controls")
-    assert(!response[:body].include?('id="desktop-settings"'),
-           "expected Settings to use the shared primary navigation without a duplicate desktop control")
+           primary_nav.include?('data-tab="schedules"') &&
+           !primary_nav.include?('data-tab="settings"'),
+           "expected primary navigation to contain Now, Agents, and Schedules controls")
+    assert(response[:body].include?('<a class="sidebar-settings-link" href="#settings">Settings</a>') &&
+           !primary_nav.include?("sidebar-settings-link"),
+           "expected a plain desktop Settings link outside primary navigation")
     assert(!response[:body].include?('data-tab="search"'), "expected root shell to remove Search navigation")
     assert(!response[:body].include?('data-tab="projects"'), "expected root shell to remove Projects navigation")
     assert(response[:body].include?("<svg class=\"ui-icon\""), "expected root shell controls to use SVG icons")
@@ -8556,11 +8557,11 @@ module RemoteServerTest
     assert(!css[:body].include?(".desktop-settings {") &&
            css[:body].include?("@media (max-width: 380px)") &&
            css[:body].include?(".bottom-nav button {\n    font-size: 10px;"),
-           "expected the shared Settings tab to avoid a duplicate desktop control and fit narrow mobile navigation")
-    assert(app_js[:body].include?('const TOP_TABS = ["now", "agents", "settings"];') &&
+           "expected three-item mobile navigation to fit narrow screens")
+    assert(app_js[:body].include?('const TOP_TABS = ["now", "agents", "schedules", "settings"];') &&
            app_js[:body].include?('activateNavTab(button.dataset.tab)') &&
            !app_js[:body].include?("desktopSettings"),
-           "expected Settings to use the same hash-route navigation behavior as Now and Agents")
+           "expected Schedules and Settings to retain hash-route navigation")
     assert(css[:body].include?(".bulk-action-bar"),
            "expected Agents tab to style bulk archive controls")
     assert(css[:body].include?(".quick-agent-fab"),
@@ -9400,10 +9401,10 @@ module RemoteServerTest
            js[:body].include?('if (scheduleStatus === "paused"') &&
            js[:body].include?('status-mark ${escapeAttr(className)}'),
            "expected stopped and paused schedules to override associated agent icon colors")
-    assert(js[:body].include?('class="schedule-details" data-state-key="schedule-now-details"'),
-           "expected Remote UI schedule rows to be collapsed by default")
-    assert(js[:body].include?("schedule-disclosure"),
-           "expected collapsed schedule block to show a disclosure indicator")
+    assert(js[:body].include?("function renderSchedules()") && js[:body].include?('class="schedule-list"'),
+           "expected Remote UI schedule rows on a dedicated Schedules page")
+    assert(!js[:body].include?("schedule-now-details") && !js[:body].include?("schedule-disclosure"),
+           "expected schedules to remain visible without a disclosure control")
     assert(js[:body].include?("function scheduleSectionRows"),
            "expected Schedule section rows to keep non-attention schedules visible")
     assert(!js[:body].include?("attention.length ? attention : upcomingSchedules().slice(0, 4)"),
@@ -10595,10 +10596,11 @@ module RemoteServerTest
            !css[:body].include?(".big-number") &&
            css[:body].include?(".attention-summary-action"),
            "expected Now to use a compact waiting-attention header")
-    now_section_order = ["${nowSection}", "${unreadSection}", "${runningSection}", "${scheduleSection}"]
+    now_section_order = ["${nowSection}", "${unreadSection}", "${runningSection}"]
       .map { |section| js[:body].index(section) }
-    assert(now_section_order.none?(&:nil?) && now_section_order == now_section_order.sort,
-           "expected Schedules to render after every agent list on Now")
+    assert(now_section_order.none?(&:nil?) && now_section_order == now_section_order.sort &&
+           !js[:body].include?("${scheduleSection}"),
+           "expected Now to preserve agent list order without schedules")
     assert(js[:body].include?("const FORM_POLL_QUIET_MS = 3_000;") &&
            js[:body].include?("function deferPollAfterFormInput") &&
            js[:body].include?('target.closest("form")') &&

@@ -22,7 +22,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     };
     const prepare = async () => {
       assert.equal((await page.request.patch(endpoint, { data: { content: "Initial body" } })).status(), 200);
-      await open("#now");
+      await open("#schedules");
       await page.evaluate(() => { delete state.scheduleMessages["file-message"]; });
       await open("#schedule/file-message/message");
       await page.locator("#schedule-message-form").waitFor();
@@ -53,7 +53,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       await keepDraft(expectedDraft);
       await page.evaluate(key => safeLocalStorageRemove(key), expectedDraft.key);
       await page.evaluate(() => ensureScheduleMessage("file-message", true));
-      await open("#now");
+      await open("#schedules");
       await open("#schedule/file-message/message");
       const server = (await (await page.request.get(endpoint)).json()).message.content;
       assert.equal(await page.locator("#schedule-message-content").inputValue(), server);
@@ -109,8 +109,8 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
         await page.route(endpoint, hold);
         await page.locator("#schedule-message-form button[type=submit]").click(); await wait(writeSeen);
         if (stale === "navigation") {
-          await page.evaluate(() => navigate({ type: "tab", tab: "now" }));
-          await page.waitForFunction(() => location.hash === "#now");
+          await page.evaluate(() => navigate({ type: "tab", tab: "schedules" }));
+          await page.waitForFunction(() => location.hash === "#schedules");
           await page.evaluate(() => navigate({ type: "scheduleMessage", key: "file-message" }));
           await page.locator("#schedule-message-form").waitFor();
         } else {
@@ -226,7 +226,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       for (const readStatus of [200, 503]) {
         const key = `message-retired-${width}-${theme}-${readStatus}`, retiredEndpoint = `${baseUrl}/schedules/${key}/message`;
         assert.equal((await page.request.post(`${baseUrl}/schedules`, { data: { key, cron: "0 9 * * *", project_key: "web", message_source: "file", message_file: "schedules/message.md" } })).status(), 201);
-        await open("#now"); await page.evaluate(() => refresh({ force: true })); await open(`#schedule/${key}/message`);
+        await open("#schedules"); await page.evaluate(() => refresh({ force: true })); await open(`#schedule/${key}/message`);
         await page.locator("#schedule-message-content").fill("Retired write");
         const writeHeld = gate(), writeSeen = gate(), readHeld = gate(), readSeen = gate();
         let writes = 0;
