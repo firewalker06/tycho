@@ -180,7 +180,9 @@ module CLICommandTest
       assert(child_result.fetch(:status).success?, "expected child create: #{child_result}")
       child = JSON.parse(child_result.fetch(:stdout))
       persisted_parent = JSON.parse(File.read(File.join(logs_root, "managed_agents.json"))).find { |item| item["key"] == parent["key"] }
-      parent_agent = HQ::ManagedAgent.from_hash(persisted_parent)
+      parent_agent = HQ::ManagedAgent.from_hash(
+        HQ::QueueStore.new(path: File.join(logs_root, "queues.json")).hydrate(persisted_parent)
+      )
       assert(HQ::AgentChatLog.new(parent_agent).chat_blocks.none? { |block| block.kind == :delegation_event },
              "expected real CLI create-only to add neither Created nor Started to Conversation")
       accepted_text = "Accepted line one\nAccepted line two"
@@ -984,7 +986,8 @@ module CLICommandTest
                 "--dispositions-json", JSON.generate(second_dispositions), "--json")
 
       persisted_path = File.join(logs_root, "managed_agents.json")
-      persisted = JSON.parse(File.read(persisted_path)).map { |attrs| HQ::ManagedAgent.from_hash(attrs) }
+      queues = HQ::QueueStore.new(path: File.join(logs_root, "queues.json"))
+      persisted = JSON.parse(File.read(persisted_path)).map { |attrs| HQ::ManagedAgent.from_hash(queues.hydrate(attrs)) }
       persisted_agent = persisted.find { |candidate| candidate.key == agent.key }
       persisted_agent.enqueue_prompt!(
         prompt: "Human attachment read", source: "user",
@@ -1076,7 +1079,8 @@ module CLICommandTest
              "expected queue-work discard to resolve an allowed failed claim with an inspectable reason")
 
       persisted_path = File.join(logs_root, "managed_agents.json")
-      persisted = JSON.parse(File.read(persisted_path)).map { |attrs| HQ::ManagedAgent.from_hash(attrs) }
+      queues = HQ::QueueStore.new(path: File.join(logs_root, "queues.json"))
+      persisted = JSON.parse(File.read(persisted_path)).map { |attrs| HQ::ManagedAgent.from_hash(queues.hydrate(attrs)) }
       persisted_agent = persisted.find { |candidate| candidate.key == agent.key }
       persisted_agent.enqueue_prompt!(prompt: "remove through CLI", id: "cli-remove-1")
       persisted_agent.enqueue_prompt!(prompt: "keep through CLI", id: "cli-remove-2")
@@ -1263,7 +1267,7 @@ module CLICommandTest
               saved = JSON.parse(File.read(agents_file)).fetch(0)
               started = started_agents.fetch(0)
 
-              assert(code == 0, "expected debug Claude managed-agent diagnostic to succeed")
+              assert(code == 0, "expected debug Claude managed-agent diagnostic to succeed: #{err.string}")
               assert(err.string.empty?, "expected no stderr output")
               assert(out.string.include?("Tycho Claude managed-agent diagnostic"),
                      "expected managed-agent diagnostic header")

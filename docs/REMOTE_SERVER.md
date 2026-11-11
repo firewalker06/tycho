@@ -1,6 +1,6 @@
 # Remote Sessions Server
 
-The Remote Sessions server is HQ's local JSON API for inspecting and controlling managed agents without opening the Bubbletea TUI. It is intentionally small and local-first: the API reuses the same `AgentStore` and `ManagedAgent` domain objects as the TUI, so agent state continues to live in `HOME/.tycho/logs/managed_agents.json` and per-agent artifacts under `HOME/.tycho/logs/agents/`.
+The Remote Sessions server is HQ's local JSON API for inspecting and controlling managed agents without opening the Bubbletea TUI. It is intentionally small and local-first: the API reuses the same `AgentStore` and `ManagedAgent` domain objects as the TUI. Agent records live in `HOME/.tycho/logs/managed_agents.json`, queue state lives in `HOME/.tycho/logs/queues.json`, and per-agent artifacts live under `HOME/.tycho/logs/agents/`. See [Central queue storage](QUEUE_STORE.md) for migration and recovery. <!-- local-path-ok -->
 
 ## Connection limits
 

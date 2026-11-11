@@ -6,6 +6,7 @@ require "open3"
 require "rbconfig"
 require "socket"
 require "tmpdir"
+require_relative "../lib/hq/domain/queue_store"
 
 module DelegationRunnerTest
   module_function
@@ -370,7 +371,7 @@ module DelegationRunnerTest
     leaf_key = leaf.fetch("key")
     wait_for_agent(agents_path, leaf_key, minimum_runs: 1)
     wait_until("callback queued behind running middle") do
-      record = JSON.parse(File.read(agents_path)).find { |item| item["key"] == middle_key }
+      record = read_queue_agents(agents_path).find { |item| item["key"] == middle_key }
       Array(record["prompt_queue"]).any? { |entry| entry["source"] == "delegation_callback" }
     end
     run_cli(env, "agent", "send", middle_key, "User instruction in callback batch", "--json") if takeover
@@ -430,7 +431,7 @@ module DelegationRunnerTest
   def wait_for_agent(path, key, minimum_runs:)
     deadline = Time.now + 12
     loop do
-      agents = File.exist?(path) ? JSON.parse(File.read(path)) : []
+      agents = read_queue_agents(path)
       record = agents.find { |agent| agent["key"] == key }
       return record if record && record.fetch("total_run_count", 0).to_i >= minimum_runs && record["finished_at"]
       if Time.now >= deadline
@@ -444,6 +445,17 @@ module DelegationRunnerTest
   def wait_for_store_idle(path)
     File.open("#{path}.lock", File::RDWR | File::CREAT, 0o600) do |file|
       file.flock(File::LOCK_EX)
+    ensure
+      file.flock(File::LOCK_UN)
+    end
+  end
+
+  def read_queue_agents(path)
+    File.open("#{path}.lock", File::RDWR | File::CREAT, 0o600) do |file|
+      file.flock(File::LOCK_SH)
+      queues = HQ::QueueStore.new(path: File.join(File.dirname(path), "queues.json"))
+      state = queues.read
+      Array(File.exist?(path) ? JSON.parse(File.read(path)) : []).map { |record| queues.hydrate(record, state:) }
     ensure
       file.flock(File::LOCK_UN)
     end

@@ -4,6 +4,7 @@ require_relative "constants"
 require_relative "log_paths"
 require_relative "attachment_normalizer"
 require_relative "queue_work"
+require_relative "queue_store"
 require_relative "agent_command_builder"
 require_relative "agent_prompt_transport"
 require_relative "custom_prompt_files"
@@ -279,7 +280,16 @@ module HQ
       true
     end
 
+    attr_accessor :queue_store_generation, :queue_store_fingerprint
+
     def self.from_hash(hash)
+      queue_store_generation = hash["queue_generation"]
+      queue_store = QueueStore.new if hash["queue_ref"]
+      queue_state = queue_store.read if queue_store
+      queue_store_fingerprint = if hash["queue_ref"]
+                                  QueueStore.fingerprint(queue_state.dig("agents", hash["key"]))
+                                end
+      hash = queue_store.hydrate(hash, state: queue_state) if queue_store
       runs = Array(hash["runs"]).map { |run| AgentRun.from_hash(run) }
       runs.each do |run|
         next unless run.run_id.to_s.empty?
@@ -350,7 +360,10 @@ module HQ
         context_pressure_acknowledged_signal: hash["context_pressure_acknowledged_signal"],
         context_pressure_dismissed: hash["context_pressure_dismissed"],
         context_replacement_recovery: hash["context_replacement_recovery"]
-      )
+      ).tap do |agent|
+        agent.queue_store_generation = queue_store_generation
+        agent.queue_store_fingerprint = queue_store_fingerprint
+      end
     end
 
     def self.launch_settings_from_runs(runs)
@@ -1664,7 +1677,7 @@ module HQ
         FileUtils.mv(path, File.join(destination, File.basename(path)))
       end
       @usage_metrics_store&.mark_agent_archived(@key)
-      FileStore.write_json(File.join(destination, "agent_manifest.json"), to_hash)
+      QueueStore.new.write([to_hash], target: File.join(destination, "agent_manifest.json"))
       archived_metrics = Array(@usage_metrics_store&.runs).select { |record| record["agent_key"] == @key }
       FileStore.write_json(
         File.join(destination, "usage_metrics.json"),

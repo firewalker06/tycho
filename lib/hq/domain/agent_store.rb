@@ -3,6 +3,7 @@
 require_relative "constants"
 require_relative "file_transaction"
 require_relative "file_store"
+require_relative "queue_store"
 require_relative "agent_store_recovery"
 require_relative "agent_archive_store"
 require_relative "agent_attachment_store"
@@ -66,6 +67,20 @@ module HQ
     # Do not recover backups here: an old backup can contain an archived agent.
     # Retired keys are excluded read-only, as load does; the signature covers the recovery ledger too.
     def read_snapshot
+      loop do
+        before = QueueStore.signature
+        begin
+          result = read_queue_snapshot
+        rescue IOError
+          raise if before == QueueStore.signature
+
+          next
+        end
+        return result if before == QueueStore.signature
+      end
+    end
+
+    def read_queue_snapshot
       ledger_signature = AgentStoreRecovery.state_signature(AGENTS_FILE)
       records, signature = RequestTiming.measure("record_read") do
         File.open(AGENTS_FILE, "r:UTF-8") do |file|
@@ -75,11 +90,24 @@ module HQ
       end
       raise IOError, "Invalid agent store" unless records.is_a?(Array) && records.all? { |record| record.is_a?(Hash) }
 
+      queue_store = QueueStore.new
+      if File.exist?(QueueStore.journal_path)
+        journal = queue_store.read_journal
+        records = journal.fetch("records") if journal.fetch("target") == AGENTS_FILE
+        state = journal.fetch("queues")
+      else
+        state = queue_store.read
+      end
       records = @recovery.without_retired(records)
       agents = RequestTiming.measure("record_build") do
-        records.map { |record| attach_usage_metrics_store(ManagedAgent.from_hash(record)) }
+        records.map do |record|
+          agent = attach_usage_metrics_store(ManagedAgent.from_hash(queue_store.hydrate(record, state:)))
+          agent.queue_store_generation = state.dig("agents", agent.key, "generation")
+          agent.queue_store_fingerprint = QueueStore.fingerprint(state.dig("agents", agent.key))
+          agent
+        end
       end
-      [agents, [signature, ledger_signature]]
+      [agents, [signature, ledger_signature, QueueStore.signature]]
     rescue Errno::ENOENT
       [[], nil]
     rescue JSON::ParserError => e
@@ -132,10 +160,16 @@ module HQ
       readable = !records.equal?(unreadable)
       raw_records = readable ? Array(records) : []
       raw_records, recovered = @recovery.reconcile_loaded(raw_records)
-      changed = recovered
+      changed = recovered || raw_records.any? { |record| !record.key?("queue_ref") }
+      queue_store = QueueStore.new
+      queue_store.write(raw_records) if readable && raw_records.any? { |record| !record.key?("queue_ref") }
+      queue_state = queue_store.read
+      raw_records = raw_records.map { |record| queue_store.hydrate(record, state: queue_state) }
       agents = RequestTiming.measure("record_build") do
         raw_records.map do |hash|
           agent = ManagedAgent.from_hash(hash)
+          agent.queue_store_generation = queue_state.dig("agents", agent.key, "generation")
+          agent.queue_store_fingerprint = QueueStore.fingerprint(queue_state.dig("agents", agent.key))
           agent.usage_metrics_store = @usage_metrics_store
           if agent.missing_native_session_identity?
             HQ.logger.warn("AgentStore") do
@@ -210,7 +244,17 @@ module HQ
     end
 
     def save(agents)
-      with_exclusive_lock { save_unlocked(agents) }
+      with_exclusive_lock do
+        state = QueueStore.new.read
+        agents.each do |agent|
+          generation = agent.queue_store_generation
+          next unless generation && generation != state.dig("agents", agent.key, "generation")
+          next if agent.queue_store_fingerprint == QueueStore.fingerprint(state.dig("agents", agent.key))
+
+          raise IOError, "Queue changed since agent #{agent.key} was loaded; reload before saving"
+        end
+        save_unlocked(agents)
+      end
     end
 
     # Clears the unread flag on one stored record without a full load, poll, or reconciliation.
@@ -226,9 +270,12 @@ module HQ
         records = current.each_with_index.map { |record, i| i == index ? record.merge("unread" => false) : record }
         prepared = @recovery.prepare(records, current_records: current, allow_retired_keys: false, allow_large_reduction: false)
         before_write&.call
-        FileStore.write_json(AGENTS_FILE, prepared)
-        @recovery.after_save(prepared, allow_retired_keys: false)
-        after_write&.call(records[index])
+        queues = QueueStore.new
+        committed = queues.write(prepared)
+        state = queues.read
+        hydrated = committed.map { |record| queues.hydrate(record, state:) }
+        @recovery.after_save(hydrated, allow_retired_keys: false)
+        after_write&.call(hydrated[index])
         true
       end
     end
@@ -241,7 +288,11 @@ module HQ
         allow_retired_keys:,
         allow_large_reduction:
       )
-      FileStore.write_json(AGENTS_FILE, records)
+      committed = QueueStore.new.write(records)
+      generations = committed.to_h { |record| [record.fetch("key"), record.fetch("queue_generation")] }
+      agents.each { |agent| agent.queue_store_generation = generations.fetch(agent.key) }
+      queue_state = QueueStore.new.read
+      agents.each { |agent| agent.queue_store_fingerprint = QueueStore.fingerprint(queue_state.dig("agents", agent.key)) }
       @recovery.after_save(records, allow_retired_keys:)
     end
 
@@ -1836,6 +1887,7 @@ module HQ
       File.open("#{AGENTS_FILE}.lock", File::RDWR | File::CREAT, 0o600) do |file|
         RequestTiming.measure("store_lock_wait") { file.flock(File::LOCK_EX) }
         held_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        QueueStore.new.recover!
         yield
       ensure
         if held_at
