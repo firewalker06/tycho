@@ -91,7 +91,7 @@ module HQ
         states = store.load
         state = store.state_for(states, schedule.key)
         ensure_not_expired!(schedule, state, states, now:)
-        resume_state!(schedule, state, now:)
+        resume_state!(schedule, state, now:, acknowledge_target_stop: true)
         store.save(states)
         { status: :resumed, schedule: schedule_payload(schedule, state) }
       end
@@ -171,7 +171,7 @@ module HQ
       store.with_lock do
         schedule, states, state = schedule_state_for(key)
         ensure_not_expired!(schedule, state, states, now:)
-        resume_state!(schedule, state, now:)
+        resume_state!(schedule, state, now:, acknowledge_target_stop: true)
         dispatch_and_persist_schedule(schedule, states, state, now:, dry_run:)
       end
     end
@@ -692,13 +692,17 @@ module HQ
       agents.find { |agent| agent.key == key }
     end
 
-    def resume_state!(schedule, state, now:, reason: nil)
+    def resume_state!(schedule, state, now:, reason: nil, acknowledge_target_stop: false)
       was_stopped = state.stopped?
       was_paused = state.paused?
       state.mark_scheduled!
       state.next_due_at = schedule.next_due_after(now)
-      target = last_agent(schedule, state, load_agents(dispatch_prompt_queues: false))
-      state.acknowledged_target_stop = stopped_target_identity(target)
+      # Inquiry receipt effects already hold the agent lock. Only explicit
+      # Resume needs to read and acknowledge a stopped target here.
+      state.acknowledged_target_stop = if acknowledge_target_stop
+                                         target = last_agent(schedule, state, load_agents(dispatch_prompt_queues: false))
+                                         stopped_target_identity(target)
+                                       end
       state.resumed_at = now
       state.last_resume_reason = reason if was_stopped || was_paused
       event_reason = reason || (was_stopped ? "stopped" : (was_paused ? "paused" : "manual"))
