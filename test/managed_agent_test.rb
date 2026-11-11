@@ -927,6 +927,9 @@ module ManagedAgentTest
              "start! after restart should reconcile from log and launch with --resume, got: #{captured.inspect}")
       assert(agent.session_bootstrapped == true,
              "reconcile_session_bootstrap! should flip the flag via the raw log")
+      agent.instance_variable_get(:@process_monitors).each_value do |monitor|
+        assert(monitor.join(10), "restart fixture runner must exit before its directory is removed")
+      end
     end
   ensure
     replace_constant(HQ, :AGENT_LOGS_DIR, old_logs_dir) if old_logs_dir
