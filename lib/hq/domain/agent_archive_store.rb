@@ -99,7 +99,7 @@ module HQ
     end
 
     def save(record)
-      FileStore.write_json(record.manifest_path, record.agent.to_hash)
+      QueueStore.new.write([record.agent.to_hash], target: record.manifest_path)
       FileUtils.touch(@root) if File.directory?(@root)
       invalidate!
     end

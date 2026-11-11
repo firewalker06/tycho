@@ -1482,7 +1482,7 @@ module PromptQueueTest
       destination = store.archive_agent!(agent.key)
       pid = nil
 
-      manifest = JSON.parse(File.read(File.join(destination, "agent_manifest.json")))
+      manifest = HQ::QueueStore.new.hydrate(JSON.parse(File.read(File.join(destination, "agent_manifest.json"))))
       batches = manifest.dig("queue_work", "batches")
       dispositions = batches.flat_map { |batch| batch.fetch("dispositions").values }
       memory_events = File.readlines(File.join(destination, "raw.memory.jsonl"), chomp: true).map { |line| JSON.parse(line) }
@@ -1515,7 +1515,7 @@ module PromptQueueTest
       store.save([agent])
 
       destination = store.archive_agent!(agent.key)
-      manifest = JSON.parse(File.read(File.join(destination, "agent_manifest.json")))
+      manifest = HQ::QueueStore.new.hydrate(JSON.parse(File.read(File.join(destination, "agent_manifest.json"))))
       disposition = manifest.dig("queue_work", "batches", 0, "dispositions", "delivered-entry")
       event = File.readlines(File.join(destination, "raw.memory.jsonl"), chomp: true).map { |line| JSON.parse(line) }
                   .find { |item| item.dig("metadata", "queue_work_batch_id") == manifest.dig("queue_work", "batches", 0, "id") }

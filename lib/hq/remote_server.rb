@@ -5041,7 +5041,7 @@ module HQ
       raise Error.new("Enter a Tycho agent key or native harness session ID") if identity.empty? || identity.length > 512
 
       # Read retained identities without polling, queue dispatch, or lifecycle changes.
-      active = Array(FileStore.read_json(AGENTS_FILE, fallback: [])).map { |row| ManagedAgent.from_hash(row) }
+      active, = @agent_store.read_snapshot
       candidates = visible_agents(active).map { |agent| [agent, "active"] }
       archived = @agent_archive_store.all.map(&:agent).reject { |agent| active.any? { |live| live.key == agent.key } }
       candidates.concat(visible_agents(archived).map { |agent| [agent, "archived"] })

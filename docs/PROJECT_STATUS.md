@@ -22,6 +22,16 @@ Settings stays in the context menu.
 Schedule save, cancel, and Back actions return to Schedules. The Now empty-state
 follow-up remains separate in card #860.
 
+## Central queue storage
+
+Queue state now lives in `queues.json`, keyed by target agent. Active agent
+records and new archive manifests keep references and matching generations.
+A durable journal completes interrupted queue and agent writes before any new
+claim. Migration retains identifiers and checksums, while the existing server
+timer, scheduler daemon, and every dispatch gate remain in use. See
+[Central queue storage](QUEUE_STORE.md) for migration, deployment, and recovery
+boundaries. Development does not migrate operator data.
+
 ## Managed prompt transport
 
 Custom profiles can select a validated version 1 `argv`, raw `stdin`, or

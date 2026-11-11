@@ -3,6 +3,7 @@
 require "thread"
 
 require_relative "agent_store_recovery"
+require_relative "queue_store"
 
 module HQ
   # Thread-safe snapshot of the loaded agent list shared across Remote requests.
@@ -22,7 +23,7 @@ module HQ
     # Signature of the agents file and its recovery ledger; take it while holding the store lock that guards the load.
     def signature
       stat = File.stat(@path)
-      [[stat.ino, stat.size, stat.mtime.to_i, stat.mtime.nsec], AgentStoreRecovery.state_signature(@path)]
+      [[stat.ino, stat.size, stat.mtime.to_i, stat.mtime.nsec], AgentStoreRecovery.state_signature(@path), QueueStore.signature]
     rescue SystemCallError
       nil
     end
