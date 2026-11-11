@@ -397,15 +397,12 @@ module HQ
 
           target = last_agent(schedule, state, agents)
           if unacknowledged_stopped_target?(target, state)
-            state.last_status = "stopped"
-            state.last_error = "agent_stopped"
-            state.mark_stopped!(now:, reason: "agent_stopped")
-            publish("schedule.stopped", schedule, state, agent_key: target.key, reason: "agent_stopped")
+            hold_stopped_target(schedule, state, agent_key: target.key, now:)
             totals[:skipped] += 1
             next
           end
 
-          result = dispatch_schedule(schedule, state, agents, now:, dry_run:)
+          result = dispatch_schedule(schedule, state, agents, now:, dry_run:, automatic: true)
           totals[result.fetch(:status)] += 1 if totals.key?(result.fetch(:status))
         end
 
@@ -523,7 +520,7 @@ module HQ
       state.scheduled?
     end
 
-    def dispatch_schedule(schedule, state, agents, now:, dry_run: false)
+    def dispatch_schedule(schedule, state, agents, now:, dry_run: false, automatic: false)
       target = last_agent(schedule, state, agents)
       running = target&.running?
       if running
@@ -549,7 +546,8 @@ module HQ
       due_at = state.next_due_at || now
       if target
         agent = @agent_store.dispatch_scheduled_message!(
-          target.key, schedule_key: schedule.key, message:, due_at:
+          target.key, schedule_key: schedule.key, message:, due_at:, automatic:,
+          acknowledged_target_stop: state.acknowledged_target_stop
         )
       else
         project = project_for(schedule)
@@ -579,6 +577,8 @@ module HQ
         schedule: schedule_payload(schedule, state, agent: agent),
         agent: agent
       }
+    rescue AgentStore::StoppedScheduleTarget
+      hold_stopped_target(schedule, state, agent_key: target.key, now:)
     rescue AgentStore::StaleScheduleTarget => e
       refresh_schedule_state!(state, store.load[schedule.key])
       {
@@ -723,11 +723,15 @@ module HQ
     end
 
     def stopped_target_identity(agent)
-      return nil unless agent&.status == "stopped"
+      agent&.stopped_run_identity
+    end
 
-      # Run IDs survive reload and change on every start. A legacy record with
-      # no run can be acknowledged, but its next real start gets a new run ID.
-      { "agent_key" => agent.key, "run_id" => agent.last_run&.run_id }
+    def hold_stopped_target(schedule, state, agent_key:, now:)
+      state.last_status = "stopped"
+      state.last_error = "agent_stopped"
+      state.mark_stopped!(now:, reason: "agent_stopped")
+      publish("schedule.stopped", schedule, state, agent_key:, reason: "agent_stopped")
+      { status: :skipped, schedule: schedule_payload(schedule, state), reason: "agent_stopped" }
     end
 
     def interactive_scheduled_session?(schedule, state, agent)

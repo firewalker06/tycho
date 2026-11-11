@@ -19,6 +19,7 @@ require "shellwords"
 module HQ
   class AgentStore
     StaleScheduleTarget = Class.new(StandardError)
+    StoppedScheduleTarget = Class.new(StandardError)
     PALETTE_SIZE = HQ::UI::Rendering::Styles::CHAT_BORDER_PALETTE.length
     SCHEDULE_SYSTEM_PROMPT_TEMPLATE = [
       "This managed agent is owned by the Tycho schedule %{title}.",
@@ -497,7 +498,7 @@ module HQ
     # Run schedule acceptance and process start under one AgentStore lock.
     # Archive removes the target under this same lock, so an archived target
     # cannot receive a stale schedule message or start a harness.
-    def dispatch_scheduled_message!(key, schedule_key:, message:, due_at: nil)
+    def dispatch_scheduled_message!(key, schedule_key:, message:, due_at: nil, automatic: false, acknowledged_target_stop: nil)
       mutate(dispatch_prompt_queues: false) do |agents, _events|
         target = find_agent_in!(agents, key)
         raise ArgumentError, "Context replacement recovery is pending" if target.context_replacement_recovery
@@ -506,6 +507,12 @@ module HQ
         if !current_target.empty? && current_target != target.key
           raise StaleScheduleTarget,
                 "Schedule #{schedule_key.inspect} now targets agent #{current_target.inspect}"
+        end
+        # Validate the current run under the same lock as acceptance and start.
+        # The scheduler snapshot cannot authorize a later committed stop.
+        stopped_run = target.stopped_run_identity
+        if automatic && stopped_run && stopped_run != acknowledged_target_stop
+          raise StoppedScheduleTarget, "Schedule #{schedule_key.inspect} requires Resume for the current stopped run"
         end
         add_scheduled_message!(target, schedule_key:, message:, due_at:)
         start_target!(target, agents, run_metadata: nil) unless target.running?
