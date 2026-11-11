@@ -37,10 +37,11 @@ async function installFixture(page, baseUrl, agentKey, source = stateSource) {
     render();
   });
   await page.locator("code.language-mermaid").first().waitFor();
+  return blocks;
 }
 
-async function preview(page, index = 0) {
-  const block = page.locator(".markdown-code-block").nth(index);
+async function preview(page, index = 0, scope = "") {
+  const block = page.locator(`${scope}.markdown-code-block`).nth(index);
   await block.locator("[data-toggle-markdown-code-menu]").click();
   await page.locator(".markdown-code-menu-popover:not([hidden]) [data-preview-mermaid-code]").press("Enter");
   await block.locator(".mermaid svg").waitFor({ timeout: 30000 });
@@ -59,7 +60,7 @@ module.exports = async function mermaidSmoke({ browser, baseUrl, agentKey, captu
     const page = await browser.newPage({ viewport });
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
-    await installFixture(page, baseUrl, agentKey);
+    const blocks = await installFixture(page, baseUrl, agentKey);
     assert.equal(await page.locator('script[src*="/mermaid@"]').count(), 0, "source view must not load Mermaid");
     const block = await preview(page);
     assert.equal(await page.locator(".mermaid svg").count(), 1, "preview only the selected chart");
@@ -99,8 +100,61 @@ module.exports = async function mermaidSmoke({ browser, baseUrl, agentKey, captu
     assert.equal(await page.locator(".mermaid").count(), 0);
     assert.equal(await block.locator("code").textContent(), `${stateSource}\n`, "source round trip must be exact");
     await preview(page);
-    await page.evaluate(() => refresh({ force: true }));
+    await page.evaluate(() => refresh({ force: true, forceConversation: true }));
     assert.equal(await page.locator(".mermaid svg").count(), 1, "unchanged polling must preserve the preview");
+    await block.evaluate((node) => { window.__previewBlock = node; });
+    blocks.push({ id: "poll-update", kind: "message", role: "assistant", content: "A new poll result." });
+    await page.evaluate(() => refresh({ force: true, forceConversation: true }));
+    assert.equal(await page.locator(".mermaid svg").count(), 1, "a changed poll must preserve the preview");
+    assert(await page.evaluate(() => window.__previewBlock === document.querySelector("[data-mermaid-previewing]")), "keep the rendered chart node");
+    if (captureDir) await page.screenshot({ path: path.join(captureDir, `mermaid-poll-${viewport.width}.png`) });
+    const summary = { id: "chart-summary", kind: "run_summary", role: "assistant", content: blocks[0].content,
+      metadata: { summary_id: "chart-summary", status: "success", run_number: 1 } };
+    blocks.push(summary);
+    await page.evaluate(() => refresh({ force: true, forceConversation: true }));
+    await page.goto(`${baseUrl}/ui#agent/${agentKey}/summary/chart-summary`, { waitUntil: "networkidle" });
+    await page.reload({ waitUntil: "networkidle" });
+    await page.locator("[data-agent-summary-page] code.language-mermaid").first().waitFor();
+    await preview(page, 0, "[data-agent-summary-page] ");
+    await page.evaluate(() => {
+      window.__summaryChart = document.querySelector(".mermaid svg");
+      const agent = findAgent(parseRoute().key);
+      agent.run_count = Number(agent.run_count || 0) + 1;
+      render();
+    });
+    if (captureDir) await page.screenshot({ path: path.join(captureDir, `mermaid-summary-poll-${viewport.width}.png`) });
+    assert.equal(await page.locator(".mermaid svg").count(), 1, "Summary metadata updates must preserve the preview");
+    assert(await page.evaluate(() => window.__summaryChart === document.querySelector(".mermaid svg")), "Summary must keep the same SVG");
+    await page.evaluate(() => refresh({ force: true, forceConversation: true }));
+    assert(await page.evaluate(() => window.__summaryChart === document.querySelector(".mermaid svg")), "forced Summary polling must keep the SVG");
+    const summaryBlock = page.locator("[data-agent-summary-page] .markdown-code-block").first();
+    await showCode(page, summaryBlock);
+    await page.evaluate(() => {
+      findAgent(parseRoute().key).run_count += 1;
+      render();
+    });
+    assert.equal(await page.locator(".mermaid").count(), 0, "Show code must survive metadata updates");
+    await page.evaluate(() => {
+      const block = document.querySelector("[data-agent-summary-page] .markdown-code-block");
+      void previewMermaidCodeBlock(block);
+      findAgent(parseRoute().key).run_count += 1;
+      render();
+    });
+    await summaryBlock.locator(".mermaid svg").waitFor();
+    await page.evaluate(() => window.TychoAppearance.setPreference("light"));
+    await summaryBlock.locator(".mermaid svg").waitFor();
+    assert.equal(await page.evaluate(() => window.mermaid.mermaidAPI.getConfig().theme), "base");
+    await page.evaluate(() => {
+      const agent = findAgent(parseRoute().key);
+      const summary = runSummaryBlocks(agent).find(block => runSummaryId(block) === "chart-summary");
+      summary.content = summary.content.replace("Publication review", "Changed summary").replace("Screening --> Decision", "Screening --> Revised");
+      render();
+    });
+    assert.equal(await page.locator(".mermaid svg").count(), 0, "changed source must discard the old preview");
+    assert((await summaryBlock.locator("code").textContent()).includes("Screening --> Revised"));
+    await preview(page, 0, "[data-agent-summary-page] ");
+    await page.goto(`${baseUrl}/ui#agent/${agentKey}`, { waitUntil: "networkidle" });
+    assert.equal(await page.locator(".mermaid svg").count(), 0, "previews must not leak across routes");
     assert.deepEqual(errors, []);
     evidence.push({ viewport, ...facts });
     await page.close();

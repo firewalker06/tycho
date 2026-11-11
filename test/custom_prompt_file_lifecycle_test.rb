@@ -50,7 +50,12 @@ module CustomPromptFileLifecycleTest
       prefix = [RbConfig.ruby, wrapper, ready_path, gate_path]
       HQ.custom_harnesses = [HQ::HarnessConfig.new(key: "lifecycle", adapter: "claude", execution_command: prefix,
         prompt_transport: { "version" => 1, "mode" => "file" })]
-      read_ready = -> { JSON.parse(Timeout.timeout(15) { ready.gets }) }
+      read_ready = lambda do
+        record = JSON.parse(Timeout.timeout(15) { ready.gets })
+        prompt = record.fetch("prompt")
+        assert(prompt.b == File.binread(record.fetch("path")), "wrapper JSON changed prompt bytes")
+        record
+      end
       make_agent = lambda do |key, correction|
         agent = HQ::ManagedAgent.new(key: key, name: "Lifecycle", project_key: "test", template_key: "custom",
           workspace: dir, prompt: "PRIVATE_LIFECYCLE\n日本語 🛰️\n", agent: "lifecycle",
@@ -65,6 +70,7 @@ module CustomPromptFileLifecycleTest
           agent = make_agent.call("#{action}-#{correction}", correction)
           agent.start!
           record = read_ready.call
+          assert(record.fetch("prompt").include?("日本語 🛰️"), "wrapper did not return the Unicode prompt")
           path = record.fetch("path")
           assert(File.file?(path), "managed prompt was not created")
           case action
