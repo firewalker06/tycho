@@ -14,6 +14,7 @@ module QueueStoreTest
     assert_failed_write_rollback
     assert_corrupt_store_fails_closed
     assert_stale_save_and_backup_are_rejected
+    assert_legacy_empty_queue_placeholders
     puts "queue_store_test passed"
   end
 
@@ -52,6 +53,62 @@ module QueueStoreTest
         "native_start_acknowledged" => true
       } }]
     }
+  end
+
+  def assert_legacy_empty_queue_placeholders
+    with_store do |queues, store, dir|
+      agents = %w[idle pending claimed].map do |key|
+        HQ::ManagedAgent.new(key:, name: key, project_key: "fixture", template_key: "custom",
+                             workspace: dir, prompt: "Synthetic existing-store fixture")
+      end
+      agents[1].enqueue_prompt!(id: "pending-user", prompt: "Delayed instruction", not_before: Time.now + 3600)
+      agents[1].enqueue_prompt!(id: "pending-report", prompt: "Delegated report", source: "delegation_callback",
+                                authority: { "owner" => "parent", "generation" => 7, "relationship_id" => "fixture-edge" })
+      agents[2].enqueue_prompt!(id: "claimed-entry", prompt: "Unresolved work")
+      agents[2].claim_pending_prompts!
+      original = agents.map { |agent| HQ::ManagedAgent.from_hash(agent.to_hash).to_hash }
+      HQ::FileStore.write_json(HQ::AGENTS_FILE, original)
+      HQ::FileStore.write_json(HQ::QueueStore.path, { "version" => 1, "agents" => agents.to_h { |agent| [agent.key, {}] } })
+      before = [HQ::AGENTS_FILE, HQ::QueueStore.path].to_h { |path| [path, File.binread(path)] }
+
+      snapshot, = store.read_snapshot
+      assert(snapshot.map(&:key) == agents.map(&:key), "existing placeholders hid known agents")
+      assert(snapshot.map(&:to_hash) == original, "read-only compatibility changed inline queue evidence")
+      assert(before.all? { |path, bytes| File.binread(path) == bytes } && !File.exist?(HQ::QueueStore.journal_path),
+             "read-only compatibility wrote or migrated existing data")
+
+      # Migrate only this synthetic fixture. Never use operator data for this test.
+      store.send(:with_exclusive_lock) { queues.write(original) }
+      migrated = JSON.parse(File.read(HQ::AGENTS_FILE))
+      assert(migrated.map { |record| queues.hydrate(record) } == original,
+             "empty placeholders lost pending entries, claims, ownership, or unresolved batches")
+      state = queues.read
+      assert(state.fetch("migrations").fetch("pending").fetch("entry_ids") == %w[pending-user pending-report],
+             "placeholder migration omitted the original identifiers")
+      loaded, = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false)
+      assert(loaded.map(&:key) == agents.map(&:key) && loaded.find { |agent| agent.key == "pending" }.prompt_queue.length == 2,
+             "lifecycle lookup lost a known agent or its queued work after placeholder migration")
+      assert(loaded.find { |agent| agent.key == "claimed" }.prompt_queue_claim.fetch("id") ==
+             original[2].fetch("prompt_queue_claim").fetch("id"), "migration replaced an existing dispatch claim")
+      state = queues.read
+
+      bad = migrated.fetch(0).merge("queue_ref" => "empty", "key" => "empty", "queue_generation" => nil)
+      HQ::FileStore.write_json(HQ::QueueStore.path, state.merge("agents" => state.fetch("agents").merge("empty" => {})))
+      begin
+        queues.hydrate(bad)
+        raise "an authoritative reference to an empty queue was accepted"
+      rescue IOError
+        # A placeholder is safe only while agent records still contain the queue.
+      end
+      corrupt = state.merge("agents" => state.fetch("agents").merge("invalid" => { "prompt_queue" => [] }))
+      HQ::FileStore.write_json(HQ::QueueStore.path, corrupt)
+      begin
+        queues.read
+        raise "a non-empty queue without a generation was silently accepted"
+      rescue IOError
+        assert(JSON.parse(File.read(HQ::QueueStore.path)) == corrupt, "invalid queue state was repaired during a read")
+      end
+    end
   end
 
   def assert_lossless_migration

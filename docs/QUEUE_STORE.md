@@ -19,6 +19,14 @@ IDs. It is evidence, not an execution source. Legacy archived manifests remain
 readable as historical evidence; new or updated manifests use central references.
 Historical recovery snapshots remain backups, not dispatch inputs.
 
+Earlier version 1 files can contain empty per-agent placeholders with no
+generation while agent records still contain their authoritative inline queues.
+Readers treat only these empty placeholders as absent, without writing or
+migrating data. A later lifecycle migration records the inline queue and its
+initial identifiers normally. Non-empty records without a generation and central
+references to missing or empty records still fail closed. An empty placeholder
+does not prove that its agent has no pending work.
+
 Deploy all queue writers together. Stop the TUI, server, scheduler and other
 writers before the version change. Do not run an older writer against a migrated
 store. Preserve the complete logs directory before the first lifecycle load.

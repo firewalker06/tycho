@@ -151,10 +151,13 @@ module HQ
     def validate_state!(state)
       unless state.is_a?(Hash) && state["version"] == 1 && state["agents"].is_a?(Hash) &&
              state["agents"].all? { |key, queue| key.is_a?(String) && queue.is_a?(Hash) &&
-               queue["generation"].is_a?(String) && !queue["generation"].empty? }
+               (queue.empty? || (queue["generation"].is_a?(String) && !queue["generation"].empty?)) }
         raise IOError, "Invalid queue store"
       end
-      state
+      # Earlier stores can have empty, unreferenced placeholders while agents
+      # still own their inline queues. Treat these as absent without writing.
+      # A referenced placeholder still fails hydrate's missing-record check.
+      state.merge("agents" => state.fetch("agents").reject { |_key, queue| queue.empty? })
     end
 
     def install!(journal)
