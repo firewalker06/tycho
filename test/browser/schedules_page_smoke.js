@@ -26,7 +26,45 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
         const nav = await page.locator("#bottom-nav").boundingBox();
         const settings = await link.boundingBox();
         assert(settings.y >= nav.y + nav.height, "Settings link is below the navigation panel");
-        await link.click();
+        const assertBottomLink = async () => {
+          const box = await link.boundingBox();
+          const viewport = page.viewportSize();
+          assert(box.x >= 0 && box.x + box.width <= viewport.width, "Settings stays inside the sidebar");
+          assert(viewport.height - box.y - box.height >= 8 && viewport.height - box.y - box.height <= 24,
+            "Settings stays near the bottom edge of the viewport");
+        };
+        await assertBottomLink();
+        assert.equal(await link.locator("circle").getAttribute("r"), "3");
+        const gearPath = await page.evaluate(() => {
+          const host = document.createElement("div");
+          host.innerHTML = iconSvg("settings");
+          return host.querySelector("path").getAttribute("d");
+        });
+        assert.equal(await link.locator("path").getAttribute("d"), gearPath, "reuse the existing Settings gear");
+        await page.evaluate(() => {
+          const spacer = document.createElement("div");
+          spacer.id = "settings-scroll-fixture";
+          spacer.style.height = "1800px";
+          document.querySelector("#view").append(spacer);
+          window.scrollTo(0, 500);
+        });
+        await page.waitForFunction(() => window.scrollY >= 400);
+        await assertBottomLink();
+        await page.evaluate(() => refresh({ force: true }));
+        await assertBottomLink();
+        await page.evaluate(() => { document.querySelector("#settings-scroll-fixture")?.remove(); window.scrollTo(0, 0); });
+        for (const height of [600, 240, 900]) {
+          await page.setViewportSize({ width, height });
+          await assertBottomLink();
+        }
+        await page.setViewportSize({ width: 1099, height: 900 });
+        assert.equal(await link.isVisible(), false, "hide the desktop Settings link below the sidebar breakpoint");
+        await page.setViewportSize({ width, height: 900 });
+        await assertBottomLink();
+        await page.locator('[data-tab="schedules"]').focus();
+        await page.keyboard.press("Tab");
+        assert(await link.evaluate(node => document.activeElement === node), "Settings is next in keyboard order after navigation");
+        await page.keyboard.press("Enter");
       } else {
         await page.locator("#header-more-button").click();
         await page.locator("#header-more-panel [data-open-settings]").click();
@@ -74,5 +112,5 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       assert.deepEqual(errors, []);
     } finally { await context.close(); }
   }
-  console.log("schedules_page_smoke: ok (direct access, desktop/mobile Dark/Light/System navigation, Settings, polling, pause/resume, forms, actions, layout)");
+  console.log("schedules_page_smoke: ok (direct access, desktop/mobile Dark/Light/System navigation, bottom Settings gear, scroll/resize/keyboard, polling, pause/resume, forms, actions, layout)");
 };

@@ -8089,7 +8089,9 @@ module RemoteServerTest
            primary_nav.include?('data-tab="schedules"') &&
            !primary_nav.include?('data-tab="settings"'),
            "expected primary navigation to contain Now, Agents, and Schedules controls")
-    assert(response[:body].include?('<a class="sidebar-settings-link" href="#settings">Settings</a>') &&
+    settings_link = response[:body][%r{<a class="sidebar-settings-link".*?</a>}m]
+    assert(settings_link&.include?('href="#settings"') && settings_link.include?("<span>Settings</span>") &&
+           settings_link.include?('<circle cx="12" cy="12" r="3">') &&
            !primary_nav.include?("sidebar-settings-link"),
            "expected a plain desktop Settings link outside primary navigation")
     assert(!response[:body].include?('data-tab="search"'), "expected root shell to remove Search navigation")
