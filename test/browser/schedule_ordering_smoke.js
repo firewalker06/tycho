@@ -87,7 +87,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       for (const reader of ["direct", "refresh"]) for (const oldStatus of [200, 503, 401]) {
         const endpoint = `${baseUrl}/schedules/file-message/message`;
         assert.equal((await page.request.patch(endpoint, { data: { content: "Old read body" } })).status(), 200);
-        await open("#now");
+        await open("#schedules");
         await page.evaluate(() => { delete state.scheduleMessages["file-message"]; });
         await open("#schedule/file-message/message");
         const saved = `Accepted ${reader} ${oldStatus} ${width} ${theme}\nSecond line.\n`;
@@ -115,7 +115,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
         };
         page.on("request", count);
         await page.locator("#schedule-message-form button[type=submit]").click();
-        await page.waitForFunction(() => location.hash === "#now" && state.pendingFormKeys.size === 0 && !state.refreshInFlight);
+        await page.waitForFunction(() => location.hash === "#schedules" && state.pendingFormKeys.size === 0 && !state.refreshInFlight);
         page.off("request", count);
         assert.equal(writes, 1);
         assert.deepEqual(counts, { catalog: 1, setup: 1, schedules: 1 });

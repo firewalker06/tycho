@@ -3874,7 +3874,8 @@ title: !123 value
             !formPollQuietContract.outsideInputIgnored) {
           throw new Error(`Form typing did not defer polling for three seconds: ${JSON.stringify(formPollQuietContract)}`);
         }
-        await page.waitForSelector("[data-state-key='schedule-now-details']", { state: "visible", timeout: 10_000 });
+        await page.evaluate(() => navigate({ type: "tab", tab: "schedules" }));
+        await page.waitForSelector(".schedule-list", { state: "visible", timeout: 10_000 });
         const scheduleLastContract = await page.evaluate((key) => {
           const source = findAgent(key) || state.agents[0];
           const savedAgents = state.agents;
@@ -3897,17 +3898,14 @@ title: !123 value
           const result = {
             scheduleFound: Boolean(schedule),
             runningFound: children.some((child) => child.matches(".section-label") && child.textContent.includes("Running")),
-            scheduleIsLast: children.at(-1) === schedule,
           };
           state.agents = savedAgents;
           state.agentDetails = savedAgentDetails;
           render();
           return result;
         }, agentKey);
-        if (!scheduleLastContract.scheduleFound ||
-            !scheduleLastContract.runningFound ||
-            !scheduleLastContract.scheduleIsLast) {
-          throw new Error(`Schedules are not the final Now list: ${JSON.stringify(scheduleLastContract)}`);
+        if (scheduleLastContract.scheduleFound || !scheduleLastContract.runningFound) {
+          throw new Error(`Now must show agents without schedules: ${JSON.stringify(scheduleLastContract)}`);
         }
         const agentDetailRevisionContract = await page.evaluate(() => {
           const saved = {
@@ -4038,8 +4036,7 @@ title: !123 value
           throw new Error(`Peer activity degradation is not isolated or actionable: ${JSON.stringify(degradedActivityContract)}`);
         }
         const daemonMenuLayout = await page.evaluate(() => {
-          const details = document.querySelector("[data-state-key='schedule-now-details']");
-          details.open = true;
+          const details = document.querySelector(".schedule-list");
           const toolbar = details.querySelector(".schedule-management-actions");
           const addButton = toolbar?.querySelector("[data-new-schedule]");
           const menu = toolbar?.querySelector("[data-overlay-key='schedule-daemon']");
@@ -5500,10 +5497,10 @@ title: !123 value
           return;
         }
         await page.setViewportSize({ width: 390, height: 844 });
-        await page.evaluate(() => navigate({ type: "tab", tab: "now" }));
+        await page.evaluate(() => navigate({ type: "tab", tab: "schedules" }));
+        await page.waitForSelector(".schedule-list", { state: "visible", timeout: 10_000 });
         const scheduleMenuGeometry = await page.evaluate(() => {
-          const details = document.querySelector("[data-state-key='schedule-now-details']");
-          details.open = true;
+          const details = document.querySelector(".schedule-list");
           const rows = Array.from(document.querySelectorAll(".schedule-row"));
           const row = rows.at(-1);
           const menu = row?.querySelector(".schedule-action-menu");
@@ -5579,8 +5576,8 @@ title: !123 value
           throw new Error(`Settings context menu lost its route-specific actions: ${JSON.stringify(settingsHeaderMenuLabels)}`);
         }
         await page.keyboard.press("Escape");
-        await page.evaluate(() => navigate({ type: "tab", tab: "now" }));
-        await page.waitForSelector("[data-state-key='schedule-now-details']", { state: "visible", timeout: 10_000 });
+        await page.evaluate(() => navigate({ type: "tab", tab: "schedules" }));
+        await page.waitForSelector(".schedule-list", { state: "visible", timeout: 10_000 });
         const legacyActionContract = await page.evaluate(() => {
           const controls = Array.from(document.querySelectorAll([
             "button.primary",
@@ -10700,9 +10697,8 @@ title: !123 value
         if (!loopSchedule || loopSchedule.target_agent_key !== loopAgentKey || loopSchedule.cron !== "*/11 * * * *" || !loopSchedule.ends_at) {
           throw new Error(`Created session loop is not a normal expiring schedule: ${JSON.stringify(loopSchedule)}`);
         }
-        await page.evaluate(() => navigate({ type: "tab", tab: "now" }));
-        await page.waitForSelector("[data-state-key='schedule-now-details']", { state: "visible", timeout: 10_000 });
-        await page.evaluate(() => { document.querySelector("[data-state-key='schedule-now-details']").open = true; });
+        await page.evaluate(() => navigate({ type: "tab", tab: "schedules" }));
+        await page.waitForSelector(".schedule-list", { state: "visible", timeout: 10_000 });
         const scheduleRowText = await page.evaluate((key) => document.querySelector(`[data-schedule-key='${key}']`)?.closest(".schedule-row")?.innerText || "", loopScheduleKey);
         if (!scheduleRowText.includes("Review Loop Smoke Agent") || !scheduleRowText.includes("ends")) {
           throw new Error(`Session loop is missing from the Schedules list: ${JSON.stringify(scheduleRowText)}`);

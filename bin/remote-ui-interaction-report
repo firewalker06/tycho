@@ -98,7 +98,7 @@ function validateConfig(config) {
 function scheduleConfig(url, key, timeoutMs, withinMs) {
   const selector = `.schedule-toggle-button[data-schedule-key=${JSON.stringify(key)}]`;
   return validateConfig({ name: "Schedule Resume", url, timeoutMs, steps: [
-    { action: "expand", selector: 'details[data-state-key="schedule-now-details"]' },
+    { action: "open", url: "#schedules" },
     { action: "measure", name: "Resume → Pause", trigger: { action: "click", selector, text: "Resume" }, expect: { selector, text: "Pause" }, screenshot: `.schedule-row:has(${selector})`, withinMs }
   ] });
 }

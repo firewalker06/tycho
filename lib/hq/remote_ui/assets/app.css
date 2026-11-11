@@ -10366,3 +10366,44 @@ body:has(.inquiry-form-full-screen) {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+.sidebar-settings-link {
+  display: none;
+}
+
+.schedule-list .schedule-summary-row {
+  cursor: default;
+  padding-right: 10px;
+  background: transparent;
+  border-bottom: 1px solid var(--border);
+}
+
+@media (min-width: 1100px) {
+  .sidebar-settings-link {
+    position: sticky;
+    --settings-top: max(calc(var(--safe-area-top) + 180px), calc(100dvh - env(safe-area-inset-bottom, 0px) - 56px));
+    top: var(--settings-top);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 44px;
+    align-self: start;
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    margin-top: var(--settings-top);
+    padding: 8px 16px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  .sidebar-settings-link .ui-icon {
+    flex: none;
+    width: 16px;
+    height: 16px;
+  }
+
+  .sidebar-settings-link:hover,
+  .sidebar-settings-link[aria-current="page"] {
+    color: var(--text);
+  }
+}

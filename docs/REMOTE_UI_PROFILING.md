@@ -46,4 +46,4 @@ Set `CHROME_PATH` when Chrome, Chromium, or Edge is not installed in a standard 
 
 Use the trace for request ordering, screenshots, and browser timing details. A slow route with low blocking time usually points to server or network wait. A slow route with high blocking, script, layout, or style time points to browser work. Compare the same fixture, Chrome build, and host before and after a change.
 
-The suite covers Now, Agents, Settings, hidden settings, project detail/edit/workspace/diff, agent create/conversation/summary/PR/attachment/edit/clone/archive/loop, standalone attachment, and schedule create/edit/message routes. `--archive` adds the copied archived-agent conversation as a final route.
+The suite covers Now, Agents, Schedules, Settings, hidden settings, project detail/edit/workspace/diff, agent create/conversation/summary/PR/attachment/edit/clone/archive/loop, standalone attachment, and schedule create/edit/message routes. `--archive` adds the copied archived-agent conversation as a final route.

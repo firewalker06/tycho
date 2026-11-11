@@ -115,7 +115,7 @@ The full `bin/test` suite passed on retry. The first attempt stopped with `Errno
 
 Load `bin/remote-ui-interaction-probe.js` in Chrome DevTools as a Snippet, or paste its contents into the Console. The script installs `window.tychoInteractionProbe`. It does not click controls or change application data. Reloading the page removes it.
 
-Open the Schedules disclosure. Inspect the desired Resume button to get its schedule key. Arm the probe with a selector that matches one control and stays valid when its action changes:
+Open the Schedules page. Inspect the desired Resume button to get its schedule key. Arm the probe with a selector that matches one control and stays valid when its action changes:
 
 ```js
 tychoInteractionProbe.arm({

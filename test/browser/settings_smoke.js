@@ -138,7 +138,7 @@ module.exports = async function settingsSmoke({ page, baseUrl }) {
         await page.mouse.wheel(0, delta);
         await page.waitForTimeout(50);
         assert.equal(await page.locator("#bottom-nav.nav-hidden").count(), 0);
-        for (const tab of ["now", "agents", "settings"]) {
+        for (const tab of ["now", "agents", "schedules"]) {
           const button = page.locator(`#bottom-nav [data-tab="${tab}"]`);
           await button.click({ trial: true });
           const box = await button.boundingBox();
@@ -246,7 +246,8 @@ module.exports = async function settingsSmoke({ page, baseUrl }) {
   // Leaving Settings restores ordinary page scrolling and native top-level navigation.
   await page.locator('#bottom-nav [data-tab="agents"]').click();
   await page.locator(".content.settings-page").waitFor({ state: "detached" });
-  await page.locator('#bottom-nav [data-tab="settings"]').click();
+  await page.locator("#header-more-button").click();
+  await page.locator("#header-more-panel [data-open-settings]").click();
   await page.locator(".content.settings-page").waitFor({ state: "visible" });
   await require("./notification_debugger_smoke")({ page, baseUrl });
 };

@@ -12,6 +12,16 @@ type: project
 
 2026-11-11
 
+## Remote UI Schedules navigation
+
+Schedules now has a dedicated `#schedules` page with the existing status,
+management, and session controls always visible. Desktop and mobile primary
+navigation contains Now, Agents, and Schedules. Desktop Settings is a plain
+link with the existing gear icon at the bottom of the desktop sidebar; mobile
+Settings stays in the context menu.
+Schedule save, cancel, and Back actions return to Schedules. The Now empty-state
+follow-up remains separate in card #860.
+
 ## Central queue storage
 
 Queue state now lives in `queues.json`, keyed by target agent. Active agent
