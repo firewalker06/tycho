@@ -56,6 +56,8 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       await page.locator("#schedule-form").waitFor();
       await page.locator("#back-button").click();
       await page.waitForURL("**/ui#schedules");
+      // Let the existing detail-header transition finish before capture.
+      await page.waitForTimeout(250);
       await page.waitForFunction(() => {
         const header = document.querySelector(".app-header").getBoundingClientRect();
         return header.left >= -1 && header.right <= innerWidth + 1;
