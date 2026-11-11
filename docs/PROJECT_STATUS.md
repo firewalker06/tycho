@@ -16,8 +16,11 @@ type: project
 
 Daemon ticks preserve paused and stopped schedule state. A stopped target now
 holds due automatic work even when the saved schedule still reports success.
-An explicit schedule resume acknowledges the stop and waits for the next due
-time; manual Run remains available. Idle, successful, and partial targets keep
+An explicit schedule resume records the stopped target key and persistent run
+ID, even before the first due tick, and waits for the next due time. This
+acknowledgement cannot permit a later stopped run in the same second after
+reload. Legacy timestamp-only records require a new explicit acknowledgement.
+Manual Run remains available. Idle, successful, and partial targets keep
 normal scheduled execution. Restart regression tests use isolated runtime roots.
 
 ## Remote UI Schedules navigation

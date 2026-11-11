@@ -26,6 +26,7 @@ module SchedulerTest
       assert_schedule_daemon_banner_labels_metadata_by_state
       assert_scheduler_run_reuses_schedule_agent_session
       assert_startup_preserves_schedule_and_stopped_target_intent
+      assert_resume_acknowledges_exact_stopped_target_after_reload
       assert_scheduler_adopts_existing_session_and_expires_loop
       assert_archived_schedule_session_promotes_prompt_to_schedule
       assert_scheduler_stops_interactive_scheduled_agent_until_resume
@@ -136,6 +137,68 @@ module SchedulerTest
         scheduler.pause("startup", now: now + 61)
         assert(scheduler.run_now("startup", now: now + 62)[:status] == :started,
                "expected explicit manual Run to remain available on a held schedule")
+      end
+    end
+  end
+
+  def assert_resume_acknowledges_exact_stopped_target_after_reload
+    [[false, false], [true, false], [false, true], [true, true]].each do |later_stop, legacy_run|
+      with_temp_runtime do |dir|
+        now = Time.new(2026, 11, 11, 9, 0, 0, "+00:00")
+        registry, schedule_path = write_registry_and_schedule(dir, <<~YAML)
+          schedules:
+            - key: resume-before-hold
+              cron: "* * * * *"
+              target:
+                type: agent
+                project_key: web
+                agent_key: resume-target
+                message: "Run scheduled work."
+        YAML
+        project = HQ::Project.new(registry.projects.fetch(0))
+        agent = HQ::ManagedAgent.new(
+          key: "resume-target", name: "Resume target", project_key: "web", template_key: "scheduled",
+          workspace: project.path, prompt: "Scheduled context", agent: "codex",
+          started_at: now - 120, finished_at: now - 60, last_exit_code: 143,
+          runs: [HQ::ManagedAgent::AgentRun.new(
+            started_at: now - 120, finished_at: now - 60, exit_code: 143, status: "stopped",
+            run_id: legacy_run ? nil : "first-stop", log_path: File.join(HQ::AGENT_LOGS_DIR, "resume.raw.log"), command: "test"
+          )]
+        )
+        agent.associate_schedule!("resume-before-hold")
+        agent_store = HQ::AgentStore.new([project])
+        agent_store.save([agent])
+        store = HQ::ScheduleStore.new
+        store.save("resume-before-hold" => HQ::ScheduleState.new(
+          key: "resume-before-hold", status: later_stop ? "stopped" : "scheduled", last_status: "succeeded",
+          last_target_key: agent.key, next_due_at: now + 60
+        ))
+
+        build_scheduler(registry, schedule_path).resume("resume-before-hold", now: now + 0.2)
+        acknowledged = store.load.fetch("resume-before-hold")
+        assert(acknowledged.acknowledged_target_stop["agent_key"] == agent.key,
+               "expected explicit Resume to persist the current stopped target")
+        assert(!acknowledged.acknowledged_target_stop["run_id"].to_s.empty?,
+               "expected native and legacy run identities to survive reload")
+        if later_stop
+          # A new run stops after Resume, within the same serialized second.
+          agent_store.update_agent!(agent.key) do |target|
+            target.instance_variable_set(:@started_at, now + 0.4)
+            target.instance_variable_set(:@finished_at, now + 0.8)
+            target.instance_variable_get(:@runs) << HQ::ManagedAgent::AgentRun.new(
+              started_at: now + 0.4, finished_at: now + 0.8, exit_code: 143, status: "stopped",
+              run_id: "later-stop", log_path: target.raw_log_path, command: "test"
+            )
+          end
+          reloaded = agent_store.load.fetch(0)
+          resumed = store.load.fetch("resume-before-hold")
+          assert(resumed.resumed_at == reloaded.finished_at,
+                 "expected the exact same-second timestamp collision after serialization")
+        end
+        result = build_scheduler(registry, schedule_path).tick(now: now + 60, dry_run: true)
+        assert(result[:started] == (later_stop ? 0 : 1),
+               "expected reloaded Resume to acknowledge only the current stop (later_stop=#{later_stop}): #{result}")
+        assert(result[:skipped] == (later_stop ? 1 : 0), "expected a later stop to hold automatic work")
       end
     end
   end

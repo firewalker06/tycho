@@ -38,7 +38,7 @@ module HQ
     :last_status, :last_error, :last_target_kind, :last_target_key, :previous_target_key,
     :next_due_at, :run_count, :skip_count, :first_success_notified_at, :failure_started_at,
     :recovery_notified_at, :resumed_at, :stopped_reason, :last_resume_reason,
-    :stop_id, :user_message_resumptions,
+    :stop_id, :user_message_resumptions, :acknowledged_target_stop,
     keyword_init: true
   ) do
     OPERATOR_STATUSES = %w[scheduled paused stopped].freeze
@@ -77,6 +77,7 @@ module HQ
         stopped_reason: hash["stopped_reason"],
         last_resume_reason: hash["last_resume_reason"],
         stop_id: hash["stop_id"],
+        acknowledged_target_stop: hash["acknowledged_target_stop"],
         user_message_resumptions: hash["user_message_resumptions"]
       )
     end
@@ -131,6 +132,7 @@ module HQ
         "stopped_reason" => stopped_reason,
         "last_resume_reason" => last_resume_reason,
         "stop_id" => stop_id,
+        "acknowledged_target_stop" => acknowledged_target_stop,
         "user_message_resumptions" => user_message_resumptions
       }.compact
     end

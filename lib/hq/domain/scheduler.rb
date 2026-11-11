@@ -697,7 +697,9 @@ module HQ
       was_paused = state.paused?
       state.mark_scheduled!
       state.next_due_at = schedule.next_due_after(now)
-      state.resumed_at = now if was_stopped || was_paused
+      target = last_agent(schedule, state, load_agents(dispatch_prompt_queues: false))
+      state.acknowledged_target_stop = stopped_target_identity(target)
+      state.resumed_at = now
       state.last_resume_reason = reason if was_stopped || was_paused
       event_reason = reason || (was_stopped ? "stopped" : (was_paused ? "paused" : "manual"))
       publish("schedule.resumed", schedule, state, reason: event_reason)
@@ -712,12 +714,16 @@ module HQ
     end
 
     def unacknowledged_stopped_target?(agent, state)
-      return false unless agent&.status == "stopped"
+      identity = stopped_target_identity(agent)
+      identity && state.acknowledged_target_stop != identity
+    end
 
-      stopped_at = agent.finished_at || agent.started_at
-      return false if state.resumed_at && (!stopped_at || state.resumed_at >= stopped_at)
+    def stopped_target_identity(agent)
+      return nil unless agent&.status == "stopped"
 
-      true
+      # Run IDs survive reload and change on every start. A legacy record with
+      # no run can be acknowledged, but its next real start gets a new run ID.
+      { "agent_key" => agent.key, "run_id" => agent.last_run&.run_id }
     end
 
     def interactive_scheduled_session?(schedule, state, agent)
