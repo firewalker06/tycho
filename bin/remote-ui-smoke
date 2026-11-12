@@ -88,6 +88,7 @@ def write_fixture(dir)
       YAML
     end
   end
+  File.write(schedules_path, "---\nschedules: []\n") if ENV["TYCHO_REMOTE_UI_SCHEDULE_EMPTY_ONLY"] == "1"
   File.write(fake_codex_path, <<~'RUBY')
     #!/usr/bin/env ruby
     require "json"
@@ -10893,6 +10894,10 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     agent_key ||= create_agent(base_url)
     if ENV["TYCHO_REMOTE_UI_QUEUE_RESULT_ONLY"] == "1"
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "queue_result_smoke")
+      next
+    end
+    if ENV["TYCHO_REMOTE_UI_SCHEDULE_EMPTY_ONLY"] == "1"
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "schedule_empty_smoke")
       next
     end
     if ENV["TYCHO_REMOTE_UI_SCHEDULE_SAVE_ONLY"] == "1"
