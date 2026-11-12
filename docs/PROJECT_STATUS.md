@@ -10,7 +10,24 @@ type: project
 
 ## Last Updated
 
-2026-11-11
+2026-11-12
+
+## Scheduler startup intent
+
+Daemon ticks preserve paused and stopped schedule state. A stopped target now
+holds due automatic work even when the saved schedule still reports success.
+An explicit schedule resume records the stopped target key and persistent run
+ID, even before the first due tick, and waits for the next due time. This
+acknowledgement cannot permit a later stopped run in the same second after
+reload. Automatic acceptance checks the current stop again under the agent
+lock before adding a message or starting work, so a newer stop committed after
+the scheduler snapshot stays held. Legacy timestamp-only records require a
+new explicit acknowledgement.
+Manual Run remains available. Idle, successful, and partial targets keep
+normal scheduled execution. Restart regression tests use isolated runtime roots.
+Archive integration tests cover paused, stopped, acknowledged, and awaiting-input
+schedules: archived schedules stay inactive, retain history and delayed work,
+and reject manual or automatic resume.
 
 ## Remote UI Schedules navigation
 

@@ -118,7 +118,7 @@ module HQ
         states = store.load
         state = store.state_for(states, schedule.key)
         ensure_not_expired!(schedule, state, states, now:)
-        resume_state!(schedule, state, now:)
+        resume_state!(schedule, state, now:, acknowledge_target_stop: true)
         store.save(states)
         { status: :resumed, schedule: schedule_payload(schedule, state) }
       end
@@ -200,7 +200,7 @@ module HQ
       store.with_lock do
         schedule, states, state = schedule_state_for(key)
         ensure_not_expired!(schedule, state, states, now:)
-        resume_state!(schedule, state, now:)
+        resume_state!(schedule, state, now:, acknowledge_target_stop: true)
         dispatch_and_persist_schedule(schedule, states, state, now:, dry_run:)
       end
     end
@@ -427,7 +427,14 @@ module HQ
           next unless runnable?(schedule, state)
           next unless state.next_due_at && state.next_due_at <= now
 
-          result = dispatch_schedule(schedule, state, agents, now:, dry_run:)
+          target = last_agent(schedule, state, agents)
+          if unacknowledged_stopped_target?(target, state)
+            hold_stopped_target(schedule, state, agent_key: target.key, now:)
+            totals[:skipped] += 1
+            next
+          end
+
+          result = dispatch_schedule(schedule, state, agents, now:, dry_run:, automatic: true)
           totals[result.fetch(:status)] += 1 if totals.key?(result.fetch(:status))
         end
 
@@ -547,7 +554,7 @@ module HQ
       !schedule.archived? && state.scheduled?
     end
 
-    def dispatch_schedule(schedule, state, agents, now:, dry_run: false)
+    def dispatch_schedule(schedule, state, agents, now:, dry_run: false, automatic: false)
       target = last_agent(schedule, state, agents)
       running = target&.running?
       if running
@@ -573,7 +580,8 @@ module HQ
       due_at = state.next_due_at || now
       if target
         agent = @agent_store.dispatch_scheduled_message!(
-          target.key, schedule_key: schedule.key, message:, due_at:
+          target.key, schedule_key: schedule.key, message:, due_at:, automatic:,
+          acknowledged_target_stop: state.acknowledged_target_stop
         )
       else
         project = project_for(schedule)
@@ -603,6 +611,8 @@ module HQ
         schedule: schedule_payload(schedule, state, agent: agent),
         agent: agent
       }
+    rescue AgentStore::StoppedScheduleTarget
+      hold_stopped_target(schedule, state, agent_key: target.key, now:)
     rescue AgentStore::StaleScheduleTarget => e
       refresh_schedule_state!(state, store.load[schedule.key])
       {
@@ -716,12 +726,18 @@ module HQ
       agents.find { |agent| agent.key == key }
     end
 
-    def resume_state!(schedule, state, now:, reason: nil)
+    def resume_state!(schedule, state, now:, reason: nil, acknowledge_target_stop: false)
       was_stopped = state.stopped?
       was_paused = state.paused?
       state.mark_scheduled!
       state.next_due_at = schedule.next_due_after(now)
-      state.resumed_at = now if was_stopped || was_paused
+      # Inquiry receipt effects already hold the agent lock. Only explicit
+      # Resume needs to read and acknowledge a stopped target here.
+      state.acknowledged_target_stop = if acknowledge_target_stop
+                                         target = last_agent(schedule, state, load_agents(dispatch_prompt_queues: false))
+                                         stopped_target_identity(target)
+                                       end
+      state.resumed_at = now
       state.last_resume_reason = reason if was_stopped || was_paused
       event_reason = reason || (was_stopped ? "stopped" : (was_paused ? "paused" : "manual"))
       publish("schedule.resumed", schedule, state, reason: event_reason)
@@ -733,6 +749,23 @@ module HQ
       expire_schedule!(schedule, state, now:)
       store.save(states)
       raise ScheduleRegistry::Error, "Schedule #{schedule.key.inspect} ended at #{schedule.ends_at.iso8601}"
+    end
+
+    def unacknowledged_stopped_target?(agent, state)
+      identity = stopped_target_identity(agent)
+      identity && state.acknowledged_target_stop != identity
+    end
+
+    def stopped_target_identity(agent)
+      agent&.stopped_run_identity
+    end
+
+    def hold_stopped_target(schedule, state, agent_key:, now:)
+      state.last_status = "stopped"
+      state.last_error = "agent_stopped"
+      state.mark_stopped!(now:, reason: "agent_stopped")
+      publish("schedule.stopped", schedule, state, agent_key:, reason: "agent_stopped")
+      { status: :skipped, schedule: schedule_payload(schedule, state), reason: "agent_stopped" }
     end
 
     def interactive_scheduled_session?(schedule, state, agent)

@@ -1284,6 +1284,14 @@ module HQ
       !@schedule_key.to_s.empty?
     end
 
+    def stopped_run_identity
+      return nil unless status == "stopped"
+
+      # Legacy records without runs can be acknowledged. Their next real start
+      # receives a new run ID, so that stop cannot reuse this acknowledgement.
+      { "agent_key" => key, "run_id" => last_run&.run_id }
+    end
+
     def associate_schedule!(schedule_key)
       @schedule_key = normalize_schedule_key(schedule_key)
     end

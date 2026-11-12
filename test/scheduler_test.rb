@@ -21,11 +21,15 @@ module SchedulerTest
   def run!
     with_stubbed_agent_start do
       assert_schedule_archive_keeps_history_and_blocks_execution
+      assert_archive_preserves_stopped_target_and_schedule_holds
       assert_schedule_registry_validates_scope_and_prompt_paths
       assert_schedule_execution_overrides_round_trip_and_apply
       assert_schedule_store_tracks_daemon_state
       assert_schedule_daemon_banner_labels_metadata_by_state
       assert_scheduler_run_reuses_schedule_agent_session
+      assert_startup_preserves_schedule_and_stopped_target_intent
+      assert_resume_acknowledges_exact_stopped_target_after_reload
+      assert_automatic_acceptance_rechecks_stopped_run_under_agent_lock
       assert_scheduler_adopts_existing_session_and_expires_loop
       assert_archived_schedule_session_promotes_prompt_to_schedule
       assert_scheduler_stops_interactive_scheduled_agent_until_resume
@@ -54,6 +58,229 @@ module SchedulerTest
     assert_partial_scheduled_agent_continues_and_keeps_status
     assert_failed_scheduled_agent_stops_and_notifies
     puts "scheduler_test: ok"
+  end
+
+  def assert_startup_preserves_schedule_and_stopped_target_intent
+    ["paused", "stopped", "legacy-paused", "legacy-stopped", "stopped-target", "stopped-after-resume", "idle", "succeeded", "partial"].each do |scenario|
+      with_temp_runtime do |dir|
+        now = Time.new(2026, 11, 11, 9, 0, 0, "+00:00")
+        registry, schedule_path = write_registry_and_schedule(dir, <<~YAML)
+          schedules:
+            - key: startup
+              cron: "* * * * *"
+              target:
+                type: agent
+                project_key: web
+                agent_key: startup-target
+                message: "Run scheduled work."
+        YAML
+        project = HQ::Project.new(registry.projects.fetch(0))
+        stopped_target = scenario.start_with?("stopped-")
+        agent = HQ::ManagedAgent.new(
+          key: "startup-target", name: "Startup target", project_key: "web", template_key: "scheduled",
+          workspace: project.path, prompt: "Scheduled context", agent: "codex",
+          started_at: scenario == "idle" ? nil : now - 120,
+          finished_at: scenario == "idle" ? nil : now - 60,
+          last_exit_code: scenario == "idle" ? nil : stopped_target ? 143 : 0,
+          structured_result: scenario == "partial" ? { "status" => "partial" } : nil
+        )
+        agent.associate_schedule!("startup")
+        HQ::AgentStore.new([project]).save([agent])
+        state_hash = {
+          "key" => "startup", "status" => "scheduled", "enabled" => true,
+          "last_status" => "succeeded", "last_target_key" => agent.key,
+          "next_due_at" => (now - 3600).iso8601
+        }
+        if %w[paused stopped].include?(scenario)
+          state_hash.merge!("status" => scenario, "enabled" => false)
+        elsif scenario.start_with?("legacy-")
+          state_hash.delete("status")
+          state_hash["enabled"] = false
+          state_hash["last_status"] = "stopped" if scenario == "legacy-stopped"
+        end
+        state_hash["resumed_at"] = (now - 90).iso8601 if scenario == "stopped-after-resume"
+        File.write(HQ::SCHEDULES_STATE_FILE, JSON.generate([state_hash]))
+        if stopped_target
+          env = {
+            "TYCHO_CONFIG_PATH" => registry.path, "TYCHO_SCHEDULES_PATH" => schedule_path,
+            "TYCHO_SCHEDULES_STATE_PATH" => HQ::SCHEDULES_STATE_FILE,
+            "TYCHO_SCHEDULER_DAEMON_PATH" => File.join(dir, "daemon.json"),
+            "TYCHO_LOGS_ROOT" => File.join(dir, "logs")
+          }
+          # Use the same persisted target for the actual daemon entry point.
+          FileUtils.mkdir_p(File.join(dir, "logs"))
+          FileUtils.cp(HQ::AGENTS_FILE, File.join(dir, "logs", "managed_agents.json"))
+          FileUtils.cp(HQ::QueueStore.path, File.join(dir, "logs", "queues.json"))
+          out, err, status = Open3.capture3(env, RbConfig.ruby, "bin/tycho", "schedule", "daemon",
+                                          "--once", "--dry-run", chdir: ROOT)
+          assert(status.success?, "expected isolated startup to succeed: #{err}")
+          assert(out.include?("started=0 skipped=1"), "expected daemon to hold stopped target: #{out}")
+        end
+        held = !%w[idle succeeded partial].include?(scenario)
+
+        # A new scheduler instance is the daemon's startup path and every later tick.
+        2.times do |tick|
+          result = build_scheduler(registry, schedule_path).tick(now: now + tick)
+          assert(result[:started] == (held || tick.positive? ? 0 : 1),
+                 "expected startup to preserve #{scenario} intent, got #{result.inspect}")
+        end
+        persisted = HQ::ScheduleStore.new.load.fetch("startup")
+        if held
+          expected_status = scenario.include?("paused") ? "paused" : "stopped"
+          assert(persisted.status == expected_status, "expected #{scenario} status to survive restart")
+          assert(read_agents.fetch(0).run_count.zero?, "expected held target never to start")
+        end
+        next unless stopped_target
+
+        scheduler = build_scheduler(registry, schedule_path)
+        scheduler.resume("startup", now: now + 10)
+        assert(scheduler.tick(now: now + 11)[:started].zero?, "expected resume to wait for next due time")
+        assert(build_scheduler(registry, schedule_path).tick(now: now + 60)[:started] == 1,
+               "expected explicit resume to permit the stopped target at its next due time")
+        scheduler.pause("startup", now: now + 61)
+        assert(scheduler.run_now("startup", now: now + 62)[:status] == :started,
+               "expected explicit manual Run to remain available on a held schedule")
+      end
+    end
+  end
+
+  def assert_resume_acknowledges_exact_stopped_target_after_reload
+    [[false, false], [true, false], [false, true], [true, true]].each do |later_stop, legacy_run|
+      with_temp_runtime do |dir|
+        now = Time.new(2026, 11, 11, 9, 0, 0, "+00:00")
+        registry, schedule_path = write_registry_and_schedule(dir, <<~YAML)
+          schedules:
+            - key: resume-before-hold
+              cron: "* * * * *"
+              target:
+                type: agent
+                project_key: web
+                agent_key: resume-target
+                message: "Run scheduled work."
+        YAML
+        project = HQ::Project.new(registry.projects.fetch(0))
+        agent = HQ::ManagedAgent.new(
+          key: "resume-target", name: "Resume target", project_key: "web", template_key: "scheduled",
+          workspace: project.path, prompt: "Scheduled context", agent: "codex",
+          started_at: now - 120, finished_at: now - 60, last_exit_code: 143,
+          runs: [HQ::ManagedAgent::AgentRun.new(
+            started_at: now - 120, finished_at: now - 60, exit_code: 143, status: "stopped",
+            run_id: legacy_run ? nil : "first-stop", log_path: File.join(HQ::AGENT_LOGS_DIR, "resume.raw.log"), command: "test"
+          )]
+        )
+        agent.associate_schedule!("resume-before-hold")
+        agent_store = HQ::AgentStore.new([project])
+        agent_store.save([agent])
+        store = HQ::ScheduleStore.new
+        store.save("resume-before-hold" => HQ::ScheduleState.new(
+          key: "resume-before-hold", status: later_stop ? "stopped" : "scheduled", last_status: "succeeded",
+          last_target_key: agent.key, next_due_at: now + 60
+        ))
+
+        build_scheduler(registry, schedule_path).resume("resume-before-hold", now: now + 0.2)
+        acknowledged = store.load.fetch("resume-before-hold")
+        assert(acknowledged.acknowledged_target_stop["agent_key"] == agent.key,
+               "expected explicit Resume to persist the current stopped target")
+        assert(!acknowledged.acknowledged_target_stop["run_id"].to_s.empty?,
+               "expected native and legacy run identities to survive reload")
+        if later_stop
+          # A new run stops after Resume, within the same serialized second.
+          agent_store.update_agent!(agent.key) do |target|
+            target.instance_variable_set(:@started_at, now + 0.4)
+            target.instance_variable_set(:@finished_at, now + 0.8)
+            target.instance_variable_get(:@runs) << HQ::ManagedAgent::AgentRun.new(
+              started_at: now + 0.4, finished_at: now + 0.8, exit_code: 143, status: "stopped",
+              run_id: "later-stop", log_path: target.raw_log_path, command: "test"
+            )
+          end
+          reloaded = agent_store.load.fetch(0)
+          resumed = store.load.fetch("resume-before-hold")
+          assert(resumed.resumed_at == reloaded.finished_at,
+                 "expected the exact same-second timestamp collision after serialization")
+        end
+        result = build_scheduler(registry, schedule_path).tick(now: now + 60, dry_run: true)
+        assert(result[:started] == (later_stop ? 0 : 1),
+               "expected reloaded Resume to acknowledge only the current stop (later_stop=#{later_stop}): #{result}")
+        assert(result[:skipped] == (later_stop ? 1 : 0), "expected a later stop to hold automatic work")
+      end
+    end
+  end
+
+  def assert_automatic_acceptance_rechecks_stopped_run_under_agent_lock
+    [false, true].each do |delayed|
+      with_temp_runtime do |dir|
+        now = Time.new(2026, 11, 11, 9, 0, 0, "+00:00")
+        registry, schedule_path = write_registry_and_schedule(dir, <<~YAML)
+          schedules:
+            - key: stop-race
+              cron: "* * * * *"
+              target:
+                type: agent
+                project_key: web
+                agent_key: race-target
+                message: "Run scheduled work."
+        YAML
+        project = HQ::Project.new(registry.projects.fetch(0))
+        agent = HQ::ManagedAgent.new(
+          key: "race-target", name: "Race target", project_key: "web", template_key: "scheduled",
+          workspace: project.path, prompt: "Scheduled context", agent: "codex",
+          started_at: now - 120, finished_at: now - 60, last_exit_code: 143,
+          runs: [HQ::ManagedAgent::AgentRun.new(
+            started_at: now - 120, finished_at: now - 60, exit_code: 143, status: "stopped",
+            run_id: "old-stop", log_path: File.join(HQ::AGENT_LOGS_DIR, "race.raw.log"), command: "test"
+          )]
+        )
+        agent.associate_schedule!("stop-race")
+        agent_store = HQ::AgentStore.new([project])
+        agent_store.save([agent])
+        HQ::ScheduleStore.new.save("stop-race" => HQ::ScheduleState.new(
+          key: "stop-race", status: "scheduled", last_status: "succeeded",
+          last_target_key: agent.key, next_due_at: now + 60
+        ))
+        build_scheduler(registry, schedule_path).resume("stop-race", now:)
+        scheduler = build_scheduler(registry, schedule_path)
+        dispatch_store = scheduler.instance_variable_get(:@agent_store)
+        dispatch = dispatch_store.method(:dispatch_scheduled_message!)
+        injected = false
+        dispatch_store.define_singleton_method(:dispatch_scheduled_message!) do |*args, **kwargs|
+          unless injected
+            injected = true
+            agent_store.update_agent!(agent.key) do |target|
+              if delayed
+                target.enqueue_prompt!(prompt: "Preserve delayed user work", id: "delayed-user-work",
+                                       not_before: Time.now + 3600)
+              end
+              target.instance_variable_set(:@started_at, now + 10)
+              target.instance_variable_set(:@finished_at, now + 20)
+              target.instance_variable_get(:@runs) << HQ::ManagedAgent::AgentRun.new(
+                started_at: now + 10, finished_at: now + 20, exit_code: 143, status: "stopped",
+                run_id: "new-stop", log_path: target.raw_log_path, command: "test"
+              )
+            end
+          end
+          dispatch.call(*args, **kwargs)
+        end
+
+        result = scheduler.tick(now: now + 60)
+        assert(injected, "expected the newer stop to commit after the scheduler snapshot")
+        assert(result[:started].zero? && result[:skipped] == 1,
+               "expected locked automatic acceptance to hold the newer stop: #{result}")
+        current = agent_store.load.fetch(0)
+        assert(current.run_count == 2 && current.last_run.run_id == "new-stop", "expected no third start")
+        queued_ids = current.prompt_queue.map { |entry| entry["id"] }
+        assert(queued_ids == (delayed ? ["delayed-user-work"] : []),
+               "expected rejection to preserve existing delayed work without adding scheduled work")
+        scheduled_messages = HQ::AgentMemory.new(current).events.select do |event|
+          event["type"] == "user_message" && event.dig("metadata", "scheduled_prompt")
+        end
+        assert(scheduled_messages.empty?, "expected rejection before scheduled message acceptance")
+        held = HQ::ScheduleStore.new.load.fetch("stop-race")
+        assert(held.stopped? && held.stopped_reason == "agent_stopped", "expected a persisted hold")
+        assert(scheduler.run_now("stop-race", now: now + 61)[:status] == :started,
+               "expected explicit manual Run to bypass the automatic acknowledgement gate")
+        assert(agent_store.load.fetch(0).run_count == 3, "expected only manual Run to start the third run")
+      end
+    end
   end
 
   def assert_schedule_archive_keeps_history_and_blocks_execution
@@ -105,6 +332,74 @@ module SchedulerTest
       cold = build_scheduler(registry, path)
       assert(cold.list.empty?, "expected archive to survive reload")
       assert(cold.list(include_archived: true).first[:archived], "expected persisted archive marker")
+    end
+  end
+
+  def assert_archive_preserves_stopped_target_and_schedule_holds
+    %w[paused stopped acknowledged awaiting_input].each do |mode|
+      with_temp_runtime do |dir|
+        now = Time.new(2026, 11, 12, 9, 0, 0, "+00:00")
+        registry, path = write_registry_and_schedule(dir, <<~YAML)
+          schedules:
+            - key: archive-held
+              cron: "* * * * *"
+              target:
+                type: agent
+                project_key: web
+                agent_key: archive-target
+                message: "Preserve scheduled work."
+        YAML
+        project = HQ::Project.new(registry.projects.fetch(0))
+        target = HQ::ManagedAgent.new(
+          key: "archive-target", name: "Archive target", project_key: "web", template_key: "scheduled",
+          workspace: project.path, prompt: "Preserve context", agent: "codex", schedule_key: "archive-held",
+          started_at: now - 120, finished_at: now - 60, last_exit_code: 143,
+          runs: [HQ::ManagedAgent::AgentRun.new(
+            started_at: now - 120, finished_at: now - 60, exit_code: 143, status: "stopped",
+            run_id: "held-stop", log_path: File.join(HQ::AGENT_LOGS_DIR, "archive-held.raw.log"), command: "test"
+          )]
+        )
+        target.enqueue_prompt!(prompt: "Preserve delayed work", id: "delayed-work", not_before: Time.now + 3600)
+        agent_store = HQ::AgentStore.new([project])
+        agent_store.save([target])
+        store = HQ::ScheduleStore.new
+        state = HQ::ScheduleState.new(
+          key: "archive-held", status: "scheduled", last_status: "succeeded",
+          last_target_key: target.key, run_count: 1, next_due_at: now + 60
+        )
+        state.mark_paused!(now:) if mode == "paused"
+        state.mark_stopped!(now:, reason: mode == "awaiting_input" ? "awaiting_input" : "agent_stopped") if %w[stopped awaiting_input].include?(mode)
+        store.save("archive-held" => state)
+        scheduler = build_scheduler(registry, path)
+        scheduler.resume("archive-held", now:) if mode == "acknowledged"
+        stops = scheduler.user_message_resume_targets(target.key)
+        before = store.load.fetch("archive-held").to_hash
+        scheduler.archive("archive-held", now: now + 1)
+
+        cold = build_scheduler(registry, path)
+        assert(cold.list.empty?, "expected archived #{mode} schedule to be hidden")
+        assert(cold.list(include_archived: true).first[:archived], "expected archived history to remain visible")
+        assert(cold.tick(now: now + 120)[:started].zero?, "expected archive to override #{mode} dispatch intent")
+        assert(cold.resume_after_user_message(target.key).empty?, "expected archive to block automatic reply resume")
+        assert(cold.resume_after_user_message(target.key, effect_id: "archive-reply", stops:).empty?,
+               "expected archive to block replayed reply resume")
+        [:run_now, :resume, :resume_and_run_now, :refresh_session].each do |action|
+          assert_raises(HQ::ScheduleRegistry::Error, "expected archive to refuse #{action}") do
+            cold.public_send(action, "archive-held", now: now + 121)
+          end
+        end
+        assert(!cold.reconcile_archived_agent!(target.key, archived_agent: target),
+               "expected session archive reconciliation not to reactivate an archived schedule")
+        after = store.load.fetch("archive-held")
+        assert(after.stopped? && after.stopped_reason == "archived" && after.next_due_at.nil?,
+               "expected archive hold to survive ticks, Resume, and session reconciliation")
+        %w[last_target_key run_count last_status acknowledged_target_stop].each do |field|
+          assert(after.to_hash[field] == before[field], "expected archive to preserve #{mode} history #{field}")
+        end
+        current = agent_store.load.fetch(0)
+        assert(current.run_count == 1 && current.last_run.run_id == "held-stop", "expected no archived target restart")
+        assert(current.prompt_queue.map { |entry| entry["id"] } == ["delayed-work"], "expected delayed work to remain intact")
+      end
     end
   end
 
