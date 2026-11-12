@@ -5621,7 +5621,7 @@ module RemoteServerTest
       traversal = HQ::RemoteServer::Request.new(
         method: "GET",
         path: "/projects/web/workspace",
-        query: "path=%252e%252e%252foutside",
+        query: "path=%2e%2e%2foutside",
         headers: {},
         body: ""
       )

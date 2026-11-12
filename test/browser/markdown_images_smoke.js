@@ -27,7 +27,7 @@ module.exports = async function markdownImagesSmoke({ browser, baseUrl, agentKey
         return route.fulfill({ response, json: data });
       }
       if (url.pathname.endsWith("/workspace/image") || /\/attachments\/[^/]+\/blob$/.test(url.pathname)) {
-        imageRequests.push({ resource: url.searchParams.get("path"), path: url.pathname, authorization: route.request().headers().authorization, peerToken: route.request().headers()["x-tycho-remote-server-token"] });
+        imageRequests.push({ query: url.search, resource: url.searchParams.get("path"), path: url.pathname, authorization: route.request().headers().authorization, peerToken: route.request().headers()["x-tycho-remote-server-token"] });
         if (url.searchParams.get("path") === "docs/local image.svg") {
           if (holdImage) await new Promise((resolve) => { releaseImage = resolve; });
           if (rejectImage) return route.fulfill({ status: 401, json: { error: "Unauthorized" } });
@@ -101,6 +101,40 @@ module.exports = async function markdownImagesSmoke({ browser, baseUrl, agentKey
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "reserved path overflow");
     if (captureDir) await page.screenshot({ path: path.join(captureDir, `reserved-paths-${name}.png`) });
 
+    const percentAttachment = detail.attachments.find((item) => item.title === "Literal percent image paths");
+    const percentId = peer ? `fixture-peer/${percentAttachment.id}` : percentAttachment.id;
+    async function assertPercentPixels(selector, expected) {
+      try {
+        await page.waitForFunction(({ selector, count }) => {
+          const images = [...document.querySelectorAll(`${selector} img`)];
+          return images.length === count && images.every((image) => image.complete && image.naturalWidth > 0);
+        }, { selector, count: expected.length }, { timeout: 5000 });
+      } catch (error) {
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, `percent-failure-${name}.png`) });
+        throw error;
+      }
+      const pixels = await page.locator(`${selector} img`).evaluateAll((images) => images.map((image) => {
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 1;
+        const context = canvas.getContext("2d");
+        context.drawImage(image, 0, 0);
+        return Array.from(context.getImageData(0, 0, 1, 1).data);
+      }));
+      assert.deepStrictEqual(pixels, expected, "literal %23 and actual # must select different bytes");
+    }
+    const blue = [46, 107, 204, 255], red = [255, 0, 0, 255];
+    await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(key)}/attachment/${encodeURIComponent(percentId)}`, { waitUntil: "networkidle" });
+    await assertPercentPixels(".attachment-viewer .markdown-viewer", [blue, red, blue, red, blue]);
+    assert.strictEqual(await page.locator(".attachment-viewer .field-hint").filter({ hasText: "image unavailable" }).count(), 3);
+    assert(imageRequests.some((request) => request.resource === "docs%23/image%23.svg" && request.query.includes("docs%2523") && request.query.includes("image%2523")), "query transport did not preserve literal percent sequences");
+    assert(imageRequests.some((request) => request.resource === "docs%23/image#.svg"), "actual hash filename was not tested");
+    assert(imageRequests.some((request) => request.resource === "docs#/image%23.svg"), "actual hash directory was not tested");
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    if (captureDir) await page.screenshot({ path: path.join(captureDir, `percent-attachment-${name}.png`) });
+    await page.goto(summaryUrl.replace("preview-current", "literal-percent-summary"), { waitUntil: "networkidle" });
+    await assertPercentPixels(".agent-summary-markdown-viewer", [blue, red]);
+    if (captureDir) await page.screenshot({ path: path.join(captureDir, `percent-summary-${name}.png`) });
+
     // Test sanitization in the same renderer used by both views. Only a fresh img with an
     // approved local resource can survive, even if raw HTML supplies application attributes.
     const security = await page.evaluate((key) => {
@@ -141,7 +175,7 @@ module.exports = async function markdownImagesSmoke({ browser, baseUrl, agentKey
     await page.waitForTimeout(150);
     assert.strictEqual(await page.evaluate(() => markdownImageResources.size), 0, "late image response retained a resource after navigation");
     assert.deepStrictEqual(errors, []);
-    console.log(`Markdown images: ${name}: rich/plain Summary, reserved metadata, decoded-once references, safe/private symlinks, pixels, auth retry, polling, URL cleanup and late response passed`);
+    console.log(`Markdown images: ${name}: rich/plain Summary, literal percent directory/image versus actual hash pixels, reserved metadata, decoded-once references, safe/private symlinks, pixels, auth retry, polling, URL cleanup and late response passed`);
     await page.close();
   }
 };

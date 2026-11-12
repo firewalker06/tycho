@@ -743,6 +743,7 @@ def run_attachment_preview_smoke!(dir:, base_url:, agent_key:, fixture:, browser
     records << { "type" => "file", "title" => "Registered absolute image", "path" => File.join(dir, "registered image.svg"), "created_at" => Time.now.iso8601 }
     [
       ["Reserved image paths", File.join(workspace, "docs #1 ? 100%", "report.md")],
+      ["Literal percent image paths", File.join(workspace, "docs%23", "report.md")],
       ["Registered reserved name", File.join(dir, "registered #1 ? %23.svg")],
       ["Decode once", File.join(dir, "literal%23.svg")]
     ].each { |title, path| records << { "type" => "file", "title" => title, "path" => path, "created_at" => Time.now.iso8601 } }
@@ -766,6 +767,37 @@ def run_attachment_preview_smoke!(dir:, base_url:, agent_key:, fixture:, browser
     SVG
     red = blue.sub("#2e6bcc", "#ff0000").sub("Correct blue image: reserved path", "Wrong red image: root fallback")
     green = blue.sub("#2e6bcc", "#00ff00").sub("Correct blue image: reserved path", "PRIVATE_IMAGE_SENTINEL")
+    percent_dir = File.join(workspace, "docs%23")
+    hash_dir = File.join(workspace, "docs#")
+    FileUtils.mkdir_p(percent_dir)
+    FileUtils.mkdir_p(hash_dir)
+    percent_blue = blue.sub("Correct blue image: reserved path", "Literal %23 image: correct blue")
+    hash_red = red.sub("Wrong red image: root fallback", "Actual # image: distinct red")
+    File.write(File.join(percent_dir, "image%23.svg"), percent_blue)
+    File.write(File.join(percent_dir, "image#.svg"), hash_red)
+    File.write(File.join(hash_dir, "image%23.svg"), hash_red)
+    File.write(File.join(percent_dir, "%2e%2e%2fescape.svg"), percent_blue)
+    File.write(File.join(workspace, "image%23.svg"), percent_blue)
+    File.write(File.join(workspace, "image#.svg"), hash_red)
+    File.write(File.join(percent_dir, "report.md"), <<~MARKDOWN)
+      # Literal percent and actual hash images
+
+      ![Literal percent filename](image%2523.svg)
+
+      ![Actual hash filename](image%23.svg)
+
+      ![Literal percent directory](../docs%2523/image%2523.svg)
+
+      ![Actual hash directory](../docs%23/image%2523.svg)
+
+      ![Literal encoded-looking traversal](%252e%252e%252fescape.svg)
+
+      ![Blocked private alias](../public.svg)
+
+      ![Blocked direct private file](../.ssh/private.svg)
+
+      ![Blocked external alias](../escape.png)
+    MARKDOWN
     File.write(File.join(reserved_dir, "image.svg"), blue)
     File.write(File.join(reserved_dir, "image#?%.svg"), blue)
     File.write(File.join(workspace, "image.svg"), red)
@@ -807,6 +839,13 @@ def run_attachment_preview_smoke!(dir:, base_url:, agent_key:, fixture:, browser
       file.puts JSON.generate("type" => "run_summary", "content" => ENV["TYCHO_REMOTE_UI_MARKDOWN_IMAGES_ONLY"] == "1" ? "## Plain image Summary\n\n![Plain Summary file URI](file://#{markdown_image_reference(File.join(workspace, "docs", "local image.svg"))})\n\n![Plain Summary registered](#{dir}/registered%20image.svg)" : "## Release review complete\n\nReview the report and supporting files.\n\n- The conversation stays visible.\n- The selected document opens beside this Summary.", "status" => "success", "created_at" => Time.now.iso8601,
                               "metadata" => { "summary_id" => id, "run_number" => index + 1, "attachments" => detail.fetch("attachments"),
                                               "summary_sections" => ENV["TYCHO_REMOTE_UI_MARKDOWN_IMAGES_ONLY"] == "1" && index == 1 ? [{ "type" => "text", "text" => "## Local image Summary\n\n![Summary relative](docs/local%20image.svg)\n\n![Summary absolute](#{dir}/registered%20image.svg)" }] : [] })
+    end
+  end
+  if ENV["TYCHO_REMOTE_UI_MARKDOWN_IMAGES_ONLY"] == "1"
+    File.open(memory_path, "a") do |file|
+      file.puts JSON.generate("type" => "run_summary", "content" => "## Literal percent Summary\n\n![Literal percent image](image%2523.svg)\n\n![Actual hash image](image%23.svg)",
+                              "status" => "success", "created_at" => Time.now.iso8601,
+                              "metadata" => { "summary_id" => "literal-percent-summary", "run_number" => 3, "attachments" => detail.fetch("attachments") })
     end
   end
   other_agent_key = create_agent(base_url, name: "Other preview session")

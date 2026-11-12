@@ -215,10 +215,10 @@ module HQ
     end
 
     def normalize_relative_path(value)
+      # Callers supply a decoded filesystem path. Percent sequences stay literal here.
       raw = value.to_s
       raise invalid_path if raw.include?("\0") || !raw.valid_encoding?
       raise invalid_path if raw.start_with?("/", "\\") || raw.match?(/\A[A-Za-z]:[\\\/]/)
-      raise invalid_path if raw.match?(/%[0-9a-f]{2}/i)
 
       clean = raw.tr("\\", "/").split("/", -1)
       raise invalid_path if clean.any? { |part| part == ".." }
