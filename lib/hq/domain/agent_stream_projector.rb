@@ -14,6 +14,7 @@ module HQ
       @adapter = HQ.harness_adapter(agent_type)
       @run_id = run_id.to_s
       @claude_tool_names = {}
+      @dsh_tool_names = {}
       # agy's finish step arrives on an earlier line than the terminal
       # result. parse_stream is per-line, so the projector owns the
       # cross-line finish state and annotates agy result lines with it.
@@ -29,6 +30,7 @@ module HQ
       end
       conversation, system = Parser.parse_stream([text], agent_type: @agent_type)
       restore_claude_tool_names(system)
+      restore_dsh_tool_names(system)
       normalized = normalize(conversation, system, source_sequence:, raw_offset:, occurred_at:)
       normalized.map do |event|
         @journal.append(event, event_id: event.fetch("event_id"))
@@ -36,6 +38,18 @@ module HQ
     end
 
     private
+
+    def restore_dsh_tool_names(system)
+      return unless @adapter == "dsh"
+
+      system.each do |entry|
+        id = entry.metadata&.dig("tool_call_id").to_s
+        next if id.empty?
+
+        @dsh_tool_names[id] = entry.tool_name if entry.type == :tool_call
+        entry.tool_name ||= @dsh_tool_names[id] if entry.type == :tool_result
+      end
+    end
 
     def track_agy_finish!(text)
       event = safe_parse(text)

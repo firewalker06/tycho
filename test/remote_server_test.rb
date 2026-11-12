@@ -1298,9 +1298,12 @@ module RemoteServerTest
       fetched = server.send(:route, service, "GET", "/skills", {}, nil)
       harnesses = fetched.dig(:body, :skill_installation, :harnesses)
       assert(harnesses.map { |item| item[:harness] } == %w[
-        codex claude opencode pi agy claude-wrapper codex-wrapper opencode-wrapper pi-wrapper
+        codex claude opencode pi agy dsh claude-wrapper codex-wrapper opencode-wrapper pi-wrapper
       ], "expected Remote skills status for built-ins and configured profiles")
-      assert(harnesses.all? { |item| item[:status] == "missing" }, "expected supported isolated homes to start missing")
+      supported = harnesses.reject { |item| item[:harness] == "dsh" }
+      assert(supported.all? { |item| item[:status] == "missing" }, "expected supported isolated homes to start missing")
+      dsh = harnesses.find { |item| item[:harness] == "dsh" }
+      assert(dsh[:status] == "error" && dsh.dig(:error, :category) == "compatibility" && !dsh.dig(:actions, :install), "expected native dsh skill installation to stay unsupported")
       agy = harnesses.find { |item| item[:harness] == "agy" }
       assert(agy[:target_path] == File.join(home, ".gemini", "config", "skills"),
              "expected agy skill installation to target its documented global skill directory")
@@ -6241,7 +6244,7 @@ module RemoteServerTest
       assert(setup[:refresh_intervals] == { active_ms: 5_000, idle_ms: 10_000, hidden_ms: 30_000 },
              "expected refresh intervals to use the 5s, 10s, and 30s policy")
       assert(setup[:harnesses].map { |item| item[:name] }.sort == %w[
-        agy claude claude-wrapper codex codex-wrapper opencode opencode-wrapper pi pi-wrapper
+        agy claude claude-wrapper codex codex-wrapper dsh opencode opencode-wrapper pi pi-wrapper
       ],
              "expected harness readiness entries")
       custom_profiles = setup[:harnesses].select { |item| item[:name].end_with?("-wrapper") }
@@ -6584,7 +6587,7 @@ module RemoteServerTest
       setup = HQ::RemoteService.new(registry: registry).setup
       guides = setup.dig(:onboarding, :agent_cli_guides)
 
-      assert(guides.map { |guide| guide[:key] } == %w[codex claude opencode pi],
+      assert(guides.map { |guide| guide[:key] } == %w[codex claude opencode pi dsh],
              "expected onboarding CLI guides for each built-in harness")
       guides.each do |guide|
         assert(guide[:install_command].to_s.length.positive?, "expected #{guide[:key]} install command")

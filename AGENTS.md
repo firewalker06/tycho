@@ -62,6 +62,7 @@ The **Interaction Profiler** is optional verification when adding or changing a 
 - `bin/remote-ui-inquiry-dismiss-fixture`: start an isolated 600-agent inquiry fixture on a free localhost port and print a generated Interaction Profiler config. See `docs/REMOTE_UI_INTERACTION_PROFILER.md` for sampling and reset steps.
 - `bin/capture-site-quickstart`: regenerate the v0.10.0 website launch and watch screenshots from deterministic synthetic Remote UI fixtures at 1440x900.
 - `bin/capture-site-tui-conversation`: regenerate the v0.10.0 website TUI conversation screenshot from a deterministic synthetic fixture at 1440x900.
+- `bundle exec ruby -r ./test/support/push_safety.rb test/dsh_harness_test.rb`: verify native DeepSeek Harness transport, events, resume, and result correction without a provider. See [DeepSeek Harness](docs/DEEPSEEK.md).
 - `bundle exec ruby -c bin/tycho`: syntax-check the main executable before opening a PR.
 - `bundle exec ruby test/registry_test.rb`: verify registry loading for split config and system prompt interpolation.
 - `bundle exec ruby test/parser_test.rb`: verify synthetic Claude parser fixture shapes.

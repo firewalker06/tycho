@@ -2221,7 +2221,7 @@ module HQ
     end
 
     def structured_output_correction_supported?
-      File.file?(result_schema_path) && %w[codex claude opencode pi agy].include?(harness_adapter)
+      File.file?(result_schema_path) && %w[codex claude opencode pi agy dsh].include?(harness_adapter)
     end
 
     def structured_output_correction_limit
@@ -3343,7 +3343,7 @@ module HQ
 
     def native_resume?
       return false if @session_id.to_s.empty?
-      return false unless %w[codex claude opencode pi agy].include?(harness_adapter)
+      return false unless %w[codex claude opencode pi agy dsh].include?(harness_adapter)
 
       claude_like_agent? ? @session_bootstrapped : @runs.any?
     end
@@ -3378,7 +3378,7 @@ module HQ
     end
 
     def prompt_only_structured_output_agent?
-      opencode_agent? || pi_agent?
+      opencode_agent? || pi_agent? || harness_adapter == "dsh"
     end
 
     def harness_adapter
@@ -3447,7 +3447,12 @@ module HQ
         return normalized if normalized
       end
 
-      AgentStructuredResult.from_log_lines(last_run_log_lines)
+      payload = AgentStructuredResult.from_log_lines(last_run_log_lines)
+      if harness_adapter == "dsh" && @last_exit_code && !@last_exit_code.zero? && payload&.fetch("status", nil) != "failed"
+        return nil
+      end
+
+      payload
     rescue JSON::ParserError
       AgentStructuredResult.from_log_lines(last_run_log_lines)
     end
@@ -3686,6 +3691,8 @@ module HQ
                  (event["id"] if event["type"].to_s.include?("session"))
              elsif pi_agent?
                event["id"] if event["type"] == "session"
+             elsif harness_adapter == "dsh"
+               event["sessionId"] if event["type"] == "session"
              elsif agy_agent?
                AgentStructuredResult.agy_conversation_id(event)
              else
