@@ -53,6 +53,8 @@ const { chromium } = require(process.env.TYCHO_PLAYWRIGHT_PATH || "playwright");
       await page.waitForFunction(() => state.projectCreation && !state.refreshInFlight && document.getElementById("tycho-boot-shell").hidden);
       await page.evaluate(() => Promise.all(document.getAnimations().filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity).map(animation => animation.finished.catch(() => {}))));
       await page.getByLabel("Name", { exact: true }).fill(`${label} project`);
+      await page.getByLabel("Project key", { exact: true }).fill("Invalid key");
+      assert.equal(await page.getByLabel("Project key", { exact: true }).evaluate(input => input.checkValidity()), false);
       await page.getByLabel("Project key", { exact: true }).fill(label);
       await page.screenshot({ path: path.join(capture, `${label}-form.png`), fullPage: false });
       await page.getByLabel("Server folder (optional)").fill(path.join(root, "outside"));
