@@ -26,6 +26,7 @@ The **Interaction Profiler** is optional verification when adding or changing a 
 - `bin/tycho --version`: print the Tycho version from the current checkout or installation.
 - `bundle exec bin/tycho serve [--host 127.0.0.1] [--port 7373]`: start the local Remote Sessions JSON API and web UI for managed-agent control.
 - `bundle exec bin/tycho project create <key> [options]` and `project list|show|update|archive`: manage project configuration from the CLI.
+- `bin/tycho schedule archive SCHEDULE_KEY [--server KEY] [--json]`: archive a stopped schedule while retaining configuration and history. Use `bin/tycho schedule list --include-archived` to inspect archived schedules.
 - `bundle exec bin/tycho schedule [list|daemon --once|daemon --dry-run]`: list schedules, run the scheduled-agent daemon, or run a single scheduler tick.
 - `bundle exec bin/tycho metrics query [filters] [--json]`: query normalized run/native-session usage metrics. `metrics backfill` is deprecated and no longer mutates data.
 - `bundle exec bin/tycho queue-work complete <agent-key> <batch-id> --dispositions-json JSON`: record durable source-appropriate outcomes for an open queue-work batch.
@@ -171,3 +172,5 @@ Also call out changes to Bubbletea input handling, bracketed paste behavior, or 
 - Set `TYCHO_REMOTE_UI_ATTACHMENT_LOAD_ONLY=1` with `bin/remote-ui-smoke` to check attachment reads during a held lifecycle lock, stalled Markdown dependencies, fresh file content, concurrent downloads, synthetic peer routing, and auth retry in desktop/mobile Dark/Nord Light. Set `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the repository for screenshots and browser timing samples. Optional `TYCHO_REMOTE_UI_ATTACHMENT_LOAD_BASELINE=path/to/path/baseline.rb` preloads a test-only lookup baseline into the throwaway server.
 
 - Set `TYCHO_REMOTE_UI_METADATA_LIFECYCLE_ONLY=1` with `bin/remote-ui-smoke` to hold real project detail responses beyond cache freshness, then release them after navigation, blur, hide, or page close. The check counts real Git commands and asserts zero new metadata work and zero follow-up detail requests. It covers desktop and mobile. Set `TYCHO_REMOTE_UI_CAPTURE_DIR` to retain evidence outside the repository.
+
+- Set `TYCHO_REMOTE_UI_SCHEDULE_EMPTY_ONLY=1` with `bin/remote-ui-smoke` to check the first-schedule action, create/delete transitions, loading, connection errors, filtered rows, keyboard use, and desktop/mobile Dark/Light layout. Set `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the repository to retain screenshots.

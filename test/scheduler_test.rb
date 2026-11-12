@@ -20,6 +20,8 @@ module SchedulerTest
 
   def run!
     with_stubbed_agent_start do
+      assert_schedule_archive_keeps_history_and_blocks_execution
+      assert_archive_preserves_stopped_target_and_schedule_holds
       assert_schedule_registry_validates_scope_and_prompt_paths
       assert_schedule_execution_overrides_round_trip_and_apply
       assert_schedule_store_tracks_daemon_state
@@ -277,6 +279,126 @@ module SchedulerTest
         assert(scheduler.run_now("stop-race", now: now + 61)[:status] == :started,
                "expected explicit manual Run to bypass the automatic acknowledgement gate")
         assert(agent_store.load.fetch(0).run_count == 3, "expected only manual Run to start the third run")
+      end
+    end
+  end
+
+  def assert_schedule_archive_keeps_history_and_blocks_execution
+    with_temp_runtime do |dir|
+      registry, path = write_registry_and_schedule(dir, <<~YAML)
+        schedules:
+          - key: old-work
+            cron: "* * * * *"
+            target:
+              type: agent
+              project_key: web
+              message: "Old work"
+      YAML
+      scheduler = build_scheduler(registry, path)
+      now = Time.now
+      result = scheduler.run_now("old-work", now:)
+      target = result.fetch(:agent)
+      target.define_singleton_method(:running?) { true }
+      scheduler.define_singleton_method(:load_agents) { |**| [target] }
+      before = File.read(path)
+      begin
+        scheduler.archive("old-work", now:)
+        raise "expected running target refusal"
+      rescue HQ::ScheduleRegistry::Error => e
+        assert(e.message.include?("running"), "expected clear running target error")
+      end
+      assert(File.read(path) == before, "running target refusal must preserve config")
+      target.define_singleton_method(:running?) { false }
+      history = scheduler.store.load.fetch("old-work").to_hash
+      payload = scheduler.archive("old-work", now:)
+      assert(payload[:archived] && payload[:status] == "archived", "expected archived payload")
+      assert(scheduler.list.empty?, "expected default hiding")
+      assert(scheduler.list(include_archived: true).size == 1, "expected archive inclusion")
+      assert(File.read(path).include?("Old work"), "expected config preservation")
+      state = scheduler.store.load.fetch("old-work")
+      %w[run_count last_target_key last_started_at last_status].each do |field|
+        assert(state.to_hash[field] == history[field], "expected preserved history #{field}")
+      end
+      [:run_now, :resume, :resume_and_run_now, :refresh_session].each do |action|
+        begin
+          scheduler.public_send(action, "old-work", now:)
+          raise "expected archived schedule refusal for #{action}"
+        rescue HQ::ScheduleRegistry::Error => e
+          assert(e.message.include?("archived"), "expected archive refusal")
+        end
+      end
+      scheduler.tick(now: now + 120)
+      assert(scheduler.store.load.fetch("old-work").run_count == state.run_count, "archived schedule must never dispatch")
+      cold = build_scheduler(registry, path)
+      assert(cold.list.empty?, "expected archive to survive reload")
+      assert(cold.list(include_archived: true).first[:archived], "expected persisted archive marker")
+    end
+  end
+
+  def assert_archive_preserves_stopped_target_and_schedule_holds
+    %w[paused stopped acknowledged awaiting_input].each do |mode|
+      with_temp_runtime do |dir|
+        now = Time.new(2026, 11, 12, 9, 0, 0, "+00:00")
+        registry, path = write_registry_and_schedule(dir, <<~YAML)
+          schedules:
+            - key: archive-held
+              cron: "* * * * *"
+              target:
+                type: agent
+                project_key: web
+                agent_key: archive-target
+                message: "Preserve scheduled work."
+        YAML
+        project = HQ::Project.new(registry.projects.fetch(0))
+        target = HQ::ManagedAgent.new(
+          key: "archive-target", name: "Archive target", project_key: "web", template_key: "scheduled",
+          workspace: project.path, prompt: "Preserve context", agent: "codex", schedule_key: "archive-held",
+          started_at: now - 120, finished_at: now - 60, last_exit_code: 143,
+          runs: [HQ::ManagedAgent::AgentRun.new(
+            started_at: now - 120, finished_at: now - 60, exit_code: 143, status: "stopped",
+            run_id: "held-stop", log_path: File.join(HQ::AGENT_LOGS_DIR, "archive-held.raw.log"), command: "test"
+          )]
+        )
+        target.enqueue_prompt!(prompt: "Preserve delayed work", id: "delayed-work", not_before: Time.now + 3600)
+        agent_store = HQ::AgentStore.new([project])
+        agent_store.save([target])
+        store = HQ::ScheduleStore.new
+        state = HQ::ScheduleState.new(
+          key: "archive-held", status: "scheduled", last_status: "succeeded",
+          last_target_key: target.key, run_count: 1, next_due_at: now + 60
+        )
+        state.mark_paused!(now:) if mode == "paused"
+        state.mark_stopped!(now:, reason: mode == "awaiting_input" ? "awaiting_input" : "agent_stopped") if %w[stopped awaiting_input].include?(mode)
+        store.save("archive-held" => state)
+        scheduler = build_scheduler(registry, path)
+        scheduler.resume("archive-held", now:) if mode == "acknowledged"
+        stops = scheduler.user_message_resume_targets(target.key)
+        before = store.load.fetch("archive-held").to_hash
+        scheduler.archive("archive-held", now: now + 1)
+
+        cold = build_scheduler(registry, path)
+        assert(cold.list.empty?, "expected archived #{mode} schedule to be hidden")
+        assert(cold.list(include_archived: true).first[:archived], "expected archived history to remain visible")
+        assert(cold.tick(now: now + 120)[:started].zero?, "expected archive to override #{mode} dispatch intent")
+        assert(cold.resume_after_user_message(target.key).empty?, "expected archive to block automatic reply resume")
+        assert(cold.resume_after_user_message(target.key, effect_id: "archive-reply", stops:).empty?,
+               "expected archive to block replayed reply resume")
+        [:run_now, :resume, :resume_and_run_now, :refresh_session].each do |action|
+          assert_raises(HQ::ScheduleRegistry::Error, "expected archive to refuse #{action}") do
+            cold.public_send(action, "archive-held", now: now + 121)
+          end
+        end
+        assert(!cold.reconcile_archived_agent!(target.key, archived_agent: target),
+               "expected session archive reconciliation not to reactivate an archived schedule")
+        after = store.load.fetch("archive-held")
+        assert(after.stopped? && after.stopped_reason == "archived" && after.next_due_at.nil?,
+               "expected archive hold to survive ticks, Resume, and session reconciliation")
+        %w[last_target_key run_count last_status acknowledged_target_stop].each do |field|
+          assert(after.to_hash[field] == before[field], "expected archive to preserve #{mode} history #{field}")
+        end
+        current = agent_store.load.fetch(0)
+        assert(current.run_count == 1 && current.last_run.run_id == "held-stop", "expected no archived target restart")
+        assert(current.prompt_queue.map { |entry| entry["id"] } == ["delayed-work"], "expected delayed work to remain intact")
       end
     end
   end
@@ -1533,6 +1655,13 @@ module SchedulerTest
              "expected schedule list to render persisted stopped metadata as historical, got #{out.lines.first.inspect}")
       assert(out.include?("weekday"), "expected bin/schedule list output to include schedule key")
       assert(out.include?("web"), "expected bin/schedule list output to include project key")
+      out, err, status = Open3.capture3(env, RbConfig.ruby, "bin/tycho", "schedule", "archive", "weekday", "--json", chdir: ROOT)
+      assert(status.success? && JSON.parse(out).dig("schedule", "archived"), "expected local archive JSON: #{err}")
+      out, err, status = Open3.capture3(env, RbConfig.ruby, "bin/tycho", "schedule", "list", "--json", chdir: ROOT)
+      assert(status.success? && JSON.parse(out).fetch("schedules").empty?, "expected local default hiding: #{err}")
+      out, err, status = Open3.capture3(env, RbConfig.ruby, "bin/tycho", "schedule", "list", "--include-archived", "--json", chdir: ROOT)
+      assert(status.success? && JSON.parse(out).fetch("schedules").first.fetch("archived"), "expected local archive inclusion: #{err}")
+
     end
   end
 

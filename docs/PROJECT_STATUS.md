@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-11-11
+2026-11-12
 
 ## Scheduler startup intent
 
@@ -25,6 +25,9 @@ the scheduler snapshot stays held. Legacy timestamp-only records require a
 new explicit acknowledgement.
 Manual Run remains available. Idle, successful, and partial targets keep
 normal scheduled execution. Restart regression tests use isolated runtime roots.
+Archive integration tests cover paused, stopped, acknowledged, and awaiting-input
+schedules: archived schedules stay inactive, retain history and delayed work,
+and reject manual or automatic resume.
 
 ## Remote UI Schedules navigation
 
@@ -672,3 +675,10 @@ and queued-run push notification behavior. Schedule-management work remains on
 ## Known Issues
 
 Documented in [GOTCHAS.md](./GOTCHAS.md)
+
+### Schedule archive
+
+- Replaced schedules can be archived with configuration and run history intact.
+  Archive refuses running targets, hides schedules from default lists, and blocks
+  automatic and manual schedule execution. See [Scheduled runs](SCHEDULED_RUNS.md#archive-replaced-schedules).
+- Production schedule retirement remains a separate operator action after merge.

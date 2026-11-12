@@ -50,15 +50,18 @@ module HQ
     end
 
     # agents: optional shared read-only list; when given, list skips the polling agent load.
-    def list(now: Time.now, agents: nil)
+    def list(now: Time.now, agents: nil, include_archived: false)
       store.with_lock do
         schedules = schedule_registry.schedules
         states = store.load
         agents ||= load_agents
         changed = false
-        rows = schedules.map do |schedule|
+        rows = schedules.filter_map do |schedule|
+          next if schedule.archived? && !include_archived
           state = store.state_for(states, schedule.key)
-          changed = if expire_schedule!(schedule, state, now:)
+          changed = if schedule.archived?
+                      changed
+                    elsif expire_schedule!(schedule, state, now:)
                       true
                     else
                       ensure_next_due!(schedule, state, now:) || changed
@@ -72,6 +75,30 @@ module HQ
 
     def daemon_state(now: Time.now)
       store.daemon_state(now:)
+    end
+
+    def archive(key, now: Time.now)
+      store.with_lock do
+        schedule = schedule_registry.find(key)
+        raise ScheduleRegistry::Error, "Unknown schedule: #{key}" unless schedule
+
+        states = store.load
+        state = store.state_for(states, schedule.key)
+        agents = load_agents(dispatch_prompt_queues: false)
+        target_keys = [schedule.agent_key, state.last_target_key].compact
+        targets = agents.select { |agent| target_keys.include?(agent.key) || agent.schedule_key == schedule.key }
+        if targets.any?(&:running?)
+          raise ScheduleRegistry::Error, "Schedule #{key.inspect} target is running; stop it before archiving"
+        end
+
+        FileTransaction.run([schedule_registry.path, store.path]) do
+          schedule = schedule_registry.archive(key)
+          state.mark_stopped!(now:, reason: "archived")
+          state.next_due_at = nil
+          store.save(states)
+        end
+        schedule_payload(schedule, state)
+      end
     end
 
     def pause(key, now: Time.now)
@@ -103,6 +130,7 @@ module HQ
         states = store.load
         changed = false
         targets = schedule_registry.schedules.filter_map do |schedule|
+          next if schedule.archived?
           state = states[schedule.key]
           next unless state&.stopped_for_awaiting_input? && state.last_target_key.to_s == agent_key.to_s
 
@@ -127,6 +155,7 @@ module HQ
       store.with_lock do
         states = store.load
         resumed = schedule_registry.schedules.filter_map do |schedule|
+          next if schedule.archived?
           state = states[schedule.key]
           if effect_id
             original = Array(stops).find { |stop| stop["key"] == schedule.key }
@@ -251,6 +280,7 @@ module HQ
       failed = []
 
       schedule_registry.schedules.each do |schedule|
+        next if schedule.archived?
         result = archive_session(schedule.key, now:)
         if result.fetch(:archived)
           archived << result
@@ -366,6 +396,7 @@ module HQ
         states = store.load
         changed = false
         schedules.each do |schedule|
+          next if schedule.archived?
           state = store.state_for(states, schedule.key)
           next unless state.last_target_key.to_s == key
 
@@ -388,6 +419,7 @@ module HQ
         reconcile_completed_runs!(schedules, states, agents, now:)
 
         schedules.each do |schedule|
+          next if schedule.archived?
           state = store.state_for(states, schedule.key)
           next if expire_schedule!(schedule, state, now:)
 
@@ -435,7 +467,8 @@ module HQ
       {
         key: schedule.key,
         name: schedule.name,
-        status: state.status,
+        status: schedule.archived? ? "archived" : state.status,
+        archived: schedule.archived?,
         enabled: schedule.enabled?,
         paused: state.paused?,
         stopped: state.stopped?,
@@ -469,6 +502,7 @@ module HQ
     def find_schedule!(key)
       schedule = schedule_registry.find(key)
       raise ScheduleRegistry::Error, "Unknown schedule: #{key}" unless schedule
+      raise ScheduleRegistry::Error, "Schedule #{key.inspect} is archived" if schedule.archived?
 
       schedule
     end
@@ -517,7 +551,7 @@ module HQ
     end
 
     def runnable?(schedule, state)
-      state.scheduled?
+      !schedule.archived? && state.scheduled?
     end
 
     def dispatch_schedule(schedule, state, agents, now:, dry_run: false, automatic: false)
@@ -753,6 +787,7 @@ module HQ
 
     def reconcile_completed_runs!(schedules, states, agents, now:)
       schedules.each do |schedule|
+        next if schedule.archived?
         state = store.state_for(states, schedule.key)
         agent = last_agent(schedule, state, agents)
         next unless agent
