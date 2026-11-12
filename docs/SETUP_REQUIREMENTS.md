@@ -137,3 +137,9 @@ Recommended soft failures:
 
 Soft failures should be reported as feature warnings with the affected Tycho
 surface area and the command or setting needed to fix them.
+
+Manual Remote project creation uses the Fiddle gem for POSIX directory-handle
+operations on macOS and Linux (including WSL). Fiddle is an explicit runtime
+dependency for Ruby 4; source builds can require libffi development headers in
+addition to the native build tools above. There is no unsafe pathname fallback
+when the required native operations are unavailable.

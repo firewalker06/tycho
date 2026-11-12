@@ -176,3 +176,5 @@ Also call out changes to Bubbletea input handling, bracketed paste behavior, or 
 - Set `TYCHO_REMOTE_UI_SCHEDULE_EMPTY_ONLY=1` with `bin/remote-ui-smoke` to check the first-schedule action, create/delete transitions, loading, connection errors, filtered rows, keyboard use, and desktop/mobile Dark/Light layout. Set `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the repository to retain screenshots.
 
 - `node test/browser/project_creation_smoke.js`: check manual New project creation in isolated roots with desktop/mobile Chrome, path errors, duplicate keys, polling draft/focus, reload, and overflow. Set `TYCHO_PLAYWRIGHT_PATH` to an installed Playwright package and `TYCHO_REMOTE_UI_CAPTURE_DIR` to retain screenshots outside the repository.
+
+- `bundle exec ruby test/remote_project_creation_test.rb`: run isolated, deterministic parent/starter replacement races, no-follow open checks, safe existing aliases, Welcome file preservation, and unavailable-native-support checks. `bin/test` also runs these regressions.

@@ -17,8 +17,11 @@ type: project
 The Agents page and onboarding screen provide a New project form. The visible
 starter directory is `HOME/tycho-projects`; existing configured paths stay in
 place. Manual Remote creation resolves parent and target paths and limits them
-to the server user home. CLI registration and agent workspaces keep their
-existing path behavior. The form keeps drafts and displays path and duplicate
+to the server user home. Directory creation now uses no-follow component opens
+and descriptor-relative `mkdirat` calls. Welcome files use descriptor-relative
+exclusive writes. Deterministic replacement tests cover parents, ancestors,
+the home, starter directories, and Welcome file writes on macOS and Linux.
+CLI registration and agent workspaces keep their existing path behavior. The form keeps drafts and displays path and duplicate
 key errors. Desktop and mobile checks use an isolated server home.
 
 ## Scheduler startup intent

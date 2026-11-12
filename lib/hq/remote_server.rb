@@ -3045,8 +3045,11 @@ module HQ
         raise Error.new("Welcome sandbox can only be created before projects are configured")
       end
 
-      RemoteProjectCreation.new.prepare!(Onboarding.welcome_workspace_path, key: Onboarding::WELCOME_PROJECT_KEY)
-      @registry.add_project!(Onboarding.welcome_project_attrs(agent: HQ.harness_keys.first))
+      workspace = RemoteProjectCreation.new.prepare!(
+        Onboarding.welcome_workspace_path, key: Onboarding::WELCOME_PROJECT_KEY,
+        files: { "README.md" => Onboarding.welcome_readme, "notes.md" => Onboarding.welcome_notes }
+      )
+      @registry.add_project!(Onboarding.welcome_project_attrs(agent: HQ.harness_keys.first, workspace_path: workspace))
       reload_projects_from_registry!
       project(Onboarding::WELCOME_PROJECT_KEY)
     rescue ConfigError, RemoteProjectCreation::Error => e

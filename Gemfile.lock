@@ -31,6 +31,7 @@ GEM
     chunky_png (1.4.0)
     dry-cli (1.4.1)
     erb (6.0.4)
+    fiddle (1.1.8)
     glamour (0.2.2)
     glamour (0.2.2-aarch64-linux-gnu)
     glamour (0.2.2-aarch64-linux-musl)
@@ -88,6 +89,7 @@ DEPENDENCIES
   bubbletea
   dry-cli
   erb (~> 6.0)
+  fiddle (~> 1.1)
   glamour
   jwt (>= 3.2.0, < 4)
   lipgloss

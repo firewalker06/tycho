@@ -1419,7 +1419,13 @@ changing their files. Custom folder parents must already exist.
 The server rejects paths outside its user home, parent traversal, dangling
 symlinks, and non-directory targets. It checks resolved parents and targets so
 symlinks cannot point outside the home. Safe internal symlinks use their resolved
-path. This policy applies to manual Remote UI creation and the first-run sandbox.
+path. Creation then opens the canonical parent one component at a time with
+`O_NOFOLLOW` and uses `mkdirat` relative to the held descriptor. A replacement
+symlink cannot redirect the write. Welcome files use exclusive `openat` writes
+through a held workspace descriptor. A changed path is rejected; no directory
+is deleted as recovery. These POSIX calls use Fiddle on macOS and Linux,
+including WSL. Missing native support fails closed with an error.
+This policy applies to manual Remote UI creation and the first-run sandbox.
 CLI registration and existing configured projects keep their path behavior.
 No existing projects or configuration paths are moved.
 

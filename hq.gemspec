@@ -44,6 +44,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency "bubbletea"
   spec.add_dependency "dry-cli"
   spec.add_dependency "erb", "~> 6.0"
+  spec.add_dependency "fiddle", "~> 1.1"
   spec.add_dependency "glamour"
   spec.add_dependency "jwt", ">= 3.2.0", "< 4"
   spec.add_dependency "lipgloss"

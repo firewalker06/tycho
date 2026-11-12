@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "constants"
+require_relative "directory_handle"
 
 module HQ
   # This policy applies only to manual Remote UI creation, not CLI registration.
@@ -13,7 +14,7 @@ module HQ
       @starter_directory = canonical_home_path(starter_directory)
     end
 
-    def prepare!(input, key:)
+    def prepare!(input, key:, files: {})
       raw = input.to_s.strip
       raw = File.join(@starter_directory, key) if raw.empty?
       raise Error, "Use a folder inside the server user home; parent traversal is not allowed" if raw.split("/").include?("..")
@@ -25,16 +26,13 @@ module HQ
       # Only the visible starter and the final folder are created. Other parents
       # must exist so a misspelled parent does not create a new directory tree.
       ensure_starter! if File.dirname(path) == File.expand_path(@starter_directory)
-      parent = File.realpath(File.dirname(path))
-      inside_home!(parent, allow_home: true)
-      target = File.join(parent, File.basename(path))
-      Dir.mkdir(target) unless File.exist?(target) || File.symlink?(target)
-      resolved = File.realpath(target)
-      inside_home!(resolved)
-      raise Error, "Choose a directory, not a file" unless File.directory?(resolved)
-
+      resolved = ensure_directory!(path)
+      DirectoryHandle.open(resolved) do |directory|
+        files.each { |name, content| DirectoryHandle.write_once_at(directory, name, content) }
+        verify_directory!(path, directory)
+      end
       resolved
-    rescue SystemCallError, ArgumentError => e
+    rescue SystemCallError, ArgumentError, DirectoryHandle::Unavailable => e
       raise Error, "Cannot use this server folder: #{e.message}"
     end
 
@@ -56,10 +54,33 @@ module HQ
     def ensure_starter!
       starter = File.expand_path(@starter_directory)
       inside_home!(starter)
-      parent = File.realpath(File.dirname(starter))
+      ensure_directory!(starter)
+    end
+
+    def ensure_directory!(path)
+      parent = File.realpath(File.dirname(path))
       inside_home!(parent, allow_home: true)
-      Dir.mkdir(starter) unless File.exist?(starter) || File.symlink?(starter)
-      inside_home!(File.realpath(starter))
+      DirectoryHandle.open(parent) do |directory|
+        begin
+          DirectoryHandle.mkdir_at(directory, File.basename(path))
+        rescue Errno::EEXIST
+          # Existing folders and safe inside-home aliases are allowed.
+        end
+      end
+      resolved = File.realpath(path)
+      inside_home!(resolved)
+      raise Error, "Choose a directory, not a file" unless File.directory?(resolved)
+
+      resolved
+    end
+
+    def verify_directory!(path, directory)
+      inside_home!(File.realpath(path))
+      actual = File.stat(path)
+      opened = directory.stat
+      return if actual.dev == opened.dev && actual.ino == opened.ino
+
+      raise Error, "The server folder changed during creation. Check the path and try again"
     end
   end
 end
