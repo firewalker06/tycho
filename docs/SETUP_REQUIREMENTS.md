@@ -96,7 +96,7 @@ bin/setup --profile all
 ## Setup Phases
 
 1. Check baseline tools: Ruby, Bundler, Go, and native build tools.
-2. Create `HOME/.tycho/logs`, `HOME/.tycho/schedules`, `HOME/.tycho/workspaces`,
+2. Create `HOME/.tycho/logs`, `HOME/.tycho/schedules`, `HOME/tycho-projects`,
    and missing sample config files:
    - `config/hq.yml.example` to `HOME/.tycho/config/hq.yml`
    - `config/system_prompts.yml.example` to `HOME/.tycho/config/system_prompts.yml`

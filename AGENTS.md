@@ -174,3 +174,5 @@ Also call out changes to Bubbletea input handling, bracketed paste behavior, or 
 - Set `TYCHO_REMOTE_UI_METADATA_LIFECYCLE_ONLY=1` with `bin/remote-ui-smoke` to hold real project detail responses beyond cache freshness, then release them after navigation, blur, hide, or page close. The check counts real Git commands and asserts zero new metadata work and zero follow-up detail requests. It covers desktop and mobile. Set `TYCHO_REMOTE_UI_CAPTURE_DIR` to retain evidence outside the repository.
 
 - Set `TYCHO_REMOTE_UI_SCHEDULE_EMPTY_ONLY=1` with `bin/remote-ui-smoke` to check the first-schedule action, create/delete transitions, loading, connection errors, filtered rows, keyboard use, and desktop/mobile Dark/Light layout. Set `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the repository to retain screenshots.
+
+- `node test/browser/project_creation_smoke.js`: check manual New project creation in isolated roots with desktop/mobile Chrome, path errors, duplicate keys, polling draft/focus, reload, and overflow. Set `TYCHO_PLAYWRIGHT_PATH` to an installed Playwright package and `TYCHO_REMOTE_UI_CAPTURE_DIR` to retain screenshots outside the repository.

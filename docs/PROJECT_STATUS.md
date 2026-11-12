@@ -12,6 +12,15 @@ type: project
 
 2026-11-12
 
+## Manual Remote UI project creation
+
+The Agents page and onboarding screen provide a New project form. The visible
+starter directory is `HOME/tycho-projects`; existing configured paths stay in
+place. Manual Remote creation resolves parent and target paths and limits them
+to the server user home. CLI registration and agent workspaces keep their
+existing path behavior. The form keeps drafts and displays path and duplicate
+key errors. Desktop and mobile checks use an isolated server home.
+
 ## Scheduler startup intent
 
 Daemon ticks preserve paused and stopped schedule state. A stopped target now

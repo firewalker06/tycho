@@ -609,7 +609,7 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `GET` | `/attachments/{id}/blob` | Stream the attachment file bytes for image and binary previews. | <!-- local-path-ok -->
 | `GET` | `/setup` | Read full Remote UI readiness, including harness, tool, and skill diagnostics. |
 | `GET` | `/setup/summary` | Read lightweight shell, auth, count, config, onboarding, log, push, and refresh metadata without cold harness discovery. | <!-- local-path-ok -->
-| `POST` | `/setup/welcome` | Create the first-run welcome sandbox project under `HOME/.tycho/workspaces/welcome`. | <!-- local-path-ok -->
+| `POST` | `/setup/welcome` | Create the first-run welcome sandbox project under `HOME/tycho-projects/welcome`. | <!-- local-path-ok -->
 | `GET` | `/search` | Return agent and project payloads for compatibility with older client-side search flows. |
 | `GET` | `/`, `/ui`, `/ui.css`, `/ui.js` | Serve the Remote UI. `/ui` remains a compatibility alias. | <!-- local-path-ok -->
 | `GET` | `/favicon.svg`, `/favicon.ico` | Serve the Remote UI favicon. | <!-- local-path-ok -->
@@ -1406,9 +1406,26 @@ Validates and saves Loop session defaults in `hq.yml`. Intervals must be between
 
 Adopts an idle, unscheduled managed agent as a normal schedule whose target includes that agent key. The request supplies a unique schedule key and name, interval, future ISO-8601 cutoff, and run message. Tycho appends the standard schedule system prompt to the existing session before the immediate first run, records the schedule in `schedules.yml`, and ensures the scheduler daemon is active for later runs. The schedule expires to `stopped` after its cutoff.
 
+### Manual project creation
+
+The Agents page and first-run screen provide **New project**. Enter a name and a
+unique lowercase key, plus an optional group and server folder. An empty folder
+field uses `HOME/tycho-projects/KEY`. Existing folders can be registered without
+changing their files. Custom folder parents must already exist.
+
+`GET /setup/project-creation` returns the server home and starter directory. <!-- local-path-ok -->
+`POST /projects` accepts `name`, `key`, `group`, and `path`, and returns a created project. <!-- local-path-ok -->
+
+The server rejects paths outside its user home, parent traversal, dangling
+symlinks, and non-directory targets. It checks resolved parents and targets so
+symlinks cannot point outside the home. Safe internal symlinks use their resolved
+path. This policy applies to manual Remote UI creation and the first-run sandbox.
+CLI registration and existing configured projects keep their path behavior.
+No existing projects or configuration paths are moved.
+
 ### `POST /setup/welcome` <!-- local-path-ok -->
 
-Creates the first-run welcome sandbox at `HOME/.tycho/workspaces/welcome`, appends a
+Creates the first-run welcome sandbox at `HOME/tycho-projects/welcome`, appends a
 `welcome` project to `hq.yml`, and returns the project detail payload. This route
 is only available before any project is configured.
 

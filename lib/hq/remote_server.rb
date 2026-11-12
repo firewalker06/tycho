@@ -52,6 +52,7 @@ require_relative "domain/server_identity"
 require_relative "domain/skill_discovery"
 require_relative "domain/skill_installer"
 require_relative "domain/onboarding"
+require_relative "domain/remote_project_creation"
 require_relative "domain/visibility"
 require_relative "domain/web_push_notifier"
 require_relative "domain/agent_notification"
@@ -540,6 +541,8 @@ module HQ
       return accepted(service.stop_schedule_daemon) if method == "POST" && parts == ["schedules", "daemon", "stop"]
       return accepted(service.restart_schedule_daemon(body)) if method == "POST" && parts == ["schedules", "daemon", "restart"]
       return ok(service.archive_agents(body)) if method == "POST" && parts == ["agents", "archive"]
+      return created(project: service.create_project(body)) if method == "POST" && parts == ["projects"]
+      return ok(project_creation: service.project_creation) if method == "GET" && parts == ["setup", "project-creation"]
       return ok(projects: service.projects) if method == "GET" && parts == ["projects"]
       return ok(skill_installation: service.skill_installation) if method == "GET" && parts == ["skills"]
       if method == "POST" && parts.length == 3 && parts.first == "skills" && %w[install update].include?(parts[2])
@@ -2783,6 +2786,25 @@ module HQ
       }
     end
 
+    def project_creation
+      { home: Dir.home, starter_directory: USER_WORKSPACES_DIR }
+    end
+
+    def create_project(attrs)
+      key = attrs["key"].to_s.strip
+      name = attrs["name"].to_s.strip
+      raise Error.new("Use a project key with letters, numbers, hyphens, or underscores") unless key.match?(/\A[a-z0-9][a-z0-9_-]*\z/)
+      raise Error.new("Enter a project name") if name.empty?
+      raise Error.new("Duplicate project key: #{key}", status: 409) if @registry.projects.any? { |project| project.key == key }
+
+      workspace = RemoteProjectCreation.new.prepare!(attrs["path"], key: key)
+      @registry.add_project!(key: key, name: name, path: workspace, group: attrs["group"].to_s.strip)
+      reload_projects_from_registry!
+      project(key)
+    rescue ConfigError, RemoteProjectCreation::Error => e
+      raise Error.new(e.message)
+    end
+
     def projects
       agents_by_project = load_agents.group_by(&:project_key)
       visible_projects.map do |project|
@@ -3020,10 +3042,11 @@ module HQ
         raise Error.new("Welcome sandbox can only be created before projects are configured")
       end
 
+      RemoteProjectCreation.new.prepare!(Onboarding.welcome_workspace_path, key: Onboarding::WELCOME_PROJECT_KEY)
       @registry.add_project!(Onboarding.welcome_project_attrs(agent: HQ.harness_keys.first))
       reload_projects_from_registry!
       project(Onboarding::WELCOME_PROJECT_KEY)
-    rescue ConfigError => e
+    rescue ConfigError, RemoteProjectCreation::Error => e
       raise Error.new(e.message)
     end
 
