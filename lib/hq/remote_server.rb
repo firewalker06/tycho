@@ -2797,8 +2797,11 @@ module HQ
       raise Error.new("Enter a project name") if name.empty?
       raise Error.new("Duplicate project key: #{key}", status: 409) if @registry.projects.any? { |project| project.key == key }
 
+      group = attrs["group"].to_s.strip
+      raise Error.new("Choose a visible group; this group is hidden") if @registry.groups[group]&.hidden
+
       workspace = RemoteProjectCreation.new.prepare!(attrs["path"], key: key)
-      @registry.add_project!(key: key, name: name, path: workspace, group: attrs["group"].to_s.strip)
+      @registry.add_project!(key: key, name: name, path: workspace, group: group)
       reload_projects_from_registry!
       project(key)
     rescue ConfigError, RemoteProjectCreation::Error => e

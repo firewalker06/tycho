@@ -6605,6 +6605,14 @@ module RemoteServerTest
       rescue HQ::RemoteService::Error
       end
       assert(!File.exist?(File.join(safe_path, "duplicate")), "expected duplicate rejection before folder creation")
+      registry.update_group_hidden!("Private", true)
+      begin
+        service.create_project("key" => "private", "name" => "Private", "group" => "Private", "path" => File.join(safe_path, "private"))
+        raise "accepted hidden group"
+      rescue HQ::RemoteService::Error => e
+        assert(e.message.include?("group is hidden"), "expected useful hidden group error")
+      end
+      assert(!File.exist?(File.join(safe_path, "private")), "expected hidden group rejection before folder creation")
     ensure
       Dir.define_singleton_method(:home, old_home) if old_home
     end
