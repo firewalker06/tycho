@@ -107,7 +107,7 @@ module HQ
   end
 
   ScheduleDefinition = Struct.new(
-    :key, :name, :enabled, :cron, :timezone, :project_key, :agent_name,
+    :key, :name, :enabled, :archived, :cron, :timezone, :project_key, :agent_name,
     :agent_key, :system_message, :message_source, :message, :message_file, :message_path,
     :ends_at, :policy, :agent, :model, :reasoning_effort,
     keyword_init: true
@@ -116,8 +116,12 @@ module HQ
       @cron_expression ||= CronExpression.new(cron)
     end
 
+    def archived?
+      archived == true
+    end
+
     def enabled?
-      true
+      !archived?
     end
 
     def local_time(time)
@@ -203,6 +207,22 @@ module HQ
         end
 
         entries[index] = schedule_entry_from_attrs(values, existing: entries[index], key: key)
+        validated = validate_entries!(entries)
+        data["schedules"] = entries
+        write_yaml(data)
+        @schedules = validated
+        find(key)
+      end
+    end
+
+    def archive(key)
+      store.with_lock do
+        data = load_yaml
+        entries = schedule_entries(data)
+        entry = entries.find { |item| item["key"].to_s == key.to_s }
+        raise Error, "Unknown schedule: #{key}" unless entry
+
+        entry["archived"] = true
         validated = validate_entries!(entries)
         data["schedules"] = entries
         write_yaml(data)
@@ -418,6 +438,7 @@ module HQ
       ScheduleDefinition.new(
         key: key,
         name: optional_string(entry["name"], fallback: key),
+        archived: entry["archived"] == true,
         enabled: entry.key?("enabled") ? entry["enabled"] != false : true,
         cron: cron,
         timezone: timezone,

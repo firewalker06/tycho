@@ -699,8 +699,9 @@ module HQ
         extend CommandMetadata
 
         desc "List schedules"
+        option :include_archived, type: :boolean, default: false, desc: "Include archived schedules"
         remote_options
-        usage_template "schedule list [--server SERVER_KEY] [--json]"
+        usage_template "schedule list [--include-archived] [--server SERVER_KEY] [--json]"
 
         def call(**opts)
           exit CLICommand.list_schedules(opts, out: out, err: err)
@@ -717,6 +718,19 @@ module HQ
 
         def call(schedule_key:, **opts)
           exit CLICommand.run_schedule(schedule_key, opts, out: out, err: err)
+        end
+      end
+
+      class ScheduleArchive < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Archive a schedule and keep its history"
+        argument :schedule_key, required: true, desc: "Schedule key"
+        remote_options
+        usage_template "schedule archive %{schedule_key} [--server SERVER_KEY] [--json]"
+
+        def call(schedule_key:, **opts)
+          exit CLICommand.archive_schedule(schedule_key, opts, out: out, err: err)
         end
       end
 
@@ -776,6 +790,7 @@ module HQ
         prefix.register "validate", ScheduleValidate
         prefix.register "list", ScheduleList
         prefix.register "run", ScheduleRun
+        prefix.register "archive", ScheduleArchive
         prefix.register "pause", SchedulePause
         prefix.register "resume", ScheduleResume
         prefix.register "reload", ScheduleReload
@@ -880,6 +895,7 @@ module HQ
       Commands::ScheduleValidate,
       Commands::ScheduleList,
       Commands::ScheduleRun,
+      Commands::ScheduleArchive,
       Commands::SchedulePause,
       Commands::ScheduleResume,
       Commands::ScheduleReload,
@@ -2344,7 +2360,7 @@ module HQ
     end
 
     def remote_list_schedules(opts, out:, err:)
-      payload = remote_client(opts[:server]).request("GET", "/schedules")
+      payload = remote_client(opts[:server]).request("GET", "/schedules", query: opts[:include_archived] ? "include_archived=true" : nil)
       if opts[:json]
         out.puts JSON.pretty_generate(payload)
         return 0
@@ -3038,7 +3054,7 @@ module HQ
     def list_schedules(opts = {}, out: $stdout, err: $stderr)
       return remote_list_schedules(opts, out:, err:) if remote_requested?(opts)
       current_scheduler = scheduler
-      rows = current_scheduler.list
+      rows = current_scheduler.list(include_archived: opts[:include_archived] == true)
       daemon = current_scheduler.daemon_state.to_hash
       if opts[:json]
         out.puts JSON.pretty_generate(schedules: rows, daemon: daemon)
@@ -3104,6 +3120,16 @@ module HQ
       out.puts "Next: #{schedule[:next_due_at] || "n/a"}"
       0
     rescue ScheduleRegistry::Error => e
+      command_failure(e.message, opts, out:, err:)
+    end
+
+    def archive_schedule(schedule_key, opts = {}, out: $stdout, err: $stderr)
+      return remote_schedule_action("POST", remote_resource_path("schedules", schedule_key) + "/archive", {}, opts, out:, err:, success_message: "Archived #{schedule_key}.") if remote_requested?(opts)
+
+      schedule = scheduler.archive(schedule_key)
+      opts[:json] ? out.puts(JSON.generate(schedule: schedule)) : out.puts("Archived #{schedule.fetch(:key)}.")
+      0
+    rescue ScheduleRegistry::Error, ConfigError => e
       command_failure(e.message, opts, out:, err:)
     end
 

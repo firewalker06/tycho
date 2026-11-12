@@ -20,6 +20,7 @@ module SchedulerTest
 
   def run!
     with_stubbed_agent_start do
+      assert_schedule_archive_keeps_history_and_blocks_execution
       assert_schedule_registry_validates_scope_and_prompt_paths
       assert_schedule_execution_overrides_round_trip_and_apply
       assert_schedule_store_tracks_daemon_state
@@ -53,6 +54,58 @@ module SchedulerTest
     assert_partial_scheduled_agent_continues_and_keeps_status
     assert_failed_scheduled_agent_stops_and_notifies
     puts "scheduler_test: ok"
+  end
+
+  def assert_schedule_archive_keeps_history_and_blocks_execution
+    with_temp_runtime do |dir|
+      registry, path = write_registry_and_schedule(dir, <<~YAML)
+        schedules:
+          - key: old-work
+            cron: "* * * * *"
+            target:
+              type: agent
+              project_key: web
+              message: "Old work"
+      YAML
+      scheduler = build_scheduler(registry, path)
+      now = Time.now
+      result = scheduler.run_now("old-work", now:)
+      target = result.fetch(:agent)
+      target.define_singleton_method(:running?) { true }
+      scheduler.define_singleton_method(:load_agents) { |**| [target] }
+      before = File.read(path)
+      begin
+        scheduler.archive("old-work", now:)
+        raise "expected running target refusal"
+      rescue HQ::ScheduleRegistry::Error => e
+        assert(e.message.include?("running"), "expected clear running target error")
+      end
+      assert(File.read(path) == before, "running target refusal must preserve config")
+      target.define_singleton_method(:running?) { false }
+      history = scheduler.store.load.fetch("old-work").to_hash
+      payload = scheduler.archive("old-work", now:)
+      assert(payload[:archived] && payload[:status] == "archived", "expected archived payload")
+      assert(scheduler.list.empty?, "expected default hiding")
+      assert(scheduler.list(include_archived: true).size == 1, "expected archive inclusion")
+      assert(File.read(path).include?("Old work"), "expected config preservation")
+      state = scheduler.store.load.fetch("old-work")
+      %w[run_count last_target_key last_started_at last_status].each do |field|
+        assert(state.to_hash[field] == history[field], "expected preserved history #{field}")
+      end
+      [:run_now, :resume, :resume_and_run_now, :refresh_session].each do |action|
+        begin
+          scheduler.public_send(action, "old-work", now:)
+          raise "expected archived schedule refusal for #{action}"
+        rescue HQ::ScheduleRegistry::Error => e
+          assert(e.message.include?("archived"), "expected archive refusal")
+        end
+      end
+      scheduler.tick(now: now + 120)
+      assert(scheduler.store.load.fetch("old-work").run_count == state.run_count, "archived schedule must never dispatch")
+      cold = build_scheduler(registry, path)
+      assert(cold.list.empty?, "expected archive to survive reload")
+      assert(cold.list(include_archived: true).first[:archived], "expected persisted archive marker")
+    end
   end
 
   def assert_scheduler_adopts_existing_session_and_expires_loop
@@ -1307,6 +1360,13 @@ module SchedulerTest
              "expected schedule list to render persisted stopped metadata as historical, got #{out.lines.first.inspect}")
       assert(out.include?("weekday"), "expected bin/schedule list output to include schedule key")
       assert(out.include?("web"), "expected bin/schedule list output to include project key")
+      out, err, status = Open3.capture3(env, RbConfig.ruby, "bin/tycho", "schedule", "archive", "weekday", "--json", chdir: ROOT)
+      assert(status.success? && JSON.parse(out).dig("schedule", "archived"), "expected local archive JSON: #{err}")
+      out, err, status = Open3.capture3(env, RbConfig.ruby, "bin/tycho", "schedule", "list", "--json", chdir: ROOT)
+      assert(status.success? && JSON.parse(out).fetch("schedules").empty?, "expected local default hiding: #{err}")
+      out, err, status = Open3.capture3(env, RbConfig.ruby, "bin/tycho", "schedule", "list", "--include-archived", "--json", chdir: ROOT)
+      assert(status.success? && JSON.parse(out).fetch("schedules").first.fetch("archived"), "expected local archive inclusion: #{err}")
+
     end
   end
 
