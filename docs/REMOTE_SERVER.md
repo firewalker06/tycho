@@ -848,6 +848,8 @@ Response:
 
 Returns one normalized attachment payload. File attachments include `agent_key`, `format`, and `blob_path`; text and Markdown files inline `content` up to the preview limit.
 
+In the Remote UI, local Markdown images in Summary and attachment detail use authenticated image reads. Summary references resolve from the agent workspace. Attachment references resolve from the Markdown file directory. Relative paths, absolute local paths, and local file URIs can select a registered image attachment or a contained workspace image. An image outside the workspace must be registered as an image attachment. The existing workspace image rules still reject private paths and symlinks that leave the workspace. Remote URLs, inline data images, and unsupported references show an unavailable label. Image reads use the owning server route and credentials. A failed image read can be retried with Refresh. Blob URLs are released when their images leave the view.
+
 ```bash
 curl http://127.0.0.1:7373/attachments/att_abc123
 ```
