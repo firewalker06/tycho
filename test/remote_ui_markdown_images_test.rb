@@ -6,12 +6,11 @@ require "tempfile"
 # Check resolution without a browser. Actual decoding, sanitizing, and authenticated
 # reads are covered by the isolated markdown_images_smoke browser fixture.
 source = File.read(File.expand_path("../lib/hq/remote_ui/assets/app.js", __dir__))
-functions = source[source.index("function markdownLocalPath")...source.index("function prepareMarkdownImages")]
+functions = source[source.index("function markdownFilesystemPath")...source.index("function prepareMarkdownImages")]
 Tempfile.create(["tycho-markdown-images", ".js"]) do |script|
   script.write(<<~JS)
     const assert = require("assert");
     #{functions}
-    const attachmentTarget = a => a.path || a.url;
     const attachmentKind = a => a.type;
     const attachmentFormat = a => a.format;
     const attachmentBlobPath = id => `/attachments/${encodeURIComponent(id)}/blob`;
@@ -19,8 +18,28 @@ Tempfile.create(["tycho-markdown-images", ".js"]) do |script|
       {type: "file", format: "image", id: "peer/picture", path: "/fixture/outside/picture.png"},
       {type: "file", format: "image", id: "peer/relative", path: "assets/relative.png"}
     ]};
-    const findProject = key => key === "peer/web" ? {path: "/fixture/project"} : null;
+    const project = {path: "/fixture/project"};
+    const findProject = key => key === "peer/web" ? project : null;
     const context = {agent};
+    agent.attachments.push({type: "file", format: "image", id: "file-uri", url: "file:///outside/chart%23%3F%25.svg"});
+    assert.strictEqual(markdownImageResource("/outside/chart%23%3F%25.svg", context), "/attachments/file-uri/blob", "explicit file URI metadata is decoded once");
+    assert.strictEqual(markdownImageResource("image.svg", {agent, attachment: {path: "/fixture/project/docs #1/report.md"}}), "/projects/peer%2Fweb/workspace/image?path=docs+%231%2Fimage.svg", "hash in metadata must select the document directory");
+    for (const name of ["project #1", "project ?1", "project %23", "project 100%", "project # ? %23"]) {
+      const rawRoot = `/fixture/${name}`;
+      const reservedAgent = {workspace: rawRoot, project_key: "peer/web", attachments: [
+        {type: "file", format: "image", id: "reserved", path: `/outside/chart${name}.png`}
+      ]};
+      const project = findProject("peer/web");
+      project.path = rawRoot;
+      assert.strictEqual(markdownImageResource("image.svg", {agent: reservedAgent}), "/projects/peer%2Fweb/workspace/image?path=image.svg", "workspace metadata remains literal: " + name);
+      const directory = `docs ${name}`;
+      const documentPath = `${rawRoot}/${directory}/report.md`;
+      assert.strictEqual(markdownImageResource("image%23%3F%25.svg?cache=1#preview", {agent: reservedAgent, attachment: {path: documentPath}}), "/projects/peer%2Fweb/workspace/image?" + new URLSearchParams({path: `${directory}/image#?%.svg`}), "document directory and Markdown URL are parsed separately");
+      const reference = "/outside/" + encodeURIComponent(`chart${name}.png`);
+      assert.strictEqual(markdownImageResource(reference, {agent: reservedAgent}), "/attachments/reserved/blob", "registered metadata remains literal: " + name);
+      assert.strictEqual(markdownImageResource("literal%2523.png", {agent: reservedAgent}), "/projects/peer%2Fweb/workspace/image?path=literal%2523.png", "decode Markdown once");
+    }
+    findProject("peer/web").path = "/fixture/project";
     assert.strictEqual(markdownImageResource("assets/space%20image.png", context), "/projects/peer%2Fweb/workspace/image?path=assets%2Fspace+image.png");
     assert.strictEqual(markdownImageResource("/fixture/project/assets/image.svg", context), "/projects/peer%2Fweb/workspace/image?path=assets%2Fimage.svg");
     assert.strictEqual(markdownImageResource("file:///fixture/project/assets/image.svg", context), "/projects/peer%2Fweb/workspace/image?path=assets%2Fimage.svg");

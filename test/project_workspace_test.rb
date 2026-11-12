@@ -21,6 +21,7 @@ module ProjectWorkspaceTest
     assert_reports_permission_errors
     assert_rejects_traversal_and_absolute_paths
     assert_allows_internal_symlinks_and_rejects_escapes
+    assert_rejects_public_aliases_to_private_targets
     assert_handles_deleted_and_unavailable_paths
     puts "project_workspace_test: ok"
   end
@@ -258,6 +259,28 @@ module ProjectWorkspaceTest
       assert_error("invalid_path") { browser.preview(path: "outside-link.txt") }
     ensure
       FileUtils.remove_entry(outside) if outside && File.exist?(outside)
+    end
+  end
+
+  def assert_rejects_public_aliases_to_private_targets
+    with_workspace do |root|
+      FileUtils.mkdir_p(File.join(root, ".ssh"))
+      FileUtils.mkdir_p(File.join(root, "node_modules"))
+      File.write(File.join(root, ".ssh", "private.svg"), "<svg>private</svg>")
+      File.write(File.join(root, "node_modules", "generated.svg"), "<svg>generated</svg>")
+      File.symlink(File.join(root, ".ssh", "private.svg"), File.join(root, "public.svg"))
+      File.symlink(File.join(root, "node_modules", "generated.svg"), File.join(root, "generated.svg"))
+      File.symlink(File.join(root, ".ssh"), File.join(root, "public-docs"))
+      File.symlink(File.join(root, "public.svg"), File.join(root, "chained.svg"))
+      browser = HQ::ProjectWorkspace.new(root)
+      %w[public.svg generated.svg chained.svg public-docs/private.svg].each do |path|
+        assert_error("not_found") { browser.image(path:) }
+        assert_error("not_found") { browser.preview(path:) }
+      end
+      assert_error("not_found") { browser.list(path: "public-docs") }
+      assert(browser.list[:entries].empty?, "expected private and generated targets to stay hidden through public aliases")
+      assert(browser.search(query: "public")[:entries].empty?, "expected search to omit private target aliases")
+      assert_error("not_found") { browser.image(path: ".ssh/private.svg") }
     end
   end
 

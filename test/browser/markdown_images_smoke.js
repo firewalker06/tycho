@@ -27,7 +27,7 @@ module.exports = async function markdownImagesSmoke({ browser, baseUrl, agentKey
         return route.fulfill({ response, json: data });
       }
       if (url.pathname.endsWith("/workspace/image") || /\/attachments\/[^/]+\/blob$/.test(url.pathname)) {
-        imageRequests.push({ path: url.pathname, authorization: route.request().headers().authorization, peerToken: route.request().headers()["x-tycho-remote-server-token"] });
+        imageRequests.push({ resource: url.searchParams.get("path"), path: url.pathname, authorization: route.request().headers().authorization, peerToken: route.request().headers()["x-tycho-remote-server-token"] });
         if (url.searchParams.get("path") === "docs/local image.svg") {
           if (holdImage) await new Promise((resolve) => { releaseImage = resolve; });
           if (rejectImage) return route.fulfill({ status: 401, json: { error: "Unauthorized" } });
@@ -76,6 +76,31 @@ module.exports = async function markdownImagesSmoke({ browser, baseUrl, agentKey
     assert(imageRequests.some((request) => request.path.includes("/attachments/")), "registered image did not use attachment blob API");
     assert(imageRequests.every((request) => request.path.startsWith(peer ? "/servers/fixture-peer/" : "/")), "image used another server");
 
+    // Metadata contains literal URL punctuation. Every loaded image must be blue:
+    // the root fallback is red and the denied private target is green.
+    const reserved = detail.attachments.find((item) => item.title === "Reserved image paths");
+    const reservedId = peer ? `fixture-peer/${reserved.id}` : reserved.id;
+    await page.goto(`${baseUrl}/ui#agent/${encodeURIComponent(key)}/attachment/${encodeURIComponent(reservedId)}`, { waitUntil: "networkidle" });
+    await page.waitForFunction(() => {
+      const images = [...document.querySelectorAll(".attachment-viewer .markdown-viewer img")];
+      return images.length === 6 && images.every((image) => image.complete && image.naturalWidth > 0);
+    });
+    const pixels = await page.locator(".attachment-viewer .markdown-viewer img").evaluateAll((images) => images.map((image) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 1;
+      const context = canvas.getContext("2d");
+      context.drawImage(image, 0, 0);
+      return Array.from(context.getImageData(0, 0, 1, 1).data);
+    }));
+    assert.deepStrictEqual(pixels, Array(6).fill([46, 107, 204, 255]), "wrong root image or private bytes were displayed");
+    assert.strictEqual(await page.locator(".attachment-viewer .field-hint").filter({ hasText: "image unavailable" }).count(), 3);
+    assert(imageRequests.some((request) => request.resource === "docs #1 ? 100%/image.svg"), "document metadata was parsed as a URL");
+    assert(imageRequests.some((request) => request.resource === "docs #1 ? 100%/image#?%.svg"), "Markdown reference was not decoded once");
+    assert(imageRequests.some((request) => request.resource === "safe-internal.svg"));
+    assert(imageRequests.some((request) => request.resource === "safe-docs/image.svg"));
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "reserved path overflow");
+    if (captureDir) await page.screenshot({ path: path.join(captureDir, `reserved-paths-${name}.png`) });
+
     // Test sanitization in the same renderer used by both views. Only a fresh img with an
     // approved local resource can survive, even if raw HTML supplies application attributes.
     const security = await page.evaluate((key) => {
@@ -116,7 +141,7 @@ module.exports = async function markdownImagesSmoke({ browser, baseUrl, agentKey
     await page.waitForTimeout(150);
     assert.strictEqual(await page.evaluate(() => markdownImageResources.size), 0, "late image response retained a resource after navigation");
     assert.deepStrictEqual(errors, []);
-    console.log(`Markdown images: ${name}: rich/plain Summary, attachment, pixels, security, auth retry, polling, URL cleanup and late response passed`);
+    console.log(`Markdown images: ${name}: rich/plain Summary, reserved metadata, decoded-once references, safe/private symlinks, pixels, auth retry, polling, URL cleanup and late response passed`);
     await page.close();
   }
 };
