@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-11-12
+2026-11-13
 
 ## DeepSeek Harness
 
@@ -20,7 +20,9 @@ and Tycho's structured-result correction. Model selection uses an invocation
 only overlay for the native DeepSeek route. Authentication remains operator
 managed and unknown to readiness checks. This preview adapter does not route
 Claude Code to DeepSeek. See [DeepSeek Harness](DEEPSEEK.md) for its contract,
-verification, and unsupported features.
+verification, and unsupported features. The shared Remote UI harness label now
+includes the official DeepSeek whale icon, with unchanged upstream SVG bytes
+and palette-aware rendering in Settings and existing agent surfaces.
 
 ## Scheduler startup intent
 

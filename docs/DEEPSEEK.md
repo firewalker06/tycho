@@ -92,8 +92,8 @@ canonical transcript replay behavior.
 
 Interactive terminal chat, Tycho skill installation/discovery, and the typed
 sleep circuit breaker are not supported for dsh. Use Tycho Conversation for
-follow-up. Configure native skills through the operator's dsh profile. No new
-logo is included.
+follow-up. Configure native skills through the operator's dsh profile. The
+Remote UI shows the official DeepSeek icon through its shared harness labels; see [Harness logos](HARNESS_LOGOS.md).
 
 ## Verification
 

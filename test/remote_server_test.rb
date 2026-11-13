@@ -8233,8 +8233,12 @@ module RemoteServerTest
            "expected Codex to use the official OpenAI blossom mark")
     assert(marks.include?('claude: "/harness-logos/claude-spark-clay.svg"') &&
            marks.include?('opencode: "/harness-logos/opencode-logo-dark.svg"') &&
-           marks.include?('pi: "/harness-logos/pi-logo-auto.svg"'),
+           marks.include?('pi: "/harness-logos/pi-logo-auto.svg"') &&
+           marks.include?('dsh: "/harness-logos/deepseek-icon.svg"'),
            "expected every built-in harness mark to map to its packaged upstream file")
+    assert(Digest::SHA256.file(File.join(HQ::RemoteUI::HARNESS_LOGO_ROOT, "deepseek-icon.svg")).hexdigest ==
+           "b15083e3cbb398bd35619b758c43adc0a632efccc7e2d69f2481a860862910fe",
+           "expected the DeepSeek icon to remain the byte-identical official asset")
     %w[
       --ds-background-canvas
       --ds-text-primary
