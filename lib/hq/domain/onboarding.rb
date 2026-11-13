@@ -59,12 +59,12 @@ module HQ
       welcome_workspace_path
     end
 
-    def welcome_project_attrs(agent: nil)
+    def welcome_project_attrs(agent: nil, workspace_path: nil)
       {
         key: WELCOME_PROJECT_KEY,
         name: WELCOME_PROJECT_NAME,
         group: WELCOME_PROJECT_GROUP,
-        path: ensure_welcome_workspace!,
+        path: workspace_path || ensure_welcome_workspace!,
         agent: agent.to_s
       }
     end

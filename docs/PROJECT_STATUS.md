@@ -45,6 +45,33 @@ unchanged. Apply retains lifecycle recovery before it plans cleanup.
 See [retention policy](QUEUE_MIGRATION_RETENTION.md) for selection and limits.
 No operator cleanup is part of this change.
 
+## Manual Remote UI project creation
+
+The Agents page and onboarding screen provide New project. Only Project Name
+is initially visible; Options contains Project Key and Group. Explicit custom
+keys survive Name edits, polling and reload; Use name restores automatic keys.
+The form uses the default starter location without a folder control or preview.
+A confirmed creation opens a native modal with project information and one Okay
+button. Navigation waits for acknowledgment. Durable request receipts support
+safe manual retries after uncertain replies and confirmed-modal reload recovery.
+Desktop/mobile Dark/Light browser checks cover the minimal form, modal keyboard
+focus, polling, errors, lost replies and malformed replies. Existing custom-path
+API, configuration and CLI/agent behavior stay in place.
+
+The operator explicitly approved trusting same-user and root processes.
+Hostile same-UID lifetime isolation and earlier storage/guard research are
+superseded. Held directory handles, owner/mode checks, native macOS ACL checks,
+and a qualified local-filesystem set protect against other-user ancestor
+relocation. Sticky parents require trusted child ownership. Unknown permission
+or filesystem evidence fails clearly. New entries are private; existing files
+and ACLs are preserved. This is not isolation from trusted root disk services.
+See [the current path and trust contract](REMOTE_SERVER.md#manual-project-creation).
+
+Deterministic tests cover path escape, parent/starter replacement, permission
+rejection, sticky parents, ACL grants, Welcome preservation and existing safe
+aliases. Desktop/mobile checks use an isolated server home. PR346 stays
+published; each changed head requires fresh independent review.
+
 ## Scheduler startup intent
 
 Daemon ticks preserve paused and stopped schedule state. A stopped target now

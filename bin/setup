@@ -173,7 +173,7 @@ tycho_schedules_dir() {
 }
 
 tycho_workspaces_dir() {
-  printf '%s\n' "$(tycho_home_dir)/workspaces"
+  printf '%s\n' "$HOME/tycho-projects"
 }
 
 is_executable() {

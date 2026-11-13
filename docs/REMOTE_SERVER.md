@@ -609,7 +609,7 @@ Conversation entries are projected from `AgentChatLog#chat_blocks` when availabl
 | `GET` | `/attachments/{id}/blob` | Stream the attachment file bytes for image and binary previews. | <!-- local-path-ok -->
 | `GET` | `/setup` | Read full Remote UI readiness, including harness, tool, and skill diagnostics. |
 | `GET` | `/setup/summary` | Read lightweight shell, auth, count, config, onboarding, log, push, and refresh metadata without cold harness discovery. | <!-- local-path-ok -->
-| `POST` | `/setup/welcome` | Create the first-run welcome sandbox project under `HOME/.tycho/workspaces/welcome`. | <!-- local-path-ok -->
+| `POST` | `/setup/welcome` | Create the first-run welcome sandbox project under `HOME/tycho-projects/welcome`. | <!-- local-path-ok -->
 | `GET` | `/search` | Return agent and project payloads for compatibility with older client-side search flows. |
 | `GET` | `/`, `/ui`, `/ui.css`, `/ui.js` | Serve the Remote UI. `/ui` remains a compatibility alias. | <!-- local-path-ok -->
 | `GET` | `/favicon.svg`, `/favicon.ico` | Serve the Remote UI favicon. | <!-- local-path-ok -->
@@ -1429,9 +1429,89 @@ Validates and saves Loop session defaults in `hq.yml`. Intervals must be between
 
 Adopts an idle, unscheduled managed agent as a normal schedule whose target includes that agent key. The request supplies a unique schedule key and name, interval, future ISO-8601 cutoff, and run message. Tycho appends the standard schedule system prompt to the existing session before the immediate first run, records the schedule in `schedules.yml`, and ensures the scheduler daemon is active for later runs. The schedule expires to `stopped` after its cutoff.
 
+### Manual project creation
+
+The Agents page and first-run screen provide **New project**. Only **Project Name**
+is initially visible. **Options** contains **Project Key** and **Group**. The key
+follows Name until explicitly edited. Automatic/manual ownership, input, focus
+and disclosure state survive polling and reload. Clearing a custom key does not
+restore automatic mode; **Use name** deliberately restores it. Native validation
+opens Options before focusing an invalid field.
+
+This form uses the default `HOME/tycho-projects/KEY` location. It has no folder
+control or pre-submit destination preview. After a confirmed server receipt,
+a native modal shows the project name, key, optional group and location. Its
+only action is **Okay**, which navigates to the project. Polling cannot dismiss
+it or create again. Keyboard focus stays in the modal until acknowledgment.
+
+Before sending, the browser saves a UUID and immutable payload in session
+storage. Uncertain replies keep that payload locked; **Create project** retries
+the same UUID. A definite rejection restores editing and retains the input.
+Unavailable session storage prevents submission. A confirmed modal survives
+reload in the same tab. Clearing browser storage loses this recovery record;
+a later attempt still cannot overwrite an existing project key.
+
+`GET /setup/project-creation` returns the server home and starter directory. <!-- local-path-ok -->
+`POST /projects` accepts `name`, `key`, `group`, optional `path` and optional UUID `creation_request_id`. <!-- local-path-ok -->
+The manual form sends no path. Existing API/CLI custom-path capabilities stay
+in place. For receipt-aware requests, project registration and the receipt are
+saved in one atomic configuration write. Replaying the same UUID and payload
+returns the original project without creating directories or publishing another
+project-added hook. Different payloads, or a removed/archived original project,
+are rejected. Durable `project_creation_receipts` metadata and each project's
+`creation_request_id` are additive configuration fields; no live migration is
+required. Receipts are retained. This is registration idempotency, not a
+filesystem transaction: a directory can remain if registration fails.
+
+The server rejects paths outside its user home, parent traversal, dangling
+symlinks, and non-directory targets. Safe internal symlinks use their resolved
+path. It walks the canonical parent with held no-follow directory handles,
+uses descriptor-relative `mkdirat`, and writes Welcome files with exclusive
+`openat`. Existing files and links are preserved. It never deletes outside
+objects as recovery.
+
+The approved boundary is `same_user_threat_model = Trust same-user and root
+processes (recommended)`. Other users remain untrusted. This is a manual UI
+path restriction, not lifetime isolation from the server UID, root processes,
+storage administrators, or root disk-service actions. Trusted processes must
+not move the target outside home during a request. Earlier whole-home storage,
+VM and system-guard research concerned the superseded hostile same-UID model;
+it is not a deployment requirement.
+
+Each held directory, from the filesystem root through the target, must be
+owned by the effective server UID or root. Group/world write is rejected unless
+the directory is sticky; every child must still have a trusted owner. Thus
+sticky temporary ancestors work without admitting foreign-owned entries.
+Linux POSIX ACL effective named-user/group rights are bounded by the group
+mode mask. New directories use mode 0700 and new files mode 0600, including
+under inherited Linux default ACLs. On macOS the native descriptor ACL is read:
+deny and read-only entries are accepted, but write/delete/metadata grant
+entries are conservatively rejected, including grants whose principal cannot
+be resolved safely. A private grant to the server user can therefore require
+another folder. No permissions or ACLs on existing folders are changed.
+
+The initial supported filesystem set is APFS/HFS on macOS and ext2/3/4, XFS,
+Btrfs and tmpfs on Linux (including WSL when it exposes one of those types).
+macOS also requires a local mount owned by root or the server UID with
+ownership checks enabled. The native `fstatfs` layout is platform-specific; unknown platforms, FUSE,
+network filesystems and overlay storage fail clearly before creation. This
+qualification assumes the trusted OS/root manages the local filesystem and
+its backing storage. It does not prove arbitrary remote-server permissions or
+hostile backing-storage isolation. A mount or alias does not acquire trust
+from device-number equality: its opened directories must pass all checks.
+Root/same-user mount actors are trusted under the approved boundary.
+
+See [Linux ACL mask semantics](https://man7.org/linux/man-pages/man5/acl.5.html),
+[Apple descriptor ACL API](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/acl_get.3.html),
+and [Apple ACL iteration](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/acl_get_entry.3.html).
+Native calls use Fiddle; unavailable permission evidence fails with an error.
+This policy applies only to manual Remote UI creation and the first-run
+sandbox. CLI registration, agents and existing configured projects keep their
+path behavior. No existing project or configuration path is moved.
+
 ### `POST /setup/welcome` <!-- local-path-ok -->
 
-Creates the first-run welcome sandbox at `HOME/.tycho/workspaces/welcome`, appends a
+Creates the first-run welcome sandbox at `HOME/tycho-projects/welcome`, appends a
 `welcome` project to `hq.yml`, and returns the project detail payload. This route
 is only available before any project is configured.
 

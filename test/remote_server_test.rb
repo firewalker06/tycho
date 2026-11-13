@@ -20,6 +20,7 @@ module RemoteServerTest
   module_function
 
   def run!
+    assert_remote_manual_project_creation
     assert_remote_agent_lifecycle
     assert_remote_creation_retries
     assert_creation_with_legacy_archives
@@ -6654,11 +6655,88 @@ module RemoteServerTest
     end
   end
 
+  def assert_remote_manual_project_creation
+    with_remote_temp_store do |dir|
+      dir = File.realpath(dir)
+      home = File.join(dir, "home")
+      outside = File.join(dir, "outside")
+      FileUtils.mkdir_p([home, outside])
+      starter = File.join(home, "tycho-projects")
+      policy = HQ::RemoteProjectCreation.new(home: home, starter_directory: starter)
+      assert(policy.prepare!("", key: "new") == File.join(starter, "new"), "expected visible starter folder")
+      File.write(File.join(starter, "new", "keep.txt"), "keep")
+      assert(policy.prepare!(File.join(starter, "new"), key: "existing") == File.join(starter, "new"), "expected existing folder")
+      assert(File.read(File.join(starter, "new", "keep.txt")) == "keep", "expected existing files preserved")
+      assert(policy.prepare!("~/tilde", key: "tilde") == File.join(home, "tilde"), "expected server home expansion")
+      File.symlink(outside, File.join(home, "escape"))
+      File.symlink(File.join(home, "missing"), File.join(home, "dangling"))
+      File.symlink(starter, File.join(home, "inside"))
+      assert(policy.prepare!(File.join(home, "inside", "linked"), key: "linked") == File.join(starter, "linked"), "expected safe internal symlink")
+      File.write(File.join(home, "file"), "keep")
+      [outside, "#{home}-other/new", "~/../outside/new", "relative", "~root/new",
+       File.join(home, "escape", "new"), File.join(home, "escape"), File.join(home, "dangling"),
+       File.join(home, "file"), File.join(home, "missing", "new"), home, "~/bad\0path"].each do |path|
+        begin
+          policy.prepare!(path, key: "invalid")
+          raise "accepted unsafe path #{path.inspect}"
+        rescue HQ::RemoteProjectCreation::Error
+          # Rejected before registration or writes outside the home.
+        end
+      end
+      assert(Dir.empty?(outside), "expected no outside writes")
+      home_link = File.join(dir, "home-link")
+      File.symlink(home, home_link)
+      alias_policy = HQ::RemoteProjectCreation.new(home: home_link, starter_directory: File.join(home_link, "tycho-projects"))
+      assert(alias_policy.prepare!(File.join(home_link, "alias-project"), key: "alias") == File.join(home, "alias-project"), "expected canonical home alias")
+      File.symlink(outside, File.join(home, "bad-starter"))
+      begin
+        HQ::RemoteProjectCreation.new(home: home, starter_directory: File.join(home, "bad-starter")).prepare!("", key: "escape")
+        raise "accepted outside starter symlink"
+      rescue HQ::RemoteProjectCreation::Error
+      end
+      assert(Dir.empty?(outside), "expected no writes through starter symlink")
+
+      registry = registry_for_project(dir, outside)
+      service = HQ::RemoteService.new(registry: registry)
+      server = HQ::RemoteServer.new
+      safe_path = File.join(File.realpath(HQ::TYCHO_HOME), "manual-project")
+      FileUtils.mkdir_p(File.dirname(safe_path))
+      old_home = Dir.method(:home)
+      Dir.define_singleton_method(:home) { File.dirname(safe_path) }
+      response = server.send(:route, service, "POST", "/projects", {
+        "key" => "manual", "name" => "Manual project", "path" => safe_path, "group" => "Personal"
+      }, nil)
+      assert(response.dig(:body, :project, :path) == File.realpath(safe_path), "expected creation route and persisted path")
+      assert(registry.projects.any? { |project| project.key == "web" && project.path == outside }, "expected existing outside project preserved")
+      assert(server.send(:route, service, "GET", "/setup/project-creation", {}, nil).dig(:body, :project_creation, :home) == Dir.home, "expected server home metadata")
+      begin
+        service.create_project("key" => "manual", "name" => "Duplicate", "path" => File.join(safe_path, "duplicate"))
+        raise "accepted duplicate key"
+      rescue HQ::RemoteService::Error
+      end
+      assert(!File.exist?(File.join(safe_path, "duplicate")), "expected duplicate rejection before folder creation")
+      registry.update_group_hidden!("Private", true)
+      begin
+        service.create_project("key" => "private", "name" => "Private", "group" => "Private", "path" => File.join(safe_path, "private"))
+        raise "accepted hidden group"
+      rescue HQ::RemoteService::Error => e
+        assert(e.message.include?("group is hidden"), "expected useful hidden group error")
+      end
+      assert(!File.exist?(File.join(safe_path, "private")), "expected hidden group rejection before folder creation")
+    ensure
+      Dir.define_singleton_method(:home, old_home) if old_home
+    end
+  end
+
   def assert_remote_welcome_onboarding_creates_project
     with_remote_temp_store do |dir|
       config_path = File.join(dir, "hq.yml")
       prompts_path = File.join(dir, "system_prompts.yml")
-      welcome_path = File.join(dir, "workspaces", "welcome")
+      dir = File.realpath(dir)
+      welcome_path = File.join(dir, "tycho-projects", "welcome")
+      old_home = Dir.method(:home)
+      Dir.define_singleton_method(:home) { dir }
+      old_starter = replace_constant(HQ, :USER_WORKSPACES_DIR, File.dirname(welcome_path))
       old_welcome_path = replace_constant(HQ, :WELCOME_WORKSPACE_DIR, welcome_path)
       File.write(config_path, "projects: []\n")
       File.write(prompts_path, "custom: Default prompt.\n")
@@ -6681,6 +6759,8 @@ module RemoteServerTest
       assert(service.setup.dig(:onboarding, :active) == false, "expected onboarding to finish after project creation")
     ensure
       replace_constant(HQ, :WELCOME_WORKSPACE_DIR, old_welcome_path) if old_welcome_path
+      replace_constant(HQ, :USER_WORKSPACES_DIR, old_starter) if old_starter
+      Dir.define_singleton_method(:home, old_home) if old_home
     end
   end
 
