@@ -1093,6 +1093,27 @@ curl -X POST http://127.0.0.1:7373/agents/web-charlie-agent-8/prompt-queue/proce
   -d '{"entry_ids":["ENTRY_ID"],"expected_entry_ids":["ENTRY_ID","OTHER_ID"]}'
 ```
 
+For a linked paused or stopped schedule, this is an explicit one-time action.
+The agent UI shows **Process queue once** and **Process selected**. Neither action
+resumes the schedule or changes its saved state. Later automatic queue dispatch
+stays suppressed. Running agents, active or suspended inquiries, busy workspaces,
+unavailable workspaces, and context or claim recovery block this action before
+queue selection is saved. The response gives the blocker as a conflict (409).
+Failed claims retain the existing guarded **Retry** action.
+
+The supported local and remote CLI uses the same selected-entry operation:
+
+```bash
+bin/tycho queue-work process AGENT_KEY --entry-ids ENTRY_ID --expected-entry-ids ENTRY_ID,OTHER_ID --json
+bin/tycho queue-work process AGENT_KEY --entry-ids ENTRY_ID --expected-entry-ids ENTRY_ID,OTHER_ID --server SERVER_KEY --json
+```
+
+The queue payload's `processing.manual_once` reports the linked schedule status
+and a nullable `blocker`. This is a display snapshot. The store checks it again
+under its lock before delivery. A blocked request saves no deferred permission
+to launch later. Existing FIFO claims, authority stamps, native start recovery,
+and expected-entry snapshot checks apply.
+
 ### `POST /agents/{key}/prompt-queue/remove` <!-- local-path-ok -->
 
 Removes selected entries only when the same complete queue snapshot still applies. The operation records durable source-appropriate dispositions (`declined_with_reason` for user work and `superseded_with_reason` for delegated reports) instead of erasing audit history. A stale request returns no removed IDs and changes nothing.
