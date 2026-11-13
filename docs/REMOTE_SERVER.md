@@ -1547,3 +1547,13 @@ Common statuses:
 - Agent start/stop behavior is still owned by `ManagedAgent`; the server does not implement separate process supervision.
 - Request bodies that are absent or empty are treated as `{}`.
 - Query strings are ignored by the router.
+
+## Optional trusted Iroh gateway
+
+Phone browsers can use the experimental separately built HTTPS gateway with
+a native Iroh hop to a fixed-loopback Tycho bridge. No client install is
+required. The operator trusts the gateway with readable requests and bearer
+tokens. This is explicit opt-in and does not replace this server's existing
+transport or authorization. See [Iroh gateway](IROH_GATEWAY.md) for setup,
+private enrollment files, access limits, isolated tests, and unsupported paths.
+No deployment or relay provisioning is automatic.

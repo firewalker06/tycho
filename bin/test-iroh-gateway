@@ -1,0 +1,20 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "tmpdir"
+require "fileutils"
+
+root = File.expand_path("..", __dir__)
+Dir.mktmpdir("tycho-iroh-tests-") do |dir|
+  env = { "CARGO_TARGET_DIR" => File.join(dir, "target") }
+  manifest = File.join(root, "ext/iroh_gateway/Cargo.toml")
+  ["test", "build"].each do |action|
+    abort "Iroh #{action} failed" unless system(env, "cargo", action, "--locked", "--manifest-path", manifest)
+  end
+  capture = ENV["TYCHO_REMOTE_UI_CAPTURE_DIR"].to_s
+  capture = File.join(dir, "evidence") if capture.empty?
+  command = ["python3", File.join(root, "test/iroh/gateway_proof.py"),
+             "--binary", File.join(dir, "target/debug/tycho-iroh-gateway"), "--output", capture]
+  abort "Real Iroh gateway proof failed" unless system(*command, chdir: root)
+end
+puts "Iroh gateway: ok"

@@ -12,6 +12,17 @@ type: project
 
 2026-11-13
 
+## Optional Iroh gateway preview
+
+Card 850 selects phone-browser access without an installed client. The operator
+accepts a trusted HTTPS gateway that can read requests and tokens. An optional
+Unix Rust helper provides gateway HTTPS and a real Iroh hop to a fixed-loopback
+host bridge. Existing Tycho HTTP/Tailscale defaults and bearer authorization
+stay in place. Explicit enrollment, private files, bounded connections and
+bodies, and closed transport failures apply. No deployment is included.
+See [Iroh gateway](IROH_GATEWAY.md) for build, isolated real-transport tests,
+configuration, resource limits, and unverified relay/mobile/platform paths.
+
 ## DeepSeek Harness
 
 The native `dsh` headless adapter targets DeepSeek Harness 0.2.2-rc.1. It uses

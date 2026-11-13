@@ -25,6 +25,7 @@ Gem::Specification.new do |spec|
                Dir.glob("lib/hq/skill_assets/**/*").select { |path| File.file?(path) } +
                Dir.glob("lib/hq/remote_ui/**/*").select { |path| File.file?(path) } +
                Dir.glob("bin/*") +
+               Dir.glob("ext/iroh_gateway/{Cargo.toml,Cargo.lock,public_assets.json,src/*.rs}") +
                %w[
                  CHANGELOG.md
                  CODE_OF_CONDUCT.md
