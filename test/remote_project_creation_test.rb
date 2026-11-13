@@ -251,6 +251,37 @@ module RemoteProjectCreationTest
     end
   end
 
+  def assert_linux_acl_policy
+    return unless RUBY_PLATFORM.include?("linux")
+
+    Dir.mktmpdir("tycho-project-posix-acl-") do |temporary|
+      home = File.realpath(temporary)
+      parent = File.join(home, "parent")
+      Dir.mkdir(parent)
+      policy = HQ::RemoteProjectCreation.new(home: home, starter_directory: File.join(home, "starter"))
+      # Linux POSIX ACL xattr ABI: version 2, followed by tag/permissions/id.
+      # Grant an unrelated UID rwx, constrained by the effective ACL mask.
+      acl = [2].pack("V") + [[1, 7, 0xffffffff], [2, 7, Process.euid + 10001],
+                            [4, 0, 0xffffffff], [16, 7, 0xffffffff], [32, 0, 0xffffffff]].map { |e| e.pack("vvV") }.join
+      set = Fiddle::Function.new(Fiddle::Handle::DEFAULT["fsetxattr"],
+                                [Fiddle::TYPE_INT, Fiddle::TYPE_VOIDP, Fiddle::TYPE_VOIDP, Fiddle::TYPE_SIZE_T, Fiddle::TYPE_INT], Fiddle::TYPE_INT)
+      File.open(parent) do |fd|
+        assert(set.call(fd.fileno, "system.posix_acl_default", acl, acl.bytesize, 0) == 0, "native default ACL fixture must install")
+        target = policy.prepare!(File.join(parent, "new"), key: "new", files: { "README.md" => "Welcome" })
+        assert((File.stat(target).mode & 0o077).zero?, "0700 must mask inherited named-user ACL grants")
+        assert((File.stat(File.join(target, "README.md")).mode & 0o077).zero?, "0600 must mask inherited file ACL grants")
+        assert(set.call(fd.fileno, "system.posix_acl_access", acl, acl.bytesize, 0) == 0, "native access ACL fixture must install")
+        begin
+          policy.prepare!(File.join(parent, "rejected"), key: "rejected")
+          raise "effective named-user write ACL must be rejected"
+        rescue HQ::RemoteProjectCreation::Error => e
+          assert(e.message.include?("writable by other users"), "ACL mask must expose effective grant in group mode bits")
+        end
+        assert(!File.exist?(File.join(parent, "rejected")), "ACL rejection must precede mutation")
+      end
+    end
+  end
+
   def assert_input_and_unknown_policy
     Dir.mktmpdir("tycho-project-input-") do |temporary|
       root = File.realpath(temporary)
@@ -291,6 +322,7 @@ module RemoteProjectCreationTest
     assert_unavailable_fails_closed
     assert_permission_policy
     assert_native_acl_policy
+    assert_linux_acl_policy
     assert_input_and_unknown_policy
     puts "remote_project_creation_test: ok"
   end
