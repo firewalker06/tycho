@@ -5587,6 +5587,26 @@ module RemoteServerTest
              "expected workspace images to use the scoped binary endpoint")
       assert(image.dig(:headers, "X-Content-Type-Options") == "nosniff", "expected workspace images to disable MIME sniffing")
 
+      authenticated_server = HQ::RemoteServer.new(registry: registry, token: "synthetic-image-token", output: StringIO.new)
+      ["/projects/web/workspace/image?path=diagram.png", "/attachments/unregistered/blob"].each do |path|
+        [nil, "wrong-token", "synthetic-image-token"].each do |token|
+          accepted, client = Socket.pair(:UNIX, :STREAM, 0)
+          worker = Thread.new { authenticated_server.send(:handle_client, accepted) }
+          authorization = token ? "Authorization: Bearer #{token}\r\n" : ""
+          client.write("GET #{path} HTTP/1.1\r\nHost: localhost\r\n#{authorization}\r\n")
+          response = Timeout.timeout(5) { client.read }
+          expected = token != "synthetic-image-token" ? 401 : path.start_with?("/projects/") ? 200 : 404
+          assert(response.start_with?("HTTP/1.1 #{expected}"), "expected image resource authentication before lookup")
+          if expected == 200
+            assert(response.end_with?("\x89PNG\r\n\x1A\n".b), "expected exact image bytes after authentication")
+          end
+        ensure
+          client&.close unless client&.closed?
+          accepted&.close unless accepted&.closed?
+          worker&.join(5)
+        end
+      end
+
       saved = server.send(
         :route,
         service,
@@ -5601,7 +5621,7 @@ module RemoteServerTest
       traversal = HQ::RemoteServer::Request.new(
         method: "GET",
         path: "/projects/web/workspace",
-        query: "path=%252e%252e%252foutside",
+        query: "path=%2e%2e%2foutside",
         headers: {},
         body: ""
       )
@@ -10231,7 +10251,7 @@ module RemoteServerTest
     assert(js[:body].include?("markdownMenuScope: `conversation:${index}:${blockStateToken(block)}`") &&
            js[:body].include?("menuScope: `attachment:${id}`"),
            "expected Markdown code menus to use their owning message or attachment as a stable scope")
-    assert(js[:body].include?("renderMarkdown(content, { breaks: true, menuScope: `attachment:${id}` })") &&
+    assert(js[:body].include?("renderMarkdown(content, { breaks: true, menuScope: `attachment:${id}`, imageContext: { agent, attachment } })") &&
            js[:body].include?("breaks: options.breaks === true"),
            "expected only markdown attachment call sites to opt into single-newline breaks")
     assert(js[:body].include?("function renderHtmlAttachment") &&

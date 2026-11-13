@@ -215,10 +215,10 @@ module HQ
     end
 
     def normalize_relative_path(value)
+      # Callers supply a decoded filesystem path. Percent sequences stay literal here.
       raw = value.to_s
       raise invalid_path if raw.include?("\0") || !raw.valid_encoding?
       raise invalid_path if raw.start_with?("/", "\\") || raw.match?(/\A[A-Za-z]:[\\\/]/)
-      raise invalid_path if raw.match?(/%[0-9a-f]{2}/i)
 
       clean = raw.tr("\\", "/").split("/", -1)
       raise invalid_path if clean.any? { |part| part == ".." }
@@ -230,7 +230,7 @@ module HQ
       candidate = relative.empty? ? root : File.join(root, relative)
       resolved = File.realpath(candidate)
       raise invalid_path unless inside_root?(root, resolved)
-      raise Error.new("not_found", "Workspace path is no longer available", status: 404) unless public_path?(relative)
+      raise Error.new("not_found", "Workspace path is no longer available", status: 404) unless public_resolved_path?(root, relative, resolved)
 
       valid = kind == :directory ? File.directory?(resolved) : File.file?(resolved)
       raise Error.new("wrong_type", "Workspace path has the wrong type", status: 409) unless valid
@@ -319,6 +319,7 @@ module HQ
       candidate = File.join(directory, name)
       resolved = File.realpath(candidate)
       return nil unless inside_root?(root, resolved)
+      return nil unless public_resolved_path?(root, relative, resolved)
 
       stat = File.stat(resolved)
       kind = stat.directory? ? "directory" : stat.file? ? "file" : nil
@@ -333,6 +334,11 @@ module HQ
       }.compact
     rescue Errno::ENOENT, Errno::EACCES, Errno::EPERM, Errno::ELOOP, EncodingError
       nil
+    end
+
+    def public_resolved_path?(root, relative, resolved)
+      canonical_relative = resolved.delete_prefix(root).delete_prefix(File::SEPARATOR)
+      public_path?(relative) && public_path?(canonical_relative)
     end
 
     def public_path?(relative)
