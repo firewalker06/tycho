@@ -94,7 +94,7 @@ module HQ
       queue_store = QueueStore.new
       if File.exist?(QueueStore.journal_path)
         journal = queue_store.read_journal
-        records = journal.fetch("records") if journal.fetch("target") == AGENTS_FILE
+        records = journal.fetch("records") if journal["target"] == AGENTS_FILE
         state = journal.fetch("queues")
       else
         state = queue_store.read
@@ -242,6 +242,10 @@ module HQ
       raise if e.is_a?(IOError) || e.is_a?(DelegationStore::Error)
 
       [[], []]
+    end
+
+    def cleanup_empty_queue_migrations(apply: false)
+      with_exclusive_lock { QueueStore.new.cleanup_empty_migrations(apply:) }
     end
 
     def save(agents)
