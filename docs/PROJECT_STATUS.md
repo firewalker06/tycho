@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-11-12
+2026-11-13
 
 ## Scheduler startup intent
 
@@ -38,6 +38,15 @@ link with the existing gear icon at the bottom of the desktop sidebar; mobile
 Settings stays in the context menu.
 Schedule save, cancel, and Back actions return to Schedules. The Now empty-state
 follow-up remains separate in card #860.
+
+## Manual queue delivery with inactive schedules
+
+The agent queue offers a one-time selected or full delivery while its linked
+schedule is paused or stopped. CLI and API calls use the same locked selection
+path. Schedule state remains unchanged and later automatic dispatch stays off.
+This action reports inquiry, workspace, running-agent, and recovery blockers
+before saving selection. Failed launches retain claims for explicit Retry.
+See [Remote Sessions queue processing](REMOTE_SERVER.md#post-agentskeyprompt-queueprocess).
 
 ## Central queue storage
 
