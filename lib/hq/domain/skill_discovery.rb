@@ -55,6 +55,8 @@ module HQ
     def roots_for(kind, workspace)
       workspace = workspace.to_s
       case HQ.harness_adapter(kind)
+      when "dsh"
+        [] # dsh profile skill roots are not inferred from Codex configuration.
       when "agy"
         [
           File.expand_path("~/.gemini/config/skills"),

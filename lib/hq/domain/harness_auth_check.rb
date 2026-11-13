@@ -33,6 +33,8 @@ module HQ
         opencode_check(command, environment:)
       when "pi"
         pi_check(command, environment:)
+      when "dsh"
+        result("unknown", "DeepSeek Harness headless credentials are operator-managed; no model request was made")
       when "agy"
         result("unknown", "agy has no supported authentication status command; model availability does not verify authentication")
       else

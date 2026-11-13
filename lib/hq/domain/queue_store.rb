@@ -9,6 +9,12 @@ module HQ
   # agent-file commit recoverable before a later caller can claim any work.
   class QueueStore
     FIELDS = %w[prompt_queue prompt_queue_claim prompt_queue_dispatch_error queue_work].freeze
+    EMPTY_MIGRATION = {
+      "queue_sha256" => Digest::SHA256.hexdigest("{}"),
+      "entry_ids" => [], "claim_id" => nil, "batch_ids" => []
+    }.freeze
+    MIGRATION_RETAIN = 100
+    MIGRATION_DELETE_LIMIT = 1000
     RUN_FIELDS = %w[queue_delivery_staged queue_delivery_rollback].freeze
 
     def self.path
@@ -61,7 +67,7 @@ module HQ
 
       raise IOError, "Queue target reference does not match agent" unless reference == record["key"]
       queue = state.fetch("agents")[reference]
-      raise IOError, "Missing queue record for #{reference}" unless queue.is_a?(Hash)
+      raise IOError, "Missing queue record for #{reference}" unless queue.is_a?(Hash) && !queue.empty?
       if record["queue_generation"] != queue["generation"]
         raise IOError, "Agent and queue generations do not match for #{reference}"
       end
@@ -121,6 +127,51 @@ module HQ
       stripped
     end
 
+    # Caller holds the lifecycle lock. Only audit receipts are candidates.
+    # Keep the last 100 by key; legacy receipts have no reliable timestamps.
+    def cleanup_empty_migrations(apply: false)
+      raise IOError, "Queue transaction needs recovery; no cleanup plan was produced" if File.exist?(journal_path)
+
+      state = File.exist?(@path) ? JSON.parse(FileStore.read_text(@path)) : read
+      validate_state!(state)
+      migrations = state.fetch("migrations", {})
+      raise IOError, "Invalid migration receipts" unless migrations.is_a?(Hash) && migrations.keys.all? { |key| key.is_a?(String) }
+
+      retained = {}
+      eligible = migrations.keys.sort.select do |key|
+        receipt = migrations.fetch(key)
+        queue = state.fetch("agents")[key]
+        reason = if receipt != EMPTY_MIGRATION
+                   "nonempty_or_unknown_receipt"
+                 elsif !queue.is_a?(Hash) || queue.empty?
+                   "missing_queue"
+                 elsif queue.keys != ["generation"]
+                   "queue_evidence"
+                 end
+        retained[key] = reason if reason
+        reason.nil?
+      end
+      keep = eligible.last(MIGRATION_RETAIN)
+      keep.each { |key| retained[key] = "retention_window" }
+      candidates = (eligible - keep).first(MIGRATION_DELETE_LIMIT)
+      (eligible - keep - candidates).each { |key| retained[key] = "per_run_limit" }
+      report = {
+        "mode" => apply ? "apply" : "dry_run",
+        "retain" => MIGRATION_RETAIN, "delete_limit" => MIGRATION_DELETE_LIMIT,
+        "candidates" => candidates, "retained" => retained,
+        "removed" => apply ? candidates : []
+      }
+      return report unless apply && !candidates.empty?
+
+      candidates.each { |key| migrations.delete(key) }
+      journal = { "version" => 2, "operation" => "migration_cleanup", "queues" => state }
+      FileStore.write_json(journal_path, journal, backup: false)
+      install!(journal)
+      report
+    rescue JSON::ParserError => e
+      raise IOError, "Invalid queue store: #{e.class}"
+    end
+
     def recover!
       return false unless File.exist?(journal_path)
 
@@ -131,6 +182,11 @@ module HQ
 
     def read_journal
       journal = JSON.parse(FileStore.read_text(journal_path))
+      if journal.is_a?(Hash) && journal["version"] == 2 && journal["operation"] == "migration_cleanup"
+        validate_state!(journal.fetch("queues"))
+        raise IOError, "Invalid migration receipts" unless journal.dig("queues", "migrations").is_a?(Hash)
+        return journal
+      end
       unless journal.is_a?(Hash) && journal["version"] == 1 && journal["queues"].is_a?(Hash) &&
              journal["target"].is_a?(String) && journal.key?("records")
         raise IOError, "Invalid queue transaction journal"
@@ -162,7 +218,7 @@ module HQ
 
     def install!(journal)
       FileStore.write_json(@path, journal.fetch("queues"))
-      FileStore.write_json(journal.fetch("target"), journal.fetch("records"))
+      FileStore.write_json(journal.fetch("target"), journal.fetch("records")) unless journal["version"] == 2
       File.unlink(journal_path)
       FileStore.fsync_directory(File.dirname(@path))
     end

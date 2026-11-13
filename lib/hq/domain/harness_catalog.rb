@@ -119,6 +119,8 @@ module HQ
         opencode_catalog(resolution, command_prefix:, environment:)
       when "pi"
         pi_catalog(resolution, command_prefix:, environment:)
+      when "dsh"
+        dsh_catalog
       when "agy"
         agy_catalog(resolution, command_prefix:, environment:)
       else
@@ -136,6 +138,8 @@ module HQ
         opencode_catalog(resolution, command_prefix:, environment:)
       when "pi"
         pi_catalog(resolution, command_prefix:, environment:)
+      when "dsh"
+        dsh_catalog
       when "agy"
         agy_catalog(resolution, command_prefix:, environment:)
       else
@@ -259,6 +263,24 @@ module HQ
         auth_providers: rows.filter_map { |item| item[:provider] }.uniq,
         version: pi_version(command_prefix, environment:)
       )
+    end
+
+    def dsh_catalog
+      {
+        model_suggestions: [{ value: "deepseek-flash", label: "deepseek-flash" }],
+        default_model: "deepseek-flash",
+        reasoning_effort_suggestions: [],
+        catalog_source: "DeepSeek Harness 0.2.2-rc.1 defaults",
+        auth_ready: nil,
+        auth_providers: [],
+        capabilities: ["headless JSON events", "stdin prompts", "native session resume", "invocation-local DeepSeek model configuration"],
+        safety_gaps: [
+          "Developer preview protocol; validated contract is 0.2.2-rc.1",
+          "Headless uses environment or .env credentials; GUI sign-in is not used by default",
+          "Tycho validates final JSON and can request correction; dsh has no JSON Schema output flag",
+          "Interactive terminal open and skill installation are not supported"
+        ]
+      }
     end
 
     def agy_catalog(resolution, command_prefix: nil, environment: {})

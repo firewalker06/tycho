@@ -24,6 +24,7 @@ module RemoteServerTest
     assert_remote_agent_lifecycle
     assert_remote_creation_retries
     assert_creation_with_legacy_archives
+    assert_creation_with_damaged_archive_queues
     assert_legacy_archive_timestamp_boundaries
     assert_creation_receipt_requires_complete_archive_scan
     assert_accepted_creation_retry_stays_uncertain
@@ -1299,9 +1300,12 @@ module RemoteServerTest
       fetched = server.send(:route, service, "GET", "/skills", {}, nil)
       harnesses = fetched.dig(:body, :skill_installation, :harnesses)
       assert(harnesses.map { |item| item[:harness] } == %w[
-        codex claude opencode pi agy claude-wrapper codex-wrapper opencode-wrapper pi-wrapper
+        codex claude opencode pi agy dsh claude-wrapper codex-wrapper opencode-wrapper pi-wrapper
       ], "expected Remote skills status for built-ins and configured profiles")
-      assert(harnesses.all? { |item| item[:status] == "missing" }, "expected supported isolated homes to start missing")
+      supported = harnesses.reject { |item| item[:harness] == "dsh" }
+      assert(supported.all? { |item| item[:status] == "missing" }, "expected supported isolated homes to start missing")
+      dsh = harnesses.find { |item| item[:harness] == "dsh" }
+      assert(dsh[:status] == "error" && dsh.dig(:error, :category) == "compatibility" && !dsh.dig(:actions, :install), "expected native dsh skill installation to stay unsupported")
       agy = harnesses.find { |item| item[:harness] == "agy" }
       assert(agy[:target_path] == File.join(home, ".gemini", "config", "skills"),
              "expected agy skill installation to target its documented global skill directory")
@@ -1505,6 +1509,92 @@ module RemoteServerTest
       end
     end
     puts "legacy timestamp boundaries: ok"
+  end
+
+  def assert_creation_with_damaged_archive_queues
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      FileUtils.mkdir_p(workspace)
+      registry = registry_for(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      attrs = { "project_key" => "web", "prompt" => "Project New Agent",
+                "client_request_id" => "client-project-archive-queue" }
+      accepted = service.create_agent(attrs)
+      service.archive_agent(accepted[:key])
+      healthy = HQ::AgentArchiveStore.new.find(accepted[:key])
+      damaged_dir = File.join(HQ::AGENT_ARCHIVE_DIR, "20261111-090459-unrelated")
+      FileUtils.mkdir_p(damaged_dir)
+      damaged_path = File.join(damaged_dir, "agent_manifest.json")
+      damaged = JSON.parse(File.read(healthy.manifest_path)).merge(
+        "key" => "unrelated", "queue_ref" => "unrelated", "queue_generation" => "missing-generation",
+        "creation_request" => { "id" => "other-request", "fingerprint" => "other-fingerprint" }
+      )
+      File.write(damaged_path, JSON.generate(damaged))
+      queues = JSON.parse(File.read(HQ::QueueStore.path))
+      queues["agents"]["retained-work"] = {
+        "generation" => "retained-generation",
+        "prompt_queue" => [{ "id" => "pending", "prompt" => "Pending work", "source" => "user" }],
+        "queue_work" => { "version" => 1, "batches" => [{
+          "id" => "completed-batch", "state" => "resolved", "delivery_count" => 1,
+          "entries" => [{ "id" => "completed", "prompt" => "Completed work", "source" => "user" }],
+          "dispositions" => { "completed" => { "outcome" => "completed" } }
+        }] }
+      }
+      HQ::FileStore.write_json(HQ::QueueStore.path, queues)
+      queue_before = File.binread(HQ::QueueStore.path)
+      manifest_before = File.binread(damaged_path)
+      replay = HQ::RemoteService.new(registry: registry).create_agent(attrs)
+      assert(replay[:key] == accepted[:key] && replay[:archived], "expected exact archived replay beside a damaged unrelated queue")
+      begin
+        service.create_agent(attrs.merge("prompt" => "Changed options"))
+        raise "expected duplicate conflict"
+      rescue HQ::RemoteService::Error => e
+        assert(e.status == 409, "expected archived duplicate conflict beside damaged queue")
+      end
+      assert(File.binread(HQ::QueueStore.path) == queue_before, "expected replay and conflict to leave queue generations and work unchanged")
+      created = service.create_agent(attrs.merge("client_request_id" => "client-fresh-project-request"))
+      assert(created[:project_key] == "web" && created[:key] != accepted[:key], "expected fresh Project context creation beside damaged archived queue")
+      queue_after_creation = JSON.parse(File.read(HQ::QueueStore.path))
+      original_queues = JSON.parse(queue_before)
+      assert(queue_after_creation["agents"].reject { |key, _| key == created[:key] } == original_queues["agents"],
+             "expected new creation to preserve every existing queue record")
+      assert(!queue_after_creation["agents"].key?("unrelated") && File.binread(damaged_path) == manifest_before,
+             "expected no invented queue record or archive repair")
+      damaged["creation_request"] = JSON.parse(File.read(healthy.manifest_path))["creation_request"]
+      File.write(damaged_path, JSON.generate(damaged))
+      begin
+        service.create_agent(attrs)
+        raise "expected multiple archived receipts to fail closed"
+      rescue HQ::RemoteService::Error => e
+        assert(e.status == 503, "expected duplicate archived receipt identity to remain uncertain")
+      end
+      assert(File.binread(HQ::QueueStore.path) == JSON.pretty_generate(queue_after_creation),
+             "expected duplicate archived receipt lookup to preserve queue records")
+      # A matching archive still requires complete hydration; unknown queue history
+      # must never be projected as an empty queue or accepted as a fresh request.
+      FileUtils.rm_rf(healthy.directory)
+      protected_paths = [HQ::QueueStore.path, HQ::AGENTS_FILE, damaged_path]
+      before = protected_paths.to_h { |path| [path, File.binread(path)] }
+      begin
+        service.create_agent(attrs)
+        raise "expected damaged matching receipt to fail closed"
+      rescue HQ::RemoteService::Error => e
+        assert(e.status == 503 && !e.details&.dig(:creation_rejected), "expected uncertain matching archive to remain blocked")
+      end
+      assert(before.all? { |path, bytes| File.binread(path) == bytes }, "expected failed lookup to leave durable state unchanged")
+      [{}, { "id" => "other-request" }, "invalid"].each do |receipt|
+        damaged["creation_request"] = receipt
+        File.write(damaged_path, JSON.generate(damaged))
+        begin
+          service.create_agent(attrs.merge("client_request_id" => "client-uncertain-manifest"))
+          raise "expected malformed receipt to fail closed"
+        rescue HQ::RemoteService::Error => e
+          assert(e.status == 503, "expected malformed receipt to preserve uncertainty")
+        end
+        assert(File.binread(HQ::QueueStore.path) == before[HQ::QueueStore.path] &&
+               File.binread(HQ::AGENTS_FILE) == before[HQ::AGENTS_FILE], "expected malformed receipt to leave queue and agent state unchanged")
+      end
+    end
   end
 
   def assert_creation_receipt_requires_complete_archive_scan
@@ -5588,6 +5678,26 @@ module RemoteServerTest
              "expected workspace images to use the scoped binary endpoint")
       assert(image.dig(:headers, "X-Content-Type-Options") == "nosniff", "expected workspace images to disable MIME sniffing")
 
+      authenticated_server = HQ::RemoteServer.new(registry: registry, token: "synthetic-image-token", output: StringIO.new)
+      ["/projects/web/workspace/image?path=diagram.png", "/attachments/unregistered/blob"].each do |path|
+        [nil, "wrong-token", "synthetic-image-token"].each do |token|
+          accepted, client = Socket.pair(:UNIX, :STREAM, 0)
+          worker = Thread.new { authenticated_server.send(:handle_client, accepted) }
+          authorization = token ? "Authorization: Bearer #{token}\r\n" : ""
+          client.write("GET #{path} HTTP/1.1\r\nHost: localhost\r\n#{authorization}\r\n")
+          response = Timeout.timeout(5) { client.read }
+          expected = token != "synthetic-image-token" ? 401 : path.start_with?("/projects/") ? 200 : 404
+          assert(response.start_with?("HTTP/1.1 #{expected}"), "expected image resource authentication before lookup")
+          if expected == 200
+            assert(response.end_with?("\x89PNG\r\n\x1A\n".b), "expected exact image bytes after authentication")
+          end
+        ensure
+          client&.close unless client&.closed?
+          accepted&.close unless accepted&.closed?
+          worker&.join(5)
+        end
+      end
+
       saved = server.send(
         :route,
         service,
@@ -5602,7 +5712,7 @@ module RemoteServerTest
       traversal = HQ::RemoteServer::Request.new(
         method: "GET",
         path: "/projects/web/workspace",
-        query: "path=%252e%252e%252foutside",
+        query: "path=%2e%2e%2foutside",
         headers: {},
         body: ""
       )
@@ -6242,7 +6352,7 @@ module RemoteServerTest
       assert(setup[:refresh_intervals] == { active_ms: 5_000, idle_ms: 10_000, hidden_ms: 30_000 },
              "expected refresh intervals to use the 5s, 10s, and 30s policy")
       assert(setup[:harnesses].map { |item| item[:name] }.sort == %w[
-        agy claude claude-wrapper codex codex-wrapper opencode opencode-wrapper pi pi-wrapper
+        agy claude claude-wrapper codex codex-wrapper dsh opencode opencode-wrapper pi pi-wrapper
       ],
              "expected harness readiness entries")
       custom_profiles = setup[:harnesses].select { |item| item[:name].end_with?("-wrapper") }
@@ -6664,7 +6774,7 @@ module RemoteServerTest
       setup = HQ::RemoteService.new(registry: registry).setup
       guides = setup.dig(:onboarding, :agent_cli_guides)
 
-      assert(guides.map { |guide| guide[:key] } == %w[codex claude opencode pi],
+      assert(guides.map { |guide| guide[:key] } == %w[codex claude opencode pi dsh],
              "expected onboarding CLI guides for each built-in harness")
       guides.each do |guide|
         assert(guide[:install_command].to_s.length.positive?, "expected #{guide[:key]} install command")
@@ -8310,8 +8420,17 @@ module RemoteServerTest
            "expected Codex to use the official OpenAI blossom mark")
     assert(marks.include?('claude: "/harness-logos/claude-spark-clay.svg"') &&
            marks.include?('opencode: "/harness-logos/opencode-logo-dark.svg"') &&
-           marks.include?('pi: "/harness-logos/pi-logo-auto.svg"'),
+           marks.include?('pi: "/harness-logos/pi-logo-auto.svg"') &&
+           marks.include?('dsh: "/harness-logos/deepseek-icon.svg"'),
            "expected every built-in harness mark to map to its packaged upstream file")
+    assert(marks.include?('agy: "/harness-logos/antigravity-icon-one-color.svg"'),
+           "expected Antigravity to use its official one-color product icon")
+    assert(Digest::SHA256.file(File.join(HQ::RemoteUI::HARNESS_LOGO_ROOT, "antigravity-icon-one-color.svg")).hexdigest ==
+           "5b5d0cfd07cb79ba5d299d80b754e7c91d782dc1199811688dec67a0a11ba240",
+           "expected the Antigravity press asset to remain byte-identical")
+    assert(Digest::SHA256.file(File.join(HQ::RemoteUI::HARNESS_LOGO_ROOT, "deepseek-icon.svg")).hexdigest ==
+           "b15083e3cbb398bd35619b758c43adc0a632efccc7e2d69f2481a860862910fe",
+           "expected the DeepSeek icon to remain the byte-identical official asset")
     %w[
       --ds-background-canvas
       --ds-text-primary
@@ -10311,7 +10430,7 @@ module RemoteServerTest
     assert(js[:body].include?("markdownMenuScope: `conversation:${index}:${blockStateToken(block)}`") &&
            js[:body].include?("menuScope: `attachment:${id}`"),
            "expected Markdown code menus to use their owning message or attachment as a stable scope")
-    assert(js[:body].include?("renderMarkdown(content, { breaks: true, menuScope: `attachment:${id}` })") &&
+    assert(js[:body].include?("renderMarkdown(content, { breaks: true, menuScope: `attachment:${id}`, imageContext: { agent, attachment } })") &&
            js[:body].include?("breaks: options.breaks === true"),
            "expected only markdown attachment call sites to opt into single-newline breaks")
     assert(js[:body].include?("function renderHtmlAttachment") &&

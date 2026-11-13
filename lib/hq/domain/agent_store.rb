@@ -94,7 +94,7 @@ module HQ
       queue_store = QueueStore.new
       if File.exist?(QueueStore.journal_path)
         journal = queue_store.read_journal
-        records = journal.fetch("records") if journal.fetch("target") == AGENTS_FILE
+        records = journal.fetch("records") if journal["target"] == AGENTS_FILE
         state = journal.fetch("queues")
       else
         state = queue_store.read
@@ -242,6 +242,10 @@ module HQ
       raise if e.is_a?(IOError) || e.is_a?(DelegationStore::Error)
 
       [[], []]
+    end
+
+    def cleanup_empty_queue_migrations(apply: false)
+      with_exclusive_lock(recover: apply) { QueueStore.new.cleanup_empty_migrations(apply:) }
     end
 
     def save(agents)
@@ -1092,6 +1096,35 @@ module HQ
       end
     end
 
+    # This capability authorizes one immediate delivery, never a deferred resume.
+    # Recheck it under the store lock before changing queue or inquiry state.
+    def manual_schedule_queue_action(agent, agents:, schedule_states: nil)
+      return nil unless agent.scheduled?
+
+      schedule = (schedule_states || ScheduleStore.new.load)[agent.schedule_key.to_s]
+      return nil unless schedule && (schedule.paused? || schedule.stopped?)
+
+      blocker = if agent.archived?
+                  "Agent is archived"
+                elsif agent.running?
+                  "Agent is running"
+                elsif agent.context_replacement_recovery
+                  "Context replacement recovery is pending"
+                elsif agent.inquiry_blocking_prompt_queue?
+                  "Answer the inquiry or send a new prompt before processing the queue"
+                elsif agent.prompt_queue_dispatch_error
+                  "Queue dispatch failed. Use Retry queue to recover the retained claim"
+                elsif agent.prompt_queue_claim
+                  "Queue dispatch recovery is pending"
+                elsif !File.directory?(agent.workspace) || !File.readable?(agent.workspace)
+                  "Queue workspace is unavailable"
+                elsif agents.any? { |candidate| candidate.key != agent.key && candidate.running? &&
+                      canonical_workspace(candidate.workspace) == canonical_workspace(agent.workspace) }
+                  "Another agent is running in this workspace"
+                end
+      { "schedule_status" => schedule.status, "blocker" => blocker }
+    end
+
     def process_prompt_queue_entries!(key, entry_ids:, expected_entry_ids:)
       mutate(dispatch_prompt_queues: false) do |agents, _events|
         target = find_agent_in!(agents, key)
@@ -1104,6 +1137,9 @@ module HQ
                  "processed_entry_ids" => [], "agent" => target })
         end
         selected_ids = target.validate_queue_entry_ids!(entry_ids)
+        manual = manual_schedule_queue_action(target, agents:)
+        raise ArgumentError, manual["blocker"] if manual && manual["blocker"]
+
         target.cancel_pending_inquiry! if target.inquiry_blocking_prompt_queue?
         selected = target.prepare_queue_entries_for_processing!(selected_ids)
         dispatch_prompt_queue!(target, agents)
@@ -1889,12 +1925,12 @@ module HQ
       raise IOError, "Invalid agent store: #{e.class}"
     end
 
-    def with_exclusive_lock
+    def with_exclusive_lock(recover: true)
       FileUtils.mkdir_p(File.dirname(AGENTS_FILE))
       File.open("#{AGENTS_FILE}.lock", File::RDWR | File::CREAT, 0o600) do |file|
         RequestTiming.measure("store_lock_wait") { file.flock(File::LOCK_EX) }
         held_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-        QueueStore.new.recover!
+        QueueStore.new.recover! if recover
         yield
       ensure
         if held_at

@@ -211,7 +211,7 @@ module HQ
         argument :project_key, required: true, desc: "Project key"
         argument :prompt, required: true, desc: "Initial prompt for the agent"
         option :model, desc: "Model override (e.g. claude-opus-5-5)"
-        option :harness, desc: "Agent harness override (codex, claude, opencode, pi, agy, or a configured custom profile)"
+        option :harness, desc: "Agent harness override (codex, claude, opencode, pi, agy, dsh, or a configured custom profile)"
         option :name, desc: "Agent name override"
         option :template, desc: "Template key to use (defaults to project's first template)"
         option :run, type: :boolean, default: false, desc: "Start the agent immediately after creating"
@@ -520,7 +520,27 @@ module HQ
         end
       end
 
+      class QueueMigrationCleanup < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Report obsolete empty queue migration receipts; --apply removes bounded candidates"
+        option :apply, type: :boolean, default: false, desc: "Apply cleanup locally under the lifecycle lock"
+        usage_template "queue-work cleanup-migrations [--apply]"
+
+        def call(**opts)
+          unless Array(opts[:args]).empty?
+            exit CLICommand.failure("Unexpected cleanup arguments: #{Array(opts[:args]).join(" ")}", err: err)
+          end
+          report = HQ::AgentStore.new([]).cleanup_empty_queue_migrations(apply: opts[:apply])
+          out.puts JSON.pretty_generate(report)
+          exit 0
+        rescue IOError, SystemCallError => e
+          exit CLICommand.failure("Queue migration cleanup failed: #{e.message}", err: err)
+        end
+      end
+
       register "queue-work", QueueWorkCommand do |prefix|
+        prefix.register "cleanup-migrations", QueueMigrationCleanup
         prefix.register "complete", QueueWorkComplete
         prefix.register "discard", QueueWorkDiscard
         prefix.register "process", QueueWorkProcess

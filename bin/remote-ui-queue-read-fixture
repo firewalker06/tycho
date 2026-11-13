@@ -7,6 +7,7 @@ require "rbconfig"
 require "socket"
 require "tmpdir"
 require "time"
+require_relative "../test/support/test_environment"
 
 $stdout.sync = true
 
@@ -41,6 +42,7 @@ YAML
 File.write(prompts_path, "custom: Coordinate queued work.\n")
 File.write(schedules_path, "---\nschedules: []\n")
 
+TestEnvironment.command_env(FIXTURE_ROOT).each { |key, value| value ? ENV[key] = value : ENV.delete(key) }
 ENV["TYCHO_CONFIG_PATH"] = config_path
 ENV["TYCHO_SYSTEM_PROMPTS_PATH"] = prompts_path
 ENV["TYCHO_SCHEDULES_PATH"] = schedules_path

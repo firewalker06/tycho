@@ -46,10 +46,12 @@ module HQ
       "pwa-icon-maskable-512" => PWA_ICON_MASKABLE_512_PATH
     }.freeze
     HARNESS_LOGO_ASSETS = {
+      "/harness-logos/antigravity-icon-one-color.svg" => File.join(HARNESS_LOGO_ROOT, "antigravity-icon-one-color.svg"),
       "/harness-logos/claude-spark-clay.svg" => File.join(HARNESS_LOGO_ROOT, "claude-spark-clay.svg"),
       "/harness-logos/opencode-logo-dark.svg" => File.join(HARNESS_LOGO_ROOT, "opencode-logo-dark.svg"),
       "/harness-logos/pi-logo-auto.svg" => File.join(HARNESS_LOGO_ROOT, "pi-logo-auto.svg"),
-      "/harness-logos/openai-blossom-dark.svg" => File.join(HARNESS_LOGO_ROOT, "openai-blossom-dark.svg")
+      "/harness-logos/openai-blossom-dark.svg" => File.join(HARNESS_LOGO_ROOT, "openai-blossom-dark.svg"),
+      "/harness-logos/deepseek-icon.svg" => File.join(HARNESS_LOGO_ROOT, "deepseek-icon.svg")
     }.freeze
     ASSET_VERSION_PATHS = [
       TEMPLATE_PATH,

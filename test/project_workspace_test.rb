@@ -20,7 +20,9 @@ module ProjectWorkspaceTest
     assert_rejects_binary_large_sensitive_and_generated_files
     assert_reports_permission_errors
     assert_rejects_traversal_and_absolute_paths
+    assert_preserves_literal_percent_names
     assert_allows_internal_symlinks_and_rejects_escapes
+    assert_rejects_public_aliases_to_private_targets
     assert_handles_deleted_and_unavailable_paths
     puts "project_workspace_test: ok"
   end
@@ -219,9 +221,31 @@ module ProjectWorkspaceTest
   def assert_rejects_traversal_and_absolute_paths
     with_workspace do |root|
       browser = HQ::ProjectWorkspace.new(root)
-      ["../outside", "docs/../../outside", "/etc/passwd", "C:\\Windows\\system.ini", "..%2foutside",
-       "%2e%2e/outside", "%252e%252e%252foutside", "a\0b"].each do |path|
+      ["../outside", "docs/../../outside", "/etc/passwd", "C:\\Windows\\system.ini", "a\0b"].each do |path|
         assert_error("invalid_path") { browser.list(path:) }
+      end
+    end
+  end
+
+  def assert_preserves_literal_percent_names
+    with_workspace do |root|
+      docs = File.join(root, "docs%23")
+      FileUtils.mkdir_p(docs)
+      File.write(File.join(docs, "image%23.svg"), "<svg>literal percent</svg>")
+      File.write(File.join(docs, "image#.svg"), "<svg>actual hash</svg>")
+      File.write(File.join(docs, "notes%23.md"), "Original literal filename")
+      browser = HQ::ProjectWorkspace.new(root)
+      assert(browser.list(path: "docs%23")[:entries].map { |entry| entry[:name] }.include?("image%23.svg"),
+             "expected literal percent filenames in listings")
+      assert(browser.image(path: "docs%23/image%23.svg")[:body] == "<svg>literal percent</svg>",
+             "expected a literal percent sequence to select its own bytes")
+      assert(browser.image(path: "docs%23/image#.svg")[:body] == "<svg>actual hash</svg>",
+             "expected an actual hash name to remain distinct")
+      preview = browser.preview(path: "docs%23/notes%23.md")
+      browser.write(path: preview[:path], content: "Updated literal filename", expected_version: preview[:version])
+      assert(File.read(File.join(docs, "notes%23.md")) == "Updated literal filename", "expected writes to preserve raw paths")
+      ["..%2foutside", "%2e%2e/outside", "%252e%252e%252foutside"].each do |path|
+        assert_error("not_found") { browser.list(path:) }
       end
     end
   end
@@ -258,6 +282,28 @@ module ProjectWorkspaceTest
       assert_error("invalid_path") { browser.preview(path: "outside-link.txt") }
     ensure
       FileUtils.remove_entry(outside) if outside && File.exist?(outside)
+    end
+  end
+
+  def assert_rejects_public_aliases_to_private_targets
+    with_workspace do |root|
+      FileUtils.mkdir_p(File.join(root, ".ssh"))
+      FileUtils.mkdir_p(File.join(root, "node_modules"))
+      File.write(File.join(root, ".ssh", "private.svg"), "<svg>private</svg>")
+      File.write(File.join(root, "node_modules", "generated.svg"), "<svg>generated</svg>")
+      File.symlink(File.join(root, ".ssh", "private.svg"), File.join(root, "public.svg"))
+      File.symlink(File.join(root, "node_modules", "generated.svg"), File.join(root, "generated.svg"))
+      File.symlink(File.join(root, ".ssh"), File.join(root, "public-docs"))
+      File.symlink(File.join(root, "public.svg"), File.join(root, "chained.svg"))
+      browser = HQ::ProjectWorkspace.new(root)
+      %w[public.svg generated.svg chained.svg public-docs/private.svg].each do |path|
+        assert_error("not_found") { browser.image(path:) }
+        assert_error("not_found") { browser.preview(path:) }
+      end
+      assert_error("not_found") { browser.list(path: "public-docs") }
+      assert(browser.list[:entries].empty?, "expected private and generated targets to stay hidden through public aliases")
+      assert(browser.search(query: "public")[:entries].empty?, "expected search to omit private target aliases")
+      assert_error("not_found") { browser.image(path: ".ssh/private.svg") }
     end
   end
 

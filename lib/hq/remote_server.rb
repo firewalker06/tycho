@@ -6098,11 +6098,13 @@ module HQ
                   else "Waiting for the next Tycho agent check"
                   end
       end
+      manual_once = @agent_store.manual_schedule_queue_action(agent, agents: cached_all_agents) if agent.scheduled? && !entries.empty?
       {
         "processor" => processor,
         "state" => state,
         "message" => message,
         "not_before" => not_before,
+        "manual_once" => manual_once,
         "can_start" => state == "ready" && processor == "inactive" && entries.all? do |entry|
           due = ManagedAgent.parse_time(entry["not_before"])
           !due || due <= @clock.call

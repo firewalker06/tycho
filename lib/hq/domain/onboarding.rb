@@ -30,6 +30,13 @@ module HQ
         setup: "Run `opencode`, then use `/connect` to choose and configure a provider. Authenticate on the server or a trusted device without sharing API keys with Tycho.",
         documentation_url: "https://dev.opencode.ai/docs/"
       },
+      "dsh" => {
+        name: "DeepSeek Harness (preview)",
+        install_command: "npm install -g @deepseek-ai/dsh@0.2.2-rc.1",
+        verify_command: "dsh --version",
+        setup: "Requires Node.js 24.9.0+. Configure the native headless API-key route outside Tycho. GUI sign-in is not used by default. Keep credentials out of Tycho.",
+        documentation_url: "https://github.com/deepseek-ai/deepseek-harness"
+      },
       "pi" => {
         name: "Pi Coding Agent",
         install_command: "npm install -g --ignore-scripts @mariozechner/pi-coding-agent@0.73.1",
