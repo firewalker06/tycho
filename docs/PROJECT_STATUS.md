@@ -67,8 +67,8 @@ See [the current path and trust contract](REMOTE_SERVER.md#manual-project-creati
 
 Deterministic tests cover path escape, parent/starter replacement, permission
 rejection, sticky parents, ACL grants, Welcome preservation and existing safe
-aliases. Desktop/mobile checks use an isolated server home. PR346 remains draft
-for fresh independent review under this updated contract.
+aliases. Desktop/mobile checks use an isolated server home. PR346 stays
+published; each changed head requires fresh independent review.
 
 ## Scheduler startup intent
 
