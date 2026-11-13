@@ -11054,18 +11054,6 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       next
     end
     if ENV["TYCHO_REMOTE_UI_OPTIMISTIC_CREATE_ONLY"] == "1"
-      # Receipt lookup must not hydrate unrelated archived queues. These records
-      # deliberately have no queue data; creation must leave their evidence intact.
-      %w[indigo golf epsilon].each_with_index do |name, index|
-        key = "web-#{name}-missing-queue"
-        archive = File.join(fixture.fetch(:logs_dir), "agents", "archive", "20261111-09050#{index}-#{key}")
-        FileUtils.mkdir_p(archive)
-        File.write(File.join(archive, "agent_manifest.json"), JSON.pretty_generate({
-          "key" => key, "project_key" => "web", "queue_ref" => key,
-          "queue_generation" => "missing-generation-#{index}",
-          "creation_request" => { "id" => "archived-request-#{index}", "fingerprint" => "archived-proof-#{index}" }
-        }))
-      end
       %w[20260807-221259 20260808-204817 20260809-115049 20260813-221259].each do |timestamp|
         legacy_archive = File.join(fixture.fetch(:logs_dir), "agents", "archive", "#{timestamp}-web-agent-legacy")
         FileUtils.mkdir_p(legacy_archive)

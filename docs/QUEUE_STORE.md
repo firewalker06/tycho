@@ -90,6 +90,14 @@ receipt must be proven. A matching receipt whose queue cannot be hydrated also
 remains unavailable; retry cannot create a second agent. Archive browsing and queue
 hydration retain their existing strict checks.
 
+The ordinary `test/remote_server_test.rb` suite covers this behavior in
+`assert_creation_with_damaged_archive_queues`. The test creates its own temporary
+workspace, archive manifests, and queue records. It checks fresh creation, exact
+replay, conflicts, uncertain receipts, and preservation of existing work without
+external fixture files or a browser harness. Run it through `bin/test` for the
+isolated test environment and required signoff. The existing Remote UI smoke
+checks are separate; they do not cover missing archived queue records.
+
 Recovery is an operator-controlled data repair, not part of receipt lookup. Before
 any repair, stop every writer and preserve a complete immutable copy of the logs
 root described above. Record affected manifest paths, agent keys, queue references
