@@ -32,11 +32,15 @@ module HQ
                when "opencode" then build_opencode_command
                when "pi" then build_pi_command
                when "agy" then build_agy_command
+               when "dsh" then build_dsh_command
                else raise "Unsupported managed-agent harness #{@agent.inspect}"
                end
       return result unless @custom_prompt_transport
 
       mode = @custom_prompt_transport.fetch("mode")
+      if @harness_adapter == "dsh" && mode != "stdin"
+        raise ArgumentError, "DeepSeek Harness requires stdin prompt transport"
+      end
       command = result.fetch(:command).dup
       command.pop if codex_agent? # Remove the native stdin selector, keep --.
       case mode
@@ -55,6 +59,8 @@ module HQ
     end
 
     def interactive
+      raise ArgumentError, "DeepSeek Harness supports managed headless runs; use Tycho Conversation for follow-up" if @harness_adapter == "dsh"
+
       return build_interactive_claude_like_command if claude_like_agent?
       return build_interactive_codex_command if codex_agent?
       return build_interactive_opencode_command if opencode_agent?
@@ -141,6 +147,20 @@ module HQ
         command << "--print"
         execution(command).merge(prompt_transport: "stdin", stdin_data: @prompt)
       end
+    end
+
+    def build_dsh_command
+      unless %w[read-only workspace-write danger-full-access].include?(@sandbox_mode)
+        raise ArgumentError, "Unsupported DeepSeek Harness permission preset #{@sandbox_mode.inspect}"
+      end
+
+      command = harness_command_prefix + ["--patch", "__TYCHO_DSH_PATCH__", "--profile", "headless",
+                                           "--json", "--permission-mode", @sandbox_mode, "--approval-policy", "never"]
+      command.concat(["--session-id", @session_id]) unless @session_id.empty?
+      command.concat(["--", "-"])
+      model = @model.to_s.empty? ? "deepseek-flash" : @model
+      runner = [RbConfig.ruby, "--disable-gems", File.expand_path("dsh_runner.rb", __dir__), model, @reasoning_effort.to_s]
+      execution(runner + command).merge(prompt_transport: "stdin", stdin_data: @prompt)
     end
 
     def build_interactive_codex_command

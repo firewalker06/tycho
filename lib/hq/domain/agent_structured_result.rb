@@ -10,6 +10,11 @@ module HQ
         finish_seen = agy_finish_before_last_result?(all_lines)
         all_lines.reverse_each do |line|
           parsed = JSON.parse(line.to_s.strip)
+          if parsed.is_a?(Hash) && parsed["type"] == "final" && parsed["sessionId"].is_a?(String)
+            return parsed["text"] if parsed.dig("reason", "kind") == "completed"
+
+            return nil
+          end
           parsed = parsed.merge("agy_finish_seen" => finish_seen) if agy_result_event?(parsed)
           candidate = structured_candidate_from_event(parsed)
           return candidate unless candidate.nil?
@@ -36,6 +41,9 @@ module HQ
           next unless stripped.start_with?("{") && stripped.end_with?("}")
 
           parsed = JSON.parse(stripped)
+          if parsed.is_a?(Hash) && parsed["type"] == "final" && parsed["sessionId"].is_a?(String)
+            return normalize_payload(parsed)
+          end
           parsed = parsed.merge("agy_finish_seen" => finish_seen) if agy_result_event?(parsed)
           normalized = normalize_payload(parsed)
           return normalized if normalized
@@ -87,6 +95,12 @@ module HQ
 
       def normalize_payload(parsed)
         return nil unless parsed.is_a?(Hash)
+
+        if parsed["type"] == "final" && parsed["sessionId"].is_a?(String)
+          return nil unless parsed.dig("reason", "kind") == "completed"
+
+          return normalize_payload(parse_json_string(parsed["text"]))
+        end
 
         if parsed["event"] == "result" && parsed["result"].is_a?(Hash)
           result = parsed["result"]

@@ -12,6 +12,18 @@ type: project
 
 2026-11-13
 
+## DeepSeek Harness
+
+The native `dsh` headless adapter targets DeepSeek Harness 0.2.2-rc.1. It uses
+stdin, native JSON events and session adoption, explicit permission presets,
+and Tycho's structured-result correction. Model selection uses an invocation
+only overlay for the native DeepSeek route. Authentication remains operator
+managed and unknown to readiness checks. This preview adapter does not route
+Claude Code to DeepSeek. See [DeepSeek Harness](DEEPSEEK.md) for its contract,
+verification, and unsupported features. The shared Remote UI harness label now
+includes the official DeepSeek whale icon, with unchanged upstream SVG bytes
+and palette-aware rendering in Settings and existing agent surfaces.
+
 ## Empty queue migration audit retention
 
 The local `queue-work cleanup-migrations` command reports obsolete empty
