@@ -11042,6 +11042,12 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     raise "Failed to seed manual schedule queue fixture: #{out}" unless status.success?
   end
 
+  if ENV["TYCHO_REMOTE_UI_SUMMARY_LINKS_ONLY"] == "1"
+    agent_key = "web-agent-summary-links"
+    out, status = Open3.capture2e(env, RbConfig.ruby, "test/browser/summary_links_fixture.rb", fixture.fetch(:workspace), chdir: ROOT)
+    raise "Failed to seed Summary links fixture: #{out}" unless status.success?
+  end
+
   if ENV["TYCHO_REMOTE_UI_USAGE_SCOPE_ONLY"] == "1"
     agent_key = "web-agent-usage-scope"
     out, status = Open3.capture2e(env, RbConfig.ruby, "test/browser/usage_scope_fixture.rb", fixture.fetch(:workspace), chdir: ROOT)
@@ -11138,6 +11144,10 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     if ENV["TYCHO_REMOTE_UI_COLD_AGENT_LOAD_ONLY"] == "1"
       seed_conversation_tail_fixture(env, agent_key, 80)
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "cold_agent_load_smoke")
+      next
+    end
+    if ENV["TYCHO_REMOTE_UI_SUMMARY_LINKS_ONLY"] == "1"
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "summary_links_smoke")
       next
     end
     if ENV["TYCHO_REMOTE_UI_USAGE_SCOPE_ONLY"] == "1"

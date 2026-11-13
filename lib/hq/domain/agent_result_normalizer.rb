@@ -95,7 +95,14 @@ module HQ
     end
 
     def summary_section_attachments(sections)
-      Array(sections).filter_map { |section| section["attachment"] if section["type"] == "attachment" }
+      Array(sections).filter_map do |section|
+        case section["type"]
+        when "attachment"
+          section["attachment"]
+        when "link"
+          { "type" => "link", "title" => section["text"], "url" => section["url"] }
+        end
+      end
     end
 
     def attachment_dedupe_key(attachment)
