@@ -6,15 +6,18 @@ This page records where Tycho shows harness marks, where it does not, and why. A
 
 | Surface | Marks shown | Notes |
 | --- | --- | --- |
-| Remote UI agent rows and agent cards | Codex, Claude, OpenCode, Pi, DeepSeek | The harness name stays as text next to the mark. |
-| Remote UI Settings harness summaries and agent `Harness` rows, skill installation rows | Codex, Claude, OpenCode, Pi, DeepSeek | The harness name stays as text in the summary heading. |
+| Remote UI agent rows and agent cards | Codex, Claude, OpenCode, Pi, DeepSeek, Antigravity (`agy`) | The harness name stays as text next to the mark. |
+| Remote UI Settings harness summaries and agent `Harness` rows, skill installation rows | Codex, Claude, OpenCode, Pi, DeepSeek, Antigravity (`agy`) | The harness name stays as text in the summary heading. |
 | Remote UI native `<select>` options, form summaries, Settings/schedule/project selectors | None | Native options cannot show images. Form summaries are plain text. |
 | TUI (`lib/hq/ui`), CLI output, docs, README | None | Terminal output and prose stay text-only. |
+
+Agent list metadata (including switcher and linked-agent rows) uses the shared label. Conversation headers do not show harness marks for any harness. Agent Settings and archive confirmation show the shared Harness row. New Agent, Quick Agent, edit, schedule, and project native selectors remain text-only.
 
 ## Marks by harness
 
 | Harness | Mark | Reason |
 | --- | --- | --- |
+| Antigravity (`agy`) | Official Icon - One Color | [Google press assets](https://antigravity.google/press); unchanged SVG, shared alpha mask. |
 | DeepSeek (`dsh`) | Official whale icon (`deepseek-icon.svg`) | Byte-identical official developer brand asset. Shared alpha masking follows the Dark and Nord Light text colors; the adjacent dsh name remains accessible. |
 | Claude (`claude`) | Claude Spark, clay color | Official Anthropic press kit. The clay color reads on light and dark backgrounds. |
 | OpenCode (`opencode`) | Dark rectangle mark (`opencode-logo-dark.svg`) | Official asset from the MIT-licensed OpenCode repository. The rectangle has no gradient. It is rendered with luminance masking so the frame stays solid and the window stays open. The shared mask follows the current palette. |
@@ -26,7 +29,7 @@ This page records where Tycho shows harness marks, where it does not, and why. A
 - Marks are unchanged upstream files. Tycho does not recolor, crop, or redraw them.
 - Marks render as one plain color: each file is a CSS mask filled with `--harness-mark-color`, which is `#ffffff` in the dark Remote UI. The colored panels and two-tone fills are not shown. A light palette overrides the variable to a dark ink.
 - Marks are decorative (`alt=""`, `aria-hidden="true"`) because the harness name is always shown as adjacent text.
-- Dark and Nord Light use the same SVG mask geometry. The shared mark color changes with the palette; no alternate DeepSeek asset or edited vector is needed.
+- Dark, Nord Light, and System use the same SVG mask geometry. The shared mark color changes with the palette; no alternate DeepSeek asset or edited vector is needed.
 - Harness identity is also shown in the agent detail `Harness` row, the agent Settings `Harness` row, and the skill installation rows. Native `<select>` options, prose, and the TUI stay text-only.
 - Custom harnesses do not get marks. Only built-in harness keys are mapped.
 
