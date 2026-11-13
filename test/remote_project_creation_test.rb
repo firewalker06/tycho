@@ -251,6 +251,26 @@ module RemoteProjectCreationTest
     end
   end
 
+  def assert_macos_mount_qualification
+    return unless RUBY_PLATFORM.include?("darwin")
+
+    # Native Darwin statfs fields; no mount or host policy changes.
+    record = Fiddle::Pointer.malloc(4096)
+    record[0, 4096] = "\0" * 4096
+    record[56, 4] = [Process.euid].pack("I")
+    record[64, 4] = [0x1000].pack("I")
+    record[72, 5] = "apfs\0"
+    assert(HQ::DirectoryPermissions.mac_filesystem?(record), "owned local APFS must qualify")
+    record[64, 4] = [0x201000].pack("I")
+    assert(!HQ::DirectoryPermissions.mac_filesystem?(record), "ignore-ownership mount must fail")
+    record[64, 4] = [0x1000].pack("I")
+    record[56, 4] = [Process.euid + 10001].pack("I")
+    assert(!HQ::DirectoryPermissions.mac_filesystem?(record), "other-user mount authority must fail")
+    record[56, 4] = [Process.euid].pack("I")
+    record[64, 4] = [0].pack("I")
+    assert(!HQ::DirectoryPermissions.mac_filesystem?(record), "nonlocal mount must fail")
+  end
+
   def assert_linux_acl_policy
     return unless RUBY_PLATFORM.include?("linux")
 
@@ -323,6 +343,7 @@ module RemoteProjectCreationTest
     assert_permission_policy
     assert_native_acl_policy
     assert_linux_acl_policy
+    assert_macos_mount_qualification
     assert_input_and_unknown_policy
     puts "remote_project_creation_test: ok"
   end

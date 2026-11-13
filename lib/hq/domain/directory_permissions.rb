@@ -30,13 +30,22 @@ module HQ
       call!("fstatfs", [Fiddle::TYPE_INT, Fiddle::TYPE_VOIDP], directory.fileno, buffer)
       supported = if RUBY_PLATFORM.include?("darwin")
         # Darwin struct statfs: f_fstypename follows the 72-byte fixed header.
-        %w[apfs hfs].include?(buffer[72, 16].split("\0").first)
+        mac_filesystem?(buffer)
       elsif RUBY_PLATFORM.include?("linux")
         # ext2/3/4, XFS, Btrfs, tmpfs. Remote/FUSE/overlay permission and backing
         # authority are not established by a POSIX mode or device-number check.
         [0xef53, 0x58465342, 0x9123683e, 0x01021994].include?(buffer[0, Fiddle::SIZEOF_LONG].unpack1("L!") & 0xffffffff)
       end
       raise Error, "Cannot verify this filesystem for manual creation; use a supported local filesystem" unless supported
+    end
+
+    def mac_filesystem?(buffer)
+      owner = buffer[56, 4].unpack1("I")
+      flags = buffer[64, 4].unpack1("I")
+      local = (flags & 0x00001000).positive?
+      ownership = (flags & 0x00200000).zero? # MNT_IGNORE_OWNERSHIP
+      local && ownership && [0, Process.euid].include?(owner) &&
+        %w[apfs hfs].include?(buffer[72, 16].split("\0").first)
     end
 
     def mac_acl!(directory)

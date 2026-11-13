@@ -1468,7 +1468,8 @@ another folder. No permissions or ACLs on existing folders are changed.
 
 The initial supported filesystem set is APFS/HFS on macOS and ext2/3/4, XFS,
 Btrfs and tmpfs on Linux (including WSL when it exposes one of those types).
-The native `fstatfs` layout is platform-specific; unknown platforms, FUSE,
+macOS also requires a local mount owned by root or the server UID with
+ownership checks enabled. The native `fstatfs` layout is platform-specific; unknown platforms, FUSE,
 network filesystems and overlay storage fail clearly before creation. This
 qualification assumes the trusted OS/root manages the local filesystem and
 its backing storage. It does not prove arbitrary remote-server permissions or
