@@ -12,6 +12,19 @@ type: project
 
 2026-11-13
 
+## Empty queue migration audit retention
+
+The local `queue-work cleanup-migrations` command reports obsolete empty
+migration receipts. Explicit apply retains 100 eligible receipts and removes
+at most 1,000 per run under the lifecycle lock and recoverable queue journal.
+It preserves all queue records, generations, archive references, creation
+receipts, and completion evidence. Missing queues never qualify as empty.
+Dry run never installs a pending transaction: it returns a recovery-required
+error without a plan and leaves queue, agent, archive, journal, and backup data
+unchanged. Apply retains lifecycle recovery before it plans cleanup.
+See [retention policy](QUEUE_MIGRATION_RETENTION.md) for selection and limits.
+No operator cleanup is part of this change.
+
 ## Scheduler startup intent
 
 Daemon ticks preserve paused and stopped schedule state. A stopped target now

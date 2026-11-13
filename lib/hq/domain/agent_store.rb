@@ -94,7 +94,7 @@ module HQ
       queue_store = QueueStore.new
       if File.exist?(QueueStore.journal_path)
         journal = queue_store.read_journal
-        records = journal.fetch("records") if journal.fetch("target") == AGENTS_FILE
+        records = journal.fetch("records") if journal["target"] == AGENTS_FILE
         state = journal.fetch("queues")
       else
         state = queue_store.read
@@ -242,6 +242,10 @@ module HQ
       raise if e.is_a?(IOError) || e.is_a?(DelegationStore::Error)
 
       [[], []]
+    end
+
+    def cleanup_empty_queue_migrations(apply: false)
+      with_exclusive_lock(recover: apply) { QueueStore.new.cleanup_empty_migrations(apply:) }
     end
 
     def save(agents)
@@ -1921,12 +1925,12 @@ module HQ
       raise IOError, "Invalid agent store: #{e.class}"
     end
 
-    def with_exclusive_lock
+    def with_exclusive_lock(recover: true)
       FileUtils.mkdir_p(File.dirname(AGENTS_FILE))
       File.open("#{AGENTS_FILE}.lock", File::RDWR | File::CREAT, 0o600) do |file|
         RequestTiming.measure("store_lock_wait") { file.flock(File::LOCK_EX) }
         held_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-        QueueStore.new.recover!
+        QueueStore.new.recover! if recover
         yield
       ensure
         if held_at
