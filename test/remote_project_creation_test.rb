@@ -184,12 +184,114 @@ module RemoteProjectCreationTest
     end
   end
 
+  def assert_permission_policy
+    Dir.mktmpdir("tycho-project-permissions-") do |temporary|
+      home = File.realpath(temporary)
+      parent = File.join(home, "parent")
+      Dir.mkdir(parent)
+      policy = HQ::RemoteProjectCreation.new(home: home, starter_directory: File.join(parent, "starter"))
+      [0o770, 0o777].each do |mode|
+        File.chmod(mode, parent)
+        [File.join(parent, "new"), ""].each do |input|
+          begin
+            policy.prepare!(input, key: "new", files: { "README.md" => "Welcome" })
+            raise "untrusted-writable parent must be rejected"
+          rescue HQ::RemoteProjectCreation::Error => e
+            assert(e.message.include?("writable by other users"), "permissions error must explain rejection")
+          end
+          assert(Dir.empty?(parent), "reject before project/starter/Welcome mutation")
+        end
+      end
+      File.chmod(0o1777, parent)
+      target = policy.prepare!(File.join(parent, "new"), key: "new", files: { "README.md" => "Welcome" })
+      assert(File.read(File.join(target, "README.md")) == "Welcome", "owned sticky entry must work")
+      assert((File.stat(target).mode & 0o077).zero?, "new directory must exclude other users")
+      assert((File.stat(File.join(target, "README.md")).mode & 0o077).zero?, "new file must exclude other users")
+      # A real held fd with a substituted owner stat isolates the ownership
+      # gate without privileged chown or relying on another host account.
+      File.open(target) do |fd|
+        actual = fd.method(:stat)
+        fd.define_singleton_method(:stat) do
+          stat = actual.call
+          stat.define_singleton_method(:uid) { Process.euid + 10001 }
+          stat
+        end
+        begin
+          HQ::DirectoryPermissions.check!(fd)
+          raise "foreign-owned entry under sticky parent must be rejected"
+        rescue HQ::DirectoryPermissions::Error => e
+          assert(e.message.include?("owner"), "foreign owner must explain rejection")
+        end
+      end
+    end
+  end
+
+  def assert_native_acl_policy
+    return unless RUBY_PLATFORM.include?("darwin")
+
+    Dir.mktmpdir("tycho-project-acl-") do |temporary|
+      home = File.realpath(temporary)
+      policy = HQ::RemoteProjectCreation.new(home: home, starter_directory: File.join(home, "starter"))
+      assert(system("chmod", "+a", "everyone allow delete_child", home), "fixture ACL installation must succeed")
+      begin
+        policy.prepare!("", key: "new")
+        raise "mode bits must not hide an ACL delete grant"
+      rescue HQ::RemoteProjectCreation::Error => e
+        assert(e.message.include?("ACL grant"), "ACL grant must produce useful error")
+      end
+      assert(Dir.empty?(home), "ACL rejection must precede starter creation")
+      assert(system("chmod", "-N", home), "remove only fixture ACL")
+      assert(system("chmod", "+a", "everyone allow readattr,readextattr,readsecurity", home), "fixture read-only ACL installation must succeed")
+      policy.prepare!(File.join(home, "readable"), key: "readable")
+      assert(system("chmod", "+a", "everyone deny delete", home), "fixture deny ACL installation must succeed")
+      policy.prepare!(File.join(home, "safe"), key: "safe")
+      assert(Dir.exist?(File.join(home, "safe")), "deny ACL must remain compatible")
+    ensure
+      system("chmod", "-N", home) if home && File.exist?(home)
+    end
+  end
+
+  def assert_input_and_unknown_policy
+    Dir.mktmpdir("tycho-project-input-") do |temporary|
+      root = File.realpath(temporary)
+      home = File.join(root, "home")
+      outside = File.join(root, "outside")
+      FileUtils.mkdir_p([home, outside])
+      File.symlink(outside, File.join(home, "escape"))
+      policy = HQ::RemoteProjectCreation.new(home: home, starter_directory: File.join(home, "starter"))
+      [File.join(home, "..", "outside", "new"), File.join(home, "escape", "new"), File.join(outside, "new")].each do |input|
+        begin
+          policy.prepare!(input, key: "new")
+          raise "outside/traversal input must fail"
+        rescue HQ::RemoteProjectCreation::Error
+        end
+      end
+      assert(Dir.empty?(outside), "outside input must have no effects")
+      original = HQ::DirectoryPermissions.method(:filesystem!)
+      HQ::DirectoryPermissions.define_singleton_method(:filesystem!) do |_fd|
+        raise HQ::DirectoryPermissions::Error, "Cannot verify this filesystem"
+      end
+      begin
+        policy.prepare!("", key: "new")
+        raise "unknown filesystem must fail closed"
+      rescue HQ::RemoteProjectCreation::Error => e
+        assert(e.message.include?("Cannot verify"), "unknown authority needs useful error")
+      end
+      assert(!Dir.exist?(File.join(home, "starter")), "unverified filesystem must not create starter")
+    ensure
+      HQ::DirectoryPermissions.define_singleton_method(:filesystem!, original) if original
+    end
+  end
+
   def run!
     %i[parent ancestor starter_parent starter home].each { |kind| assert_replacement_race(kind) }
     assert_replacement_before_open
     assert_welcome_file_replacement
     assert_existing_alias_and_files
     assert_unavailable_fails_closed
+    assert_permission_policy
+    assert_native_acl_policy
+    assert_input_and_unknown_policy
     puts "remote_project_creation_test: ok"
   end
 end

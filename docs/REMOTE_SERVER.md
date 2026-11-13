@@ -1440,17 +1440,49 @@ changing their files. Custom folder parents must already exist.
 `POST /projects` accepts `name`, `key`, `group`, and `path`, and returns a created project. <!-- local-path-ok -->
 
 The server rejects paths outside its user home, parent traversal, dangling
-symlinks, and non-directory targets. It checks resolved parents and targets so
-symlinks cannot point outside the home. Safe internal symlinks use their resolved
-path. Creation then opens the canonical parent one component at a time with
-`O_NOFOLLOW` and uses `mkdirat` relative to the held descriptor. A replacement
-symlink cannot redirect the write. Welcome files use exclusive `openat` writes
-through a held workspace descriptor. A changed path is rejected; no directory
-is deleted as recovery. These POSIX calls use Fiddle on macOS and Linux,
-including WSL. Missing native support fails closed with an error.
-This policy applies to manual Remote UI creation and the first-run sandbox.
-CLI registration and existing configured projects keep their path behavior.
-No existing projects or configuration paths are moved.
+symlinks, and non-directory targets. Safe internal symlinks use their resolved
+path. It walks the canonical parent with held no-follow directory handles,
+uses descriptor-relative `mkdirat`, and writes Welcome files with exclusive
+`openat`. Existing files and links are preserved. It never deletes outside
+objects as recovery.
+
+The approved boundary is `same_user_threat_model = Trust same-user and root
+processes (recommended)`. Other users remain untrusted. This is a manual UI
+path restriction, not lifetime isolation from the server UID, root processes,
+storage administrators, or root disk-service actions. Trusted processes must
+not move the target outside home during a request. Earlier whole-home storage,
+VM and system-guard research concerned the superseded hostile same-UID model;
+it is not a deployment requirement.
+
+Each held directory, from the filesystem root through the target, must be
+owned by the effective server UID or root. Group/world write is rejected unless
+the directory is sticky; every child must still have a trusted owner. Thus
+sticky temporary ancestors work without admitting foreign-owned entries.
+Linux POSIX ACL effective named-user/group rights are bounded by the group
+mode mask. New directories use mode 0700 and new files mode 0600, including
+under inherited Linux default ACLs. On macOS the native descriptor ACL is read:
+deny and read-only entries are accepted, but write/delete/metadata grant
+entries are conservatively rejected, including grants whose principal cannot
+be resolved safely. A private grant to the server user can therefore require
+another folder. No permissions or ACLs on existing folders are changed.
+
+The initial supported filesystem set is APFS/HFS on macOS and ext2/3/4, XFS,
+Btrfs and tmpfs on Linux (including WSL when it exposes one of those types).
+The native `fstatfs` layout is platform-specific; unknown platforms, FUSE,
+network filesystems and overlay storage fail clearly before creation. This
+qualification assumes the trusted OS/root manages the local filesystem and
+its backing storage. It does not prove arbitrary remote-server permissions or
+hostile backing-storage isolation. A mount or alias does not acquire trust
+from device-number equality: its opened directories must pass all checks.
+Root/same-user mount actors are trusted under the approved boundary.
+
+See [Linux ACL mask semantics](https://man7.org/linux/man-pages/man5/acl.5.html),
+[Apple descriptor ACL API](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/acl_get.3.html),
+and [Apple ACL iteration](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/acl_get_entry.3.html).
+Native calls use Fiddle; unavailable permission evidence fails with an error.
+This policy applies only to manual Remote UI creation and the first-run
+sandbox. CLI registration, agents and existing configured projects keep their
+path behavior. No existing project or configuration path is moved.
 
 ### `POST /setup/welcome` <!-- local-path-ok -->
 

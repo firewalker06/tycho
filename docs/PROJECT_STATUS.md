@@ -47,15 +47,24 @@ No operator cleanup is part of this change.
 
 ## Manual Remote UI project creation
 
-The Agents page and onboarding screen provide a New project form. The visible
-starter directory is `HOME/tycho-projects`; existing configured paths stay in
-place. Manual Remote creation resolves parent and target paths and limits them
-to the server user home. Directory creation now uses no-follow component opens
-and descriptor-relative `mkdirat` calls. Welcome files use descriptor-relative
-exclusive writes. Deterministic replacement tests cover parents, ancestors,
-the home, starter directories, and Welcome file writes on macOS and Linux.
-CLI registration and agent workspaces keep their existing path behavior. The form keeps drafts and displays path and duplicate
-key errors. Desktop and mobile checks use an isolated server home.
+The Agents page and onboarding screen provide New project with a visible
+`HOME/tycho-projects` starter. Manual creation supports arbitrary valid home
+paths and safe internal aliases. Existing configuration and CLI/agent path
+behavior stay in place.
+
+The operator explicitly approved trusting same-user and root processes.
+Hostile same-UID lifetime isolation and earlier storage/guard research are
+superseded. Held directory handles, owner/mode checks, native macOS ACL checks,
+and a qualified local-filesystem set protect against other-user ancestor
+relocation. Sticky parents require trusted child ownership. Unknown permission
+or filesystem evidence fails clearly. New entries are private; existing files
+and ACLs are preserved. This is not isolation from trusted root disk services.
+See [the current path and trust contract](REMOTE_SERVER.md#manual-project-creation).
+
+Deterministic tests cover path escape, parent/starter replacement, permission
+rejection, sticky parents, ACL grants, Welcome preservation and existing safe
+aliases. Desktop/mobile checks use an isolated server home. PR346 remains draft
+for fresh independent review under this updated contract.
 
 ## Scheduler startup intent
 

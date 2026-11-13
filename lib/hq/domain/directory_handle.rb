@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "fiddle"
+require_relative "directory_permissions"
 
 module HQ
   # POSIX directory-relative operations for macOS and Linux (including WSL).
@@ -13,10 +14,12 @@ module HQ
 
     def open(path)
       current = File.open("/", File::RDONLY)
+      DirectoryPermissions.check!(current)
       path.split("/").reject(&:empty?).each do |component|
         child = open_at(current, component, File::RDONLY | File::NONBLOCK | nofollow)
         begin
           raise Errno::ENOTDIR, component unless child.stat.directory?
+          DirectoryPermissions.check!(child)
         rescue StandardError
           child.close
           raise
@@ -31,12 +34,12 @@ module HQ
 
     def mkdir_at(directory, name)
       component!(name)
-      result = mkdir_function.call(directory.fileno, name, 0o777)
+      result = mkdir_function.call(directory.fileno, name, 0o700)
       raise SystemCallError.new("mkdirat #{name}", Fiddle.last_error) if result == -1
     end
 
     def write_once_at(directory, name, content)
-      file = open_at(directory, name, File::WRONLY | File::CREAT | File::EXCL | nofollow, 0o666)
+      file = open_at(directory, name, File::WRONLY | File::CREAT | File::EXCL | nofollow, 0o600)
       file.write(content)
     rescue Errno::EEXIST
       # Preserve existing files and symlinks without opening or modifying them.

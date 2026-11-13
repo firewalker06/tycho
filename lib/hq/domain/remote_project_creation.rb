@@ -32,7 +32,7 @@ module HQ
         verify_directory!(path, directory)
       end
       resolved
-    rescue SystemCallError, ArgumentError, DirectoryHandle::Unavailable => e
+    rescue SystemCallError, ArgumentError, DirectoryHandle::Unavailable, DirectoryPermissions::Error => e
       raise Error, "Cannot use this server folder: #{e.message}"
     end
 
