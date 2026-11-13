@@ -153,21 +153,18 @@ def write_fixture(dir, running_pids)
     projects:
       - key: atlas-web
         name: Atlas Web
-        group: Atlas Web
         path: #{atlas_workspace.inspect}
         agent: codex
         model: gpt-5.4
         reasoning_effort: medium
       - key: compass-api
         name: Compass API
-        group: Compass API
         path: #{compass_workspace.inspect}
         agent: codex
         model: gpt-5.4
         reasoning_effort: medium
       - key: beacon-mobile
         name: Beacon Mobile
-        group: Beacon Mobile
         path: #{beacon_workspace.inspect}
         agent: codex
         model: gpt-5.4
@@ -275,6 +272,9 @@ def write_capture_script(path)
 
         await page.keyboard.press("Escape");
         await page.goto(`${process.env.TYCHO_REMOTE_UI_URL}/#agents`, { waitUntil: "networkidle" });
+        // The capture requires project groups; the default sort is a flat list.
+        await page.locator("[data-agent-sort-menu] > summary").click();
+        await page.locator("[data-agent-sort-menu] [data-agent-sort-choice='project_asc']").click();
         const rows = page.locator(".agent-row");
         await rows.first().waitFor({ state: "visible" });
         const rowCount = await rows.count();

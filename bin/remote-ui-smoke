@@ -4492,8 +4492,7 @@ title: !123 value
         await page.setViewportSize({ width: 1440, height: 900 });
         const delegationEventContract = await page.evaluate(() => {
           const callback = document.querySelector(".delegation-callback-event");
-          const started = [...document.querySelectorAll(".delegation-event-header")]
-            .find((header) => header.querySelector(".delegation-event-brand")?.textContent === "STARTED");
+          const started = document.querySelector(".delegation-event-header");
           const callbackRect = callback?.getBoundingClientRect();
           const messageListRect = document.querySelector(".message-list")?.getBoundingClientRect();
           return {
