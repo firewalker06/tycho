@@ -11139,6 +11139,10 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: ENV["TYCHO_REMOTE_UI_PROMPT_CONCURRENCY_ONLY"] == "1" ? "prompt_outbox_concurrency_smoke" : ENV["TYCHO_REMOTE_UI_PROMPT_RETRY_ONLY"] == "1" ? "prompt_retry_smoke" : "prompt_receipt_smoke")
       next
     end
+    if ENV["TYCHO_REMOTE_UI_PR_DIFF_LOADING_ONLY"] == "1"
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "pr_diff_loading_smoke")
+      next
+    end
     if ENV["TYCHO_REMOTE_UI_COLD_AGENT_LOAD_ONLY"] == "1"
       seed_conversation_tail_fixture(env, agent_key, 80)
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "cold_agent_load_smoke")

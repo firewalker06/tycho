@@ -24,6 +24,14 @@ verification, and unsupported features. The shared Remote UI harness label now
 includes the official DeepSeek whale icon, with unchanged upstream SVG bytes
 and palette-aware rendering in Settings and existing agent surfaces.
 
+## Progressive PR diff fetching
+
+Remote UI **Fetch all diffs** uses the existing three-request queue. It fetches
+the selected PR first and renders completed diffs before the batch ends.
+Failed refreshes preserve saved diffs; a final list read reconciles metadata.
+The per-PR server membership checks, explicit refresh behavior, and shared
+snapshot store remain in use. See [the timing investigation](research/card-867-pr-diff-loading.md).
+
 ## Empty queue migration audit retention
 
 The local `queue-work cleanup-migrations` command reports obsolete empty
