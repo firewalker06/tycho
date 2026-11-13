@@ -1433,8 +1433,11 @@ Adopts an idle, unscheduled managed agent as a normal schedule whose target incl
 
 The Agents page and first-run screen provide **New project**. A compact,
 single-column form leads with Name and the exact destination. The key follows
-the name while it matches the generated value; edits are preserved, including
-through reload. **Project key and group** exposes the secondary controls.
+Name until the user edits it. Explicit automatic/manual mode is saved with
+the draft, including through reload and rerender. A cleared custom key stays
+manual and requires a value. **Use name** deliberately restores automatic
+updates without changing a custom folder. Older drafts keep their key until
+Use name is selected. **Project key and group** exposes the secondary controls.
 Native validation opens a collapsed section before focusing an invalid field.
 
 The destination shows a home-relative label when the server home is known.

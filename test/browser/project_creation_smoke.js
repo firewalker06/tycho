@@ -7,6 +7,99 @@ const { spawn } = require("node:child_process");
 const assert = require("node:assert/strict");
 const { chromium } = require(process.env.TYCHO_PLAYWRIGHT_PATH || "playwright");
 
+async function assertProjectKeyOwnership(page, label, capture) {
+  const name = page.getByLabel("Name", { exact: true });
+  const key = page.getByLabel("Project key", { exact: true });
+  const destination = page.locator("[data-project-destination]");
+  const options = page.locator("#new-project-options");
+  const openOptions = async () => { if (!await options.evaluate(el => el.open)) await options.locator("summary").click(); };
+  const reload = async () => {
+    await page.reload();
+    await name.waitFor();
+    await page.waitForFunction(() => state.projectCreation && !state.refreshInFlight && document.getElementById("tycho-boot-shell").hidden);
+  };
+  await name.fill("Atlas second");
+  assert.equal(await key.inputValue(), "atlas-second", "untouched key must follow Name");
+  await openOptions();
+  await key.fill("custom");
+  await name.fill("Custom");
+  await name.fill("Other");
+  assert.equal(await key.inputValue(), "custom", "matching Name must not reclaim a custom key");
+  await options.locator("summary").click();
+  await name.fill("Custom");
+  await name.fill("Other");
+  await name.focus();
+  await page.evaluate(() => refresh({ force: true }));
+  assert.equal(await page.evaluate(() => document.activeElement.id), "new-project-name");
+  assert.equal(await key.inputValue(), "custom", "closed options and polling must preserve manual mode");
+  assert.equal(await destination.textContent(), "~/tycho-projects/custom");
+  // Force a real DOM replacement without a stored draft: same-route memory
+  // must preserve ownership too, even when draft storage is unavailable.
+  assert.equal(await page.evaluate(() => {
+    const before = document.getElementById("new-project-form");
+    safeLocalStorageRemove(formDraftStorageKey(before));
+    state.renderedViewHtml = "";
+    render();
+    return before !== document.getElementById("new-project-form");
+  }), true);
+  await name.fill("Custom");
+  await name.fill("Other");
+  assert.equal(await key.inputValue(), "custom", "rerender must preserve manual ownership");
+  await reload();
+  await name.fill("Custom");
+  await name.fill("Other");
+  assert.equal(await key.inputValue(), "custom", "modern draft reload must retain manual mode");
+  // A draft from the previous release has values but no ownership metadata.
+  await name.fill("Custom");
+  await name.blur();
+  await page.evaluate(() => {
+    const storageKey = formDraftStorageKey(document.getElementById("new-project-form"));
+    const draft = JSON.parse(safeLocalStorageGet(storageKey));
+    delete draft.projectKeyMode;
+    safeLocalStorageSet(storageKey, JSON.stringify(draft));
+  });
+  await reload();
+  assert.equal(await page.evaluate(() => {
+    const draft = JSON.parse(safeLocalStorageGet(formDraftStorageKey(document.getElementById("new-project-form"))));
+    return Object.hasOwn(draft, "projectKeyMode");
+  }), false, "legacy regression must actually load a draft without mode metadata");
+  await name.fill("Other");
+  assert.equal(await key.inputValue(), "custom", "legacy matching draft must be kept manual");
+  await openOptions();
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: path.join(capture, `${label}-manual-key.png`), fullPage: false });
+  await key.fill("");
+  await name.fill("");
+  await reload();
+  await name.fill("After reload");
+  assert.equal(await key.inputValue(), "", "an entirely cleared manual draft must not resume automatic mode");
+  await openOptions();
+  await page.getByRole("button", { name: "Use name", exact: true }).click();
+  assert.equal(await key.inputValue(), "after-reload", "explicit reset must derive the current Name");
+  await reload();
+  await name.fill("Automatic again");
+  assert.equal(await key.inputValue(), "automatic-again", "automatic reset must survive reload");
+  await openOptions();
+  await page.locator("#new-project-folder-options > summary").click();
+  const folder = page.getByLabel("Folder path", { exact: true });
+  const explicitFolder = `~/code/kept-${label}`;
+  await folder.fill(explicitFolder);
+  await name.fill("Custom");
+  await key.fill("custom"); // Intentional edit even when it equals the generated key.
+  await name.fill("Other");
+  assert.equal(await key.inputValue(), "custom", "editing to the same value still transfers ownership");
+  assert.equal(await folder.inputValue(), explicitFolder);
+  assert.equal(await destination.textContent(), explicitFolder);
+  await page.getByRole("button", { name: "Use name", exact: true }).click();
+  await name.fill("Atlas");
+  assert.equal(await key.inputValue(), "atlas");
+  assert.equal(await destination.textContent(), explicitFolder, "key reset and Name changes must not alter a custom folder");
+  await folder.fill("");
+  assert.equal(await destination.textContent(), "~/tycho-projects/atlas", "only clearing the folder restores its default");
+  await page.locator("#new-project-folder-options > summary").click();
+  await options.locator("summary").click();
+}
+
 (async () => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "tycho-project-create-")));
   const home = path.join(root, "home");
@@ -62,6 +155,7 @@ const { chromium } = require(process.env.TYCHO_PLAYWRIGHT_PATH || "playwright");
       const formBox = await page.locator("#new-project-form").boundingBox();
       assert(formBox.width <= 720, "desktop form must remain compact");
       await page.screenshot({ path: path.join(capture, `${label}-form.png`), fullPage: false });
+      await assertProjectKeyOwnership(page, label, capture);
       await page.locator("#new-project-options > summary").click();
       await page.getByLabel("Project key", { exact: true }).fill("Invalid key");
       await page.locator("#new-project-options > summary").click();
@@ -70,6 +164,7 @@ const { chromium } = require(process.env.TYCHO_PLAYWRIGHT_PATH || "playwright");
       assert.equal(await page.evaluate(() => document.activeElement.id), "new-project-key", "native validation must focus the key");
       assert.equal(await page.getByLabel("Project key", { exact: true }).evaluate(input => input.checkValidity()), false);
       await page.getByLabel("Project key", { exact: true }).fill(label);
+      await page.getByLabel("Name", { exact: true }).fill(label);
       await page.getByLabel("Name", { exact: true }).fill(`${label} project`);
       assert.equal(await page.getByLabel("Project key", { exact: true }).inputValue(), label, "edited key must survive name changes");
       await page.locator("#new-project-folder-options > summary").click();
@@ -111,7 +206,12 @@ const { chromium } = require(process.env.TYCHO_PLAYWRIGHT_PATH || "playwright");
         assert(field.y + field.height <= actions.y, "bottom field must clear the sticky actions");
       }
       console.log(`${label}: submit`);
+      assert.equal(await page.locator("[data-project-destination]").textContent(), `~/tycho-projects/${label}`);
+      const created = page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/projects" && response.status() === 201);
       await page.getByRole("button", { name: "Create project", exact: true }).click();
+      const submitted = await (await created).json();
+      assert.equal(submitted.project.key, label, "submission must retain the custom key");
+      assert.equal(submitted.project.path, path.join(home, "tycho-projects", label), "submitted path must match the preview");
       await page.waitForURL(new RegExp(`#project/${label}$`));
       await page.getByRole("button", { name: "New agent", exact: true }).first().waitFor();
       const folder = path.join(home, "tycho-projects", label);
@@ -140,12 +240,14 @@ const { chromium } = require(process.env.TYCHO_PLAYWRIGHT_PATH || "playwright");
       await page.keyboard.press("Enter");
       await page.getByLabel("Folder path", { exact: true }).fill(`~/code/${label}`);
       assert.equal(await page.locator("[data-project-destination]").textContent(), `~/code/${label}`);
+      const existing = page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === "/projects" && response.status() === 201);
       await page.getByRole("button", { name: "Create project", exact: true }).click();
+      assert.equal((await (await existing).json()).project.path, custom, "custom folder must be used exactly as previewed");
       await page.waitForURL(new RegExp(`#project/${label}-existing$`));
       assert.equal(fs.readFileSync(path.join(custom, "keep.txt"), "utf8"), "Keep this file");
       assert(fs.readFileSync(config, "utf8").includes(custom), "custom input is the final folder, not a parent");
       assert.deepEqual(errors, []);
-      results.push({ label, width, height, created: true, outsideRejected: true, duplicateRejected: true, refreshDraftFocus: true, derivedKey: true, editedKeyReload: true, hiddenValidationFocus: true, customExistingFolder: true, theme: label.endsWith("light") ? "light" : "dark", overflow: false });
+      results.push({ label, width, height, created: true, outsideRejected: true, duplicateRejected: true, refreshDraftFocus: true, derivedKey: true, explicitManualOwnership: true, legacyDraft: true, clearedManualDraft: true, deliberateReset: true, rerenderWithoutStorage: true, submittedPreviewMatches: true, editedKeyReload: true, hiddenValidationFocus: true, customExistingFolder: true, theme: label.endsWith("light") ? "light" : "dark", overflow: false });
       await context.close();
     }
     fs.writeFileSync(path.join(capture, "results.json"), JSON.stringify(results, null, 2));

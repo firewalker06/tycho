@@ -10458,6 +10458,7 @@ body:has(.inquiry-form-full-screen) {
 .new-project-form details > .ui-field { margin-top: 8px; }
 .project-secondary-options { border-top: 1px solid var(--border); padding-top: 8px; }
 .project-secondary-fields { align-items: start; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px; }
+.project-key-reset { justify-self: start; }
 .project-create-actions { justify-content: flex-end; gap: 12px; }
 @media (max-width: 759px) {
   .new-project-form { margin: 0 auto; padding: 20px 12px 0; border: 0; background: transparent; gap: 20px; }
