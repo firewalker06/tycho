@@ -10,6 +10,7 @@ module QueueStoreTest
 
   def run!
     assert_empty_migration_cleanup
+    assert_cleanup_placeholder_intent
     assert_cleanup_limit
     assert_cleanup_recovery
     assert_cleanup_concurrency
@@ -109,6 +110,32 @@ module QueueStoreTest
         raise "missing queue accepted"
       rescue IOError => e
         raise unless e.message == "Missing queue record for missing"
+      end
+    end
+  end
+
+  def assert_cleanup_placeholder_intent
+    with_store do |queues, store, _dir|
+      seed_cleanup(queues, store)
+      state = queues.read
+      state["agents"]["placeholder"] = {}
+      journal = { "version" => 2, "operation" => "migration_cleanup", "queues" => state }
+      HQ::FileStore.write_json(queues.journal_path, journal)
+      records = JSON.parse(File.read(HQ::AGENTS_FILE))
+      records << { "key" => "placeholder", "queue_ref" => "placeholder", "queue_generation" => nil }
+      HQ::FileStore.write_json(HQ::AGENTS_FILE, records)
+      begin
+        store.read_snapshot
+        raise "pending cleanup treated referenced placeholder as empty"
+      rescue IOError => e
+        raise unless e.message == "Missing queue record for placeholder"
+      end
+      store.send(:with_exclusive_lock) { nil }
+      begin
+        store.read_snapshot
+        raise "recovered cleanup treated referenced placeholder as empty"
+      rescue IOError => e
+        raise unless e.message == "Missing queue record for placeholder"
       end
     end
   end

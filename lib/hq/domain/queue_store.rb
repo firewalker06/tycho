@@ -67,7 +67,7 @@ module HQ
 
       raise IOError, "Queue target reference does not match agent" unless reference == record["key"]
       queue = state.fetch("agents")[reference]
-      raise IOError, "Missing queue record for #{reference}" unless queue.is_a?(Hash)
+      raise IOError, "Missing queue record for #{reference}" unless queue.is_a?(Hash) && !queue.empty?
       if record["queue_generation"] != queue["generation"]
         raise IOError, "Agent and queue generations do not match for #{reference}"
       end

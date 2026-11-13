@@ -45,6 +45,8 @@ Apply writes a version 2 queue-only intent to the existing queue transaction
 journal before it installs the queue file. Recovery installs that intent
 idempotently before a later mutation. Read-only agent snapshots can use the
 intent while it is pending. No agent or archive file needs a rewrite.
+Old binaries cannot recover a version 2 cleanup intent. Finish recovery with
+this version before a downgrade.
 A write failure before durable intent leaves the old state; a failure after
 intent can mean apply will finish on recovery even if the command reported an
 error. Retry by inspecting a new report. Lifecycle lock entry can recover an

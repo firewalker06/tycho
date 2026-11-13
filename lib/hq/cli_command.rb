@@ -528,6 +528,9 @@ module HQ
         usage_template "queue-work cleanup-migrations [--apply]"
 
         def call(**opts)
+          unless Array(opts[:args]).empty?
+            exit CLICommand.failure("Unexpected cleanup arguments: #{Array(opts[:args]).join(" ")}", err: err)
+          end
           report = HQ::AgentStore.new([]).cleanup_empty_queue_migrations(apply: opts[:apply])
           out.puts JSON.pretty_generate(report)
           exit 0

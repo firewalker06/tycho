@@ -27,6 +27,9 @@ Dir.mktmpdir("tycho-migration-cleanup-cli-") do |dir|
   report = JSON.parse(stdout)
   raise "CLI default was not dry run" unless report["mode"] == "dry_run" && report["candidates"].size == 2
   raise "CLI dry run changed queues" unless JSON.parse(File.read(path)) == state
+  _stdout, _stderr, status = Open3.capture3(env, *command, "unexpected", "--apply")
+  raise "CLI accepted extra cleanup arguments" if status.success?
+  raise "CLI unexpected arguments changed queues" unless JSON.parse(File.read(path)) == state
   stdout, stderr, status = Open3.capture3(env, *command, "--apply")
   raise "CLI apply failed: #{stderr}" unless status.success?
   raise "CLI apply omitted result" unless JSON.parse(stdout)["removed"] == report["candidates"]
