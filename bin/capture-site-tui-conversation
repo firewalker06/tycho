@@ -6,6 +6,7 @@ require "json"
 require "open3"
 require "tmpdir"
 require "time"
+require_relative "../test/support/test_environment"
 
 ROOT = File.expand_path("..", __dir__)
 $LOAD_PATH.unshift(File.join(ROOT, "lib"))
@@ -368,6 +369,7 @@ browser = ensure_prerequisites!
 FileUtils.mkdir_p(OUTPUT_DIR)
 
 Dir.mktmpdir("tycho-site-tui-capture") do |dir|
+  TestEnvironment.command_env(dir).each { |key, value| value ? ENV[key] = value : ENV.delete(key) }
   fixture = write_fixture(dir)
   app = build_app(fixture)
   ansi = app.view

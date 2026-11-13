@@ -7,12 +7,14 @@ require "tmpdir"
 require_relative "support/test_environment"
 
 ROOT = File.expand_path("..", __dir__)
-PROBE = 'puts JSON.generate(ENV.to_h.select { |name, _| name.start_with?("TYCHO_") })'
+PROBE = 'puts JSON.generate(ENV.to_h.select { |name, _| name.start_with?("TYCHO_") || name == "HOME" || ["GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "WEB_PUSH_VAPID_PUBLIC_KEY", "WEB_PUSH_VAPID_PRIVATE_KEY", "WEB_PUSH_VAPID_SUBJECT"].include?(name) })'
 
 # Simulates the environment a managed agent gives to a command it runs.
 def inherited_environment(extra = {})
   TestEnvironment::INHERITED_RUN_VARIABLES.to_h { |name| [name, "/inherited/#{name}"] }
                                           .merge("TYCHO_CONFIG_PATH" => "/inherited/hq.yml")
+                                          .merge(TestEnvironment::CREDENTIALS.to_h { |name| [name, "SYNTHETIC_SECRET"] })
+                                          .merge("HOME" => "/inherited/home", "TYCHO_SKILLS_HOME" => "/inherited/skills")
                                           .merge(extra)
 end
 
@@ -26,10 +28,12 @@ end
 # 1. The environment bin/test gives each command drops every inherited variable.
 Dir.mktmpdir("tycho-bin-test-env-") do |home|
   seen = probe(inherited_environment.merge(TestEnvironment.command_env(home)))
-  leaked = seen.keys & (TestEnvironment::INHERITED_RUN_VARIABLES + TestEnvironment::CONFIG_OVERRIDES)
+  leaked = seen.keys & (TestEnvironment::INHERITED_RUN_VARIABLES + TestEnvironment::CONFIG_OVERRIDES + TestEnvironment::CREDENTIALS - ["TYCHO_SKILLS_HOME"])
   raise "bin/test leaked #{leaked.sort.join(", ")}" unless leaked.empty?
   raise "missing logs root" unless seen["TYCHO_LOGS_ROOT"] == File.join(home, "logs")
   raise "missing home" unless seen["TYCHO_HOME"] == home
+  raise "operator HOME leaked" unless seen["HOME"] == home
+  raise "operator skills leaked" unless seen["TYCHO_SKILLS_HOME"] == home
 end
 
 # 2. Standalone runs that preload the shared support also drop them.

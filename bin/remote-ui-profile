@@ -12,6 +12,9 @@ require "tmpdir"
 require "time"
 require "timeout"
 require "uri"
+require_relative "../test/support/test_environment"
+
+TestEnvironment.clear_inherited_run_variables!
 
 ROOT = File.expand_path("..", __dir__)
 
@@ -296,7 +299,7 @@ Dir.mktmpdir("tycho-remote-ui-profile") do |dir|
   port = free_port
   base_url = "http://127.0.0.1:#{port}"
   server_log = File.join(dir, "server.log")
-  server_env = {
+  server_env = TestEnvironment.command_env(fixture[:home]).merge(
     "TYCHO_HOME" => fixture[:tycho_home],
     "TYCHO_SKILLS_HOME" => fixture[:home],
     "TYCHO_CONFIG_PATH" => fixture[:config_path],
@@ -304,7 +307,7 @@ Dir.mktmpdir("tycho-remote-ui-profile") do |dir|
     "TYCHO_RESPONSE_STYLE_PATH" => fixture[:response_style_path],
     "TYCHO_SCHEDULES_PATH" => fixture[:schedules_path],
     "TYCHO_LOGS_ROOT" => fixture[:logs_dir]
-  }
+  )
   server_pid = Process.spawn(
     server_env,
     RbConfig.ruby, "bin/tycho",

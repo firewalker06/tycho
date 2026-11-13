@@ -14,6 +14,9 @@ require "tmpdir"
 require "timeout"
 require "uri"
 require "yaml"
+require_relative "../test/support/test_environment"
+
+TestEnvironment.clear_inherited_run_variables!
 
 ROOT = File.expand_path("..", __dir__)
 
@@ -10946,7 +10949,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
   port = free_port
   base_url = "http://127.0.0.1:#{port}"
   log_path = File.join(dir, "remote-server.log")
-  env = {
+  env = TestEnvironment.command_env(fixture.fetch(:home_dir)).merge(
     "TYCHO_HOME" => fixture.fetch(:tycho_home_dir),
     "TYCHO_SKILLS_HOME" => fixture.fetch(:home_dir),
     "TYCHO_CONFIG_PATH" => fixture.fetch(:config_path),
@@ -10958,7 +10961,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     "TYCHO_GH_BIN" => fixture.fetch(:fake_gh_path),
     "TYCHO_REMOTE_TOKEN" => "",
     "TYCHO_GITHUB_API_URL" => github_api_url
-  }
+  )
   env["PATH"] = "#{metadata_fixture.fetch(:bin_dir)}#{File::PATH_SEPARATOR}#{ENV.fetch("PATH")}" if metadata_fixture
 
   if ENV["TYCHO_REMOTE_UI_INQUIRY_RECEIPT_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_INQUIRY_CARD_PADDING_ONLY"] == "1"

@@ -34,13 +34,20 @@ module TestEnvironment
     TYCHO_RESPONSE_STYLE_PATH
     TYCHO_SCHEDULES_PATH
     TYCHO_SCHEDULES_ROOT
+    TYCHO_SKILLS_HOME
+  ].freeze
+
+  CREDENTIALS = %w[
+    TYCHO_REMOTE_TOKEN TYCHO_GITHUB_TOKEN GH_TOKEN GITHUB_TOKEN
+    OPENAI_API_KEY ANTHROPIC_API_KEY
+    WEB_PUSH_VAPID_PUBLIC_KEY WEB_PUSH_VAPID_PRIVATE_KEY WEB_PUSH_VAPID_SUBJECT
   ].freeze
 
   # Environment overrides for one bin/test command. A nil value removes the
   # variable from the child process.
   def self.command_env(home)
-    cleared = (INHERITED_RUN_VARIABLES + CONFIG_OVERRIDES).to_h { |name| [name, nil] }
-    cleared.merge("TYCHO_LOGS_ROOT" => File.join(home, "logs"), "TYCHO_HOME" => home)
+    cleared = (INHERITED_RUN_VARIABLES + CONFIG_OVERRIDES + CREDENTIALS).to_h { |name| [name, nil] }
+    cleared.merge("HOME" => home, "TYCHO_SKILLS_HOME" => home, "TYCHO_LOGS_ROOT" => File.join(home, "logs"), "TYCHO_HOME" => home)
   end
 
   def self.clear_inherited_run_variables!

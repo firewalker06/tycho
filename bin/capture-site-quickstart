@@ -10,6 +10,7 @@ require "socket"
 require "tmpdir"
 require "timeout"
 require "time"
+require_relative "../test/support/test_environment"
 require "uri"
 
 ROOT = File.expand_path("..", __dir__)
@@ -335,6 +336,7 @@ browser = ensure_prerequisites!
 FileUtils.mkdir_p(OUTPUT_DIR)
 
 Dir.mktmpdir("tycho-site-quickstart-capture") do |dir|
+  TestEnvironment.command_env(dir).each { |key, value| value ? ENV[key] = value : ENV.delete(key) }
   running_pids = 2.times.map do
     Process.spawn("sleep", "600", pgroup: true, out: File::NULL, err: File::NULL)
   end
