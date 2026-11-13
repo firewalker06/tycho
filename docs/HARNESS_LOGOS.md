@@ -38,3 +38,30 @@ This page records where Tycho shows harness marks, where it does not, and why. A
 ## Trademark note
 
 Anthropic's trademark guidelines ask for permission before using its marks in a press release, website, or similar context: https://www.anthropic.com/legal/trademark-guidelines. Maintainers should confirm that the Remote UI use is acceptable before a public release.
+
+## Shared renderer parity
+
+All five mapped built-in harnesses use `HARNESS_MARKS`, `harnessMarkHtml`, and
+`harnessLabelHtml`. DeepSeek has no surface-specific logo markup.
+
+| Actual surface | Shared caller | Behavior |
+| --- | --- | --- |
+| Settings Automation catalog | `renderHarnessDetails` | Decorative mark and adjacent harness name |
+| Settings skill installation status | `renderSkillInstallationRow` | Same mark, including unsupported status |
+| Agent cards | `renderAgentCard` | Shared metadata label |
+| Agent rows, including delegated rows | `renderAgentRow` | Shared metadata label |
+| Bulk archive selection rows | `renderSelectableAgentRow` | Shared metadata label |
+| Unread agent switcher rows | `renderSwitcherAgentRow` | Shared metadata label |
+| Agent Settings panel | `agentSettingsHtml` | Shared Harness value |
+| Archive confirmation | `renderAgentArchive` | Shared Harness value; no archive action is needed to view it |
+| Agent header | `agentHeaderLabel` | Plain text for all harnesses |
+| Full New/Edit/Clone and Quick New Agent | Native harness selects and form summaries | Plain text for all harnesses |
+| Schedule, project default, and onboarding harness choices | Existing text controls | Plain text for all harnesses |
+| Server/project summary metadata | `agentListSubtextHtml` with `summaryMeta` | No harness identity is shown |
+
+Run `bundle exec ruby test/remote_ui_harness_logo_parity_test.rb` from the repository
+root. It executes the actual shared renderers for all five mapped harnesses,
+checks accessible adjacent names and decorative marks, and guards every current
+shared caller plus text-only headers and native selectors. The public `bin/test`
+suite includes this check. Browser checks use isolated synthetic agents on desktop
+and mobile in Dark and Nord Light. They do not run a harness.
