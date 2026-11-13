@@ -65,6 +65,7 @@ The **Interaction Profiler** is optional verification when adding or changing a 
 - `bin/remote-ui-inquiry-dismiss-fixture`: start an isolated 600-agent inquiry fixture on a free localhost port and print a generated Interaction Profiler config. See `docs/REMOTE_UI_INTERACTION_PROFILER.md` for sampling and reset steps.
 - `bin/capture-site-quickstart`: regenerate the v0.10.0 website launch and watch screenshots from deterministic synthetic Remote UI fixtures at 1440x900.
 - `bin/capture-site-tui-conversation`: regenerate the v0.10.0 website TUI conversation screenshot from a deterministic synthetic fixture at 1440x900.
+- `bundle exec ruby -r ./test/support/push_safety.rb test/dsh_harness_test.rb`: verify native DeepSeek Harness transport, events, resume, and result correction without a provider. See [DeepSeek Harness](docs/DEEPSEEK.md).
 - `bundle exec ruby -c bin/tycho`: syntax-check the main executable before opening a PR.
 - `bundle exec ruby test/registry_test.rb`: verify registry loading for split config and system prompt interpolation.
 - `bundle exec ruby test/parser_test.rb`: verify synthetic Claude parser fixture shapes.
@@ -184,4 +185,4 @@ Also call out changes to Bubbletea input handling, bracketed paste behavior, or 
 
 - Set `TYCHO_REMOTE_UI_MANUAL_SCHEDULE_QUEUE_ONLY=1` with `bin/remote-ui-smoke` to check one-time selected queue delivery for paused and stopped schedules, unchanged schedule state, later automatic suppression, polling, pending-click protection, and desktop/mobile Dark/Light layout. Use `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the repository for screenshots.
 
-- Set `TYCHO_REMOTE_UI_HARNESS_LOGO_ONLY=1` with `bin/remote-ui-smoke` to check the Antigravity shared mark in Settings, skill rows, agent metadata, agent Settings, archive, and text-only native selectors on desktop/mobile Dark/Light/System. Use `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the repository for screenshots.
+- Set `TYCHO_REMOTE_UI_HARNESS_LOGO_ONLY=1` with `bin/remote-ui-smoke` to check the Antigravity and DeepSeek shared marks in Settings, skill rows, agent metadata, agent Settings, archive, and text-only native selectors on desktop/mobile Dark/Light/System. Use `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the repository for screenshots.

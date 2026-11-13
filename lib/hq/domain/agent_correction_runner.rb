@@ -130,6 +130,8 @@ module HQ
                parsed["sessionID"] || parsed.dig("part", "sessionID")
              elsif adapter == "pi"
                parsed["id"] if parsed["type"] == "session"
+             elsif adapter == "dsh"
+               parsed["sessionId"] if parsed["type"] == "session"
              elsif adapter == "agy"
                AgentStructuredResult.agy_conversation_id(parsed)
              else

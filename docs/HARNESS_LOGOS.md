@@ -6,8 +6,8 @@ This page records where Tycho shows harness marks, where it does not, and why. A
 
 | Surface | Marks shown | Notes |
 | --- | --- | --- |
-| Remote UI agent rows and agent cards | Codex, Claude, OpenCode, Pi, Antigravity (`agy`) | The harness name stays as text next to the mark. |
-| Remote UI Settings harness summaries and agent `Harness` rows, skill installation rows | Codex, Claude, OpenCode, Pi, Antigravity (`agy`) | The harness name stays as text in the summary heading. |
+| Remote UI agent rows and agent cards | Codex, Claude, OpenCode, Pi, DeepSeek, Antigravity (`agy`) | The harness name stays as text next to the mark. |
+| Remote UI Settings harness summaries and agent `Harness` rows, skill installation rows | Codex, Claude, OpenCode, Pi, DeepSeek, Antigravity (`agy`) | The harness name stays as text in the summary heading. |
 | Remote UI native `<select>` options, form summaries, Settings/schedule/project selectors | None | Native options cannot show images. Form summaries are plain text. |
 | TUI (`lib/hq/ui`), CLI output, docs, README | None | Terminal output and prose stay text-only. |
 
@@ -18,9 +18,10 @@ Agent list metadata (including switcher and linked-agent rows) uses the shared l
 | Harness | Mark | Reason |
 | --- | --- | --- |
 | Antigravity (`agy`) | Official Icon - One Color | [Google press assets](https://antigravity.google/press); unchanged SVG, shared alpha mask. |
+| DeepSeek (`dsh`) | Official whale icon (`deepseek-icon.svg`) | Byte-identical official developer brand asset. Shared alpha masking follows the Dark and Nord Light text colors; the adjacent dsh name remains accessible. |
 | Claude (`claude`) | Claude Spark, clay color | Official Anthropic press kit. The clay color reads on light and dark backgrounds. |
-| OpenCode (`opencode`) | Dark rectangle mark (`opencode-logo-dark.svg`) | Official asset from the MIT-licensed OpenCode repository. The rectangle has no gradient. It is rendered with luminance masking so the frame stays solid and the window stays open. The shared mask follows the selected appearance. |
-| Pi (`pi`) | Pi logo | Official asset linked from the Pi project README. The mark uses fixed colors that read on the dark surface. |
+| OpenCode (`opencode`) | Dark rectangle mark (`opencode-logo-dark.svg`) | Official asset from the MIT-licensed OpenCode repository. The rectangle has no gradient. It is rendered with luminance masking so the frame stays solid and the window stays open. The shared mask follows the current palette. |
+| Pi (`pi`) | Pi logo | Official asset linked from the Pi project README. The shared alpha mask follows the current palette. |
 | OpenAI / Codex (`codex`) | OpenAI blossom, dark-background file | Taken from `docs/src/assets/dark-logo.svg` in the OpenAI-owned MIT repository https://github.com/openai/openai-agents-js. The downloadable brand portal (https://openai.com/brand/) returned HTTP 403 to automated fetches, so the repository file is the official source used. Third-party icon sets were not used. The mark is shown without the wordmark. |
 
 ## Usage rules applied
@@ -28,7 +29,7 @@ Agent list metadata (including switcher and linked-agent rows) uses the shared l
 - Marks are unchanged upstream files. Tycho does not recolor, crop, or redraw them.
 - Marks render as one plain color: each file is a CSS mask filled with `--harness-mark-color`, which is `#ffffff` in the dark Remote UI. The colored panels and two-tone fills are not shown. A light palette overrides the variable to a dark ink.
 - Marks are decorative (`alt=""`, `aria-hidden="true"`) because the harness name is always shown as adjacent text.
-- Dark, Light (Nord), and System use the same mask geometry with the theme text color.
+- Dark, Nord Light, and System use the same SVG mask geometry. The shared mark color changes with the palette; no alternate DeepSeek asset or edited vector is needed.
 - Harness identity is also shown in the agent detail `Harness` row, the agent Settings `Harness` row, and the skill installation rows. Native `<select>` options, prose, and the TUI stay text-only.
 - Custom harnesses do not get marks. Only built-in harness keys are mapped.
 
@@ -40,3 +41,30 @@ Agent list metadata (including switcher and linked-agent rows) uses the shared l
 ## Trademark note
 
 Anthropic's trademark guidelines ask for permission before using its marks in a press release, website, or similar context: https://www.anthropic.com/legal/trademark-guidelines. Maintainers should confirm that the Remote UI use is acceptable before a public release.
+
+## Shared renderer parity
+
+All five mapped built-in harnesses use `HARNESS_MARKS`, `harnessMarkHtml`, and
+`harnessLabelHtml`. DeepSeek has no surface-specific logo markup.
+
+| Actual surface | Shared caller | Behavior |
+| --- | --- | --- |
+| Settings Automation catalog | `renderHarnessDetails` | Decorative mark and adjacent harness name |
+| Settings skill installation status | `renderSkillInstallationRow` | Same mark, including unsupported status |
+| Agent cards | `renderAgentCard` | Shared metadata label |
+| Agent rows, including delegated rows | `renderAgentRow` | Shared metadata label |
+| Bulk archive selection rows | `renderSelectableAgentRow` | Shared metadata label |
+| Unread agent switcher rows | `renderSwitcherAgentRow` | Shared metadata label |
+| Agent Settings panel | `agentSettingsHtml` | Shared Harness value |
+| Archive confirmation | `renderAgentArchive` | Shared Harness value; no archive action is needed to view it |
+| Agent header | `agentHeaderLabel` | Plain text for all harnesses |
+| Full New/Edit/Clone and Quick New Agent | Native harness selects and form summaries | Plain text for all harnesses |
+| Schedule, project default, and onboarding harness choices | Existing text controls | Plain text for all harnesses |
+| Server/project summary metadata | `agentListSubtextHtml` with `summaryMeta` | No harness identity is shown |
+
+Run `bundle exec ruby test/remote_ui_harness_logo_parity_test.rb` from the repository
+root. It executes the actual shared renderers for all five mapped harnesses,
+checks accessible adjacent names and decorative marks, and guards every current
+shared caller plus text-only headers and native selectors. The public `bin/test`
+suite includes this check. Browser checks use isolated synthetic agents on desktop
+and mobile in Dark and Nord Light. They do not run a harness.
