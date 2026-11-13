@@ -57,6 +57,8 @@ module HQ
   )
 
   class Registry
+    class ProjectCreationConflict < ConfigError; end
+
     DEFAULT_PATH = HQ.default_config_path
     DEFAULT_ARCHIVED_BASENAME = "hq.archived.yml"
     REMOTE_SERVER_ICONS = %w[server computer].freeze
@@ -124,17 +126,34 @@ module HQ
       raise ConfigError, "Invalid YAML in #{e.file}: #{e.message}"
     end
 
+    def project_creation_key(receipt)
+      with_config_lock { project_creation_key_in_data(load_yaml(@path), receipt) }
+    end
+
     def add_project!(attrs)
+      added_project = false
       key = with_config_lock do
         data = load_yaml(@path)
+        receipt = attrs[:creation_receipt]
+        replay = project_creation_key_in_data(data, receipt) if receipt
+        next replay if replay
         projects = Array(data["projects"])
         key = attrs[:key].to_s.strip
         raise ConfigError, "Missing project key" if key.empty?
-        raise ConfigError, "Duplicate project key: #{key}" if projects.any? { |p| p["key"].to_s == key }
+        if projects.any? { |p| p["key"].to_s == key }
+          raise(receipt ? ProjectCreationConflict : ConfigError, "Duplicate project key: #{key}")
+        end
 
         entry = { "key" => key, "name" => attrs[:name].to_s }
         entry["group"] = attrs[:group].to_s unless attrs[:group].to_s.strip.empty?
         entry["path"] = attrs[:path].to_s
+        if receipt
+          entry["creation_request_id"] = receipt.fetch("id")
+          data["project_creation_receipts"] ||= {}
+          data["project_creation_receipts"][receipt.fetch("id")] = {
+            "key" => key, "fingerprint" => receipt.fetch("fingerprint")
+          }
+        end
         entry["agent"] = attrs[:agent].to_s unless attrs[:agent].to_s.strip.empty?
         %i[model reasoning_effort pr_url].each do |field|
           value = attrs[field]
@@ -153,11 +172,12 @@ module HQ
         validate_project_entries!(projects)
         data["projects"] = projects
         write_yaml(@path, data)
+        added_project = true
         key
       end
       load!
       added = @projects.find { |p| p.key == key }
-      HQ.hooks.publish("project.added", project_key: key, project_path: added&.path.to_s)
+      HQ.hooks.publish("project.added", project_key: key, project_path: added&.path.to_s) if added_project
       key
     end
 
@@ -978,6 +998,25 @@ module HQ
 
     def write_yaml(path, data)
       FileStore.write_yaml(path, data)
+    end
+
+    def project_creation_key_in_data(data, receipt)
+      receipts = data["project_creation_receipts"] || {}
+      raise ConfigError, "Invalid project creation receipt storage" unless receipts.is_a?(Hash)
+
+      saved = receipts[receipt.fetch("id")]
+      return nil unless saved
+      raise ConfigError, "Invalid project creation receipt" unless saved.is_a?(Hash)
+      unless saved["fingerprint"] == receipt.fetch("fingerprint")
+        raise ProjectCreationConflict, "This creation request has different project details"
+      end
+
+      entry = Array(data["projects"]).find { |project| project["key"] == saved["key"] }
+      unless entry && entry["creation_request_id"] == receipt.fetch("id")
+        raise ProjectCreationConflict, "The previously created project is no longer available; it was not created again"
+      end
+
+      saved.fetch("key")
     end
 
     def with_config_lock

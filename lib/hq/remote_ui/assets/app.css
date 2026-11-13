@@ -10435,13 +10435,6 @@ body:has(.inquiry-form-full-screen) {
   line-height: 1.5;
   color: var(--muted);
 }
-.project-destination { display: grid; gap: 8px; min-width: 0; }
-.project-destination-path {
-  display: block;
-  overflow-wrap: anywhere;
-  font-size: 15px;
-  color: var(--text);
-}
 .new-project-form summary {
   width: fit-content;
   min-height: 44px;
@@ -10471,3 +10464,22 @@ body:has(.inquiry-form-full-screen) {
   }
   .project-create-actions .primary { flex: 1; }
 }
+
+.project-created-dialog {
+  width: min(480px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  background: var(--panel);
+  color: var(--text);
+}
+.project-created-dialog::backdrop { background: rgb(0 0 0 / 55%); }
+.project-created-dialog h2 { margin: 0 0 8px; font-size: 22px; }
+.project-created-dialog > p { color: var(--muted); margin: 0 0 20px; }
+.project-created-dialog dl { display: grid; gap: 6px; margin: 0 0 24px; }
+.project-created-dialog dt { color: var(--muted); font-size: 13px; }
+.project-created-dialog dd { margin: 0 0 10px; overflow-wrap: anywhere; }
+.project-created-dialog code { white-space: normal; overflow-wrap: anywhere; }
+.project-created-dialog > button { width: 100%; }

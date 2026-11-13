@@ -1431,25 +1431,37 @@ Adopts an idle, unscheduled managed agent as a normal schedule whose target incl
 
 ### Manual project creation
 
-The Agents page and first-run screen provide **New project**. A compact,
-single-column form leads with Name and the exact destination. The key follows
-Name until the user edits it. Explicit automatic/manual mode is saved with
-the draft, including through reload and rerender. A cleared custom key stays
-manual and requires a value. **Use name** deliberately restores automatic
-updates without changing a custom folder. Older drafts keep their key until
-Use name is selected. **Project key and group** exposes the secondary controls.
-Native validation opens a collapsed section before focusing an invalid field.
+The Agents page and first-run screen provide **New project**. Only **Project Name**
+is initially visible. **Options** contains **Project Key** and **Group**. The key
+follows Name until explicitly edited. Automatic/manual ownership, input, focus
+and disclosure state survive polling and reload. Clearing a custom key does not
+restore automatic mode; **Use name** deliberately restores it. Native validation
+opens Options before focusing an invalid field.
 
-The destination shows a home-relative label when the server home is known.
-An empty folder field uses `HOME/tycho-projects/KEY`. **Change folder** accepts
-the full project folder path, not its parent. That folder is created if missing,
-or used as-is if it exists; existing files stay unchanged. Custom folder parents
-must already exist. Form values, focus and disclosure state survive polling;
-text drafts also survive reload. Mobile actions follow the fields so expanded
-options remain visible above the buttons.
+This form uses the default `HOME/tycho-projects/KEY` location. It has no folder
+control or pre-submit destination preview. After a confirmed server receipt,
+a native modal shows the project name, key, optional group and location. Its
+only action is **Okay**, which navigates to the project. Polling cannot dismiss
+it or create again. Keyboard focus stays in the modal until acknowledgment.
+
+Before sending, the browser saves a UUID and immutable payload in session
+storage. Uncertain replies keep that payload locked; **Create project** retries
+the same UUID. A definite rejection restores editing and retains the input.
+Unavailable session storage prevents submission. A confirmed modal survives
+reload in the same tab. Clearing browser storage loses this recovery record;
+a later attempt still cannot overwrite an existing project key.
 
 `GET /setup/project-creation` returns the server home and starter directory. <!-- local-path-ok -->
-`POST /projects` accepts `name`, `key`, `group`, and `path`, and returns a created project. <!-- local-path-ok -->
+`POST /projects` accepts `name`, `key`, `group`, optional `path` and optional UUID `creation_request_id`. <!-- local-path-ok -->
+The manual form sends no path. Existing API/CLI custom-path capabilities stay
+in place. For receipt-aware requests, project registration and the receipt are
+saved in one atomic configuration write. Replaying the same UUID and payload
+returns the original project without creating directories or publishing another
+project-added hook. Different payloads, or a removed/archived original project,
+are rejected. Durable `project_creation_receipts` metadata and each project's
+`creation_request_id` are additive configuration fields; no live migration is
+required. Receipts are retained. This is registration idempotency, not a
+filesystem transaction: a directory can remain if registration fails.
 
 The server rejects paths outside its user home, parent traversal, dangling
 symlinks, and non-directory targets. Safe internal symlinks use their resolved

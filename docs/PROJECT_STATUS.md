@@ -47,14 +47,16 @@ No operator cleanup is part of this change.
 
 ## Manual Remote UI project creation
 
-The Agents page and onboarding screen provide New project with a visible
-`HOME/tycho-projects` starter. Manual creation supports arbitrary valid home
-paths and safe internal aliases. The compact 720px desktop form leads with Name
-and a home-relative destination preview. Editable generated keys and optional
-groups use a native disclosure; a custom path names the final folder, not its
-parent. Dark/Light desktop/mobile browser checks cover drafts, focus, validation
-and existing custom folders. Existing configuration and CLI/agent path
-behavior stay in place.
+The Agents page and onboarding screen provide New project. Only Project Name
+is initially visible; Options contains Project Key and Group. Explicit custom
+keys survive Name edits, polling and reload; Use name restores automatic keys.
+The form uses the default starter location without a folder control or preview.
+A confirmed creation opens a native modal with project information and one Okay
+button. Navigation waits for acknowledgment. Durable request receipts support
+safe manual retries after uncertain replies and confirmed-modal reload recovery.
+Desktop/mobile Dark/Light browser checks cover the minimal form, modal keyboard
+focus, polling, errors, lost replies and malformed replies. Existing custom-path
+API, configuration and CLI/agent behavior stay in place.
 
 The operator explicitly approved trusting same-user and root processes.
 Hostile same-UID lifetime isolation and earlier storage/guard research are
