@@ -26,7 +26,7 @@ module HQ
     end
 
     def filesystem!(directory)
-      buffer = Fiddle::Pointer.malloc(4096)
+      buffer = Fiddle::Pointer.malloc(4096, Fiddle::RUBY_FREE)
       call!("fstatfs", [Fiddle::TYPE_INT, Fiddle::TYPE_VOIDP], directory.fileno, buffer)
       supported = if RUBY_PLATFORM.include?("darwin")
         # Darwin struct statfs: f_fstypename follows the 72-byte fixed header.
@@ -55,7 +55,7 @@ module HQ
 
         raise Error, "Cannot read folder ACL permissions"
       end
-      slot = Fiddle::Pointer.malloc(Fiddle::SIZEOF_VOIDP)
+      slot = Fiddle::Pointer.malloc(Fiddle::SIZEOF_VOIDP, Fiddle::RUBY_FREE)
       selector = 0 # ACL_FIRST_ENTRY; subsequent calls use ACL_NEXT_ENTRY (-1).
       loop do
         result = native("acl_get_entry", [Fiddle::TYPE_VOIDP, Fiddle::TYPE_INT, Fiddle::TYPE_VOIDP]).call(acl, selector, slot)
@@ -64,7 +64,7 @@ module HQ
         raise Error, "Cannot inspect folder ACL entries" unless result == 0
 
         entry = slot[0, Fiddle::SIZEOF_VOIDP].unpack1("J")
-        tag = Fiddle::Pointer.malloc(Fiddle::SIZEOF_INT)
+        tag = Fiddle::Pointer.malloc(Fiddle::SIZEOF_INT, Fiddle::RUBY_FREE)
         call!("acl_get_tag_type", [Fiddle::TYPE_VOIDP, Fiddle::TYPE_VOIDP], entry, tag)
         kind = tag[0, Fiddle::SIZEOF_INT].unpack1("i!")
         raise Error, "Cannot verify folder ACL entry type" unless [1, 2].include?(kind)
