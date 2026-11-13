@@ -153,18 +153,21 @@ def write_fixture(dir, running_pids)
     projects:
       - key: atlas-web
         name: Atlas Web
+        group: Atlas Web
         path: #{atlas_workspace.inspect}
         agent: codex
         model: gpt-5.4
         reasoning_effort: medium
       - key: compass-api
         name: Compass API
+        group: Compass API
         path: #{compass_workspace.inspect}
         agent: codex
         model: gpt-5.4
         reasoning_effort: medium
       - key: beacon-mobile
         name: Beacon Mobile
+        group: Beacon Mobile
         path: #{beacon_workspace.inspect}
         agent: codex
         model: gpt-5.4
