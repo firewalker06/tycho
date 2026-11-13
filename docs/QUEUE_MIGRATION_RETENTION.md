@@ -36,6 +36,12 @@ fails loading; cleanup does not repair it. Keeping the queue record also stops
 normal writes from creating another first-migration receipt for the same key.
 
 Planning and apply use the agent lifecycle lock, as do queue writers.
+Dry run acquires the lock without recovery. If any transaction journal exists,
+dry run exits with a nonzero status and the message "Queue transaction needs
+recovery; no cleanup plan was produced". It prints no JSON plan and does not
+write queue, agent, archive, journal, or backup data, even for an invalid journal.
+The lock file can be created. Use an authorized lifecycle mutation to recover
+the transaction before requesting another dry run.
 Apply recalculates its plan under that lock; it does not accept a stale dry-run
 plan. All cooperating writers serialize. Direct edits outside this lock are
 unsupported. The scan reads the full store; the deletion cap does not bound
@@ -49,8 +55,10 @@ Old binaries cannot recover a version 2 cleanup intent. Finish recovery with
 this version before a downgrade.
 A write failure before durable intent leaves the old state; a failure after
 intent can mean apply will finish on recovery even if the command reported an
-error. Retry by inspecting a new report. Lifecycle lock entry can recover an
-earlier transaction even for a dry run; dry-run planning itself writes no data.
+error. Apply retains normal lifecycle recovery before planning; its report
+lists removals from the new cleanup plan, not from recovery of an earlier intent.
+After an interrupted apply, dry run reports the pending transaction without
+installing it. Recover through an authorized mutation, then request a new report.
 
 This change was verified only with isolated synthetic fixtures. It does not
 authorize cleanup of operator history or repair of missing records.

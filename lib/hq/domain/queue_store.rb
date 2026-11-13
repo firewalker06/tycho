@@ -130,7 +130,7 @@ module HQ
     # Caller holds the lifecycle lock. Only audit receipts are candidates.
     # Keep the last 100 by key; legacy receipts have no reliable timestamps.
     def cleanup_empty_migrations(apply: false)
-      raise IOError, "Queue transaction needs recovery" if File.exist?(journal_path)
+      raise IOError, "Queue transaction needs recovery; no cleanup plan was produced" if File.exist?(journal_path)
 
       state = File.exist?(@path) ? JSON.parse(FileStore.read_text(@path)) : read
       validate_state!(state)

@@ -35,6 +35,46 @@ Dir.mktmpdir("tycho-migration-cleanup-cli-") do |dir|
   raise "CLI apply omitted result" unless JSON.parse(stdout)["removed"] == report["candidates"]
   after = JSON.parse(File.read(path))
   raise "CLI apply changed authority" unless after["agents"] == state["agents"] && after["migrations"].size == 100
+  %i[cleanup agents invalid].each do |operation|
+    File.write(path, JSON.generate(state))
+    agent_path = File.join(dir, "managed_agents.json")
+    records = [{ "key" => "synthetic-100", "queue_ref" => "synthetic-100", "queue_generation" => "stable" }]
+    File.write(agent_path, JSON.generate(records))
+    pending = Marshal.load(Marshal.dump(state))
+    pending["migrations"].delete("synthetic-000")
+    journal_path = "#{path}.transaction.json"
+    journal = if operation == :agents
+                { "version" => 1, "target" => agent_path,
+                  "records" => records.map { |record| record.merge("name" => "Recovered fixture") }, "queues" => pending }
+              else
+                { "version" => 2, "operation" => "migration_cleanup", "queues" => pending }
+              end
+    File.write(journal_path, operation == :invalid ? "invalid journal" : JSON.generate(journal))
+    paths = [path, agent_path, journal_path]
+    paths += paths.map { |file| "#{file}.bak" }
+    before = paths.to_h { |file| [file, File.exist?(file) ? File.binread(file) : nil] }
+    stdout, stderr, status = Open3.capture3(env, *command)
+    raise "CLI dry run accepted pending #{operation} intent" if status.success?
+    unless stdout.empty? && stderr.include?("Queue transaction needs recovery; no cleanup plan was produced")
+      raise "CLI pending #{operation} output claimed a plan or omitted recovery requirement"
+    end
+    unless before.all? { |file, bytes| (File.exist?(file) ? File.binread(file) : nil) == bytes }
+      raise "CLI dry run changed pending #{operation} data or backups"
+    end
+    next if operation == :invalid
+
+    stdout, stderr, status = Open3.capture3(env, *command, "--apply")
+    raise "CLI pending #{operation} apply failed: #{stderr}" unless status.success?
+    unless JSON.parse(stdout)["removed"] == ["synthetic-001"] && !File.exist?(journal_path)
+      raise "CLI apply did not plan from recovered #{operation} intent"
+    end
+    recovered = JSON.parse(File.read(path))
+    raise "CLI recovery changed queue authority" unless recovered["agents"] == state["agents"]
+    if operation == :agents && JSON.parse(File.read(agent_path)) != journal["records"]
+      raise "CLI apply did not install pending agent records"
+    end
+  end
+  File.unlink("#{path}.transaction.json")
   File.write(path, "invalid")
   _stdout, _stderr, status = Open3.capture3(env, *command, "--apply")
   raise "CLI corrupt state returned success" if status.success?

@@ -245,7 +245,7 @@ module HQ
     end
 
     def cleanup_empty_queue_migrations(apply: false)
-      with_exclusive_lock { QueueStore.new.cleanup_empty_migrations(apply:) }
+      with_exclusive_lock(recover: apply) { QueueStore.new.cleanup_empty_migrations(apply:) }
     end
 
     def save(agents)
@@ -1925,12 +1925,12 @@ module HQ
       raise IOError, "Invalid agent store: #{e.class}"
     end
 
-    def with_exclusive_lock
+    def with_exclusive_lock(recover: true)
       FileUtils.mkdir_p(File.dirname(AGENTS_FILE))
       File.open("#{AGENTS_FILE}.lock", File::RDWR | File::CREAT, 0o600) do |file|
         RequestTiming.measure("store_lock_wait") { file.flock(File::LOCK_EX) }
         held_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-        QueueStore.new.recover!
+        QueueStore.new.recover! if recover
         yield
       ensure
         if held_at

@@ -10,6 +10,7 @@ module QueueStoreTest
 
   def run!
     assert_empty_migration_cleanup
+    assert_cleanup_pending_transactions
     assert_cleanup_placeholder_intent
     assert_cleanup_limit
     assert_cleanup_recovery
@@ -110,6 +111,56 @@ module QueueStoreTest
         raise "missing queue accepted"
       rescue IOError => e
         raise unless e.message == "Missing queue record for missing"
+      end
+    end
+  end
+
+  def assert_cleanup_pending_transactions
+    %i[cleanup agents archive].each do |operation|
+      with_store do |queues, store, dir|
+        seed_cleanup(queues, store)
+        archive = File.join(dir, "archives", "synthetic-empty-000", "agent_manifest.json")
+        archive_record = store.send(:with_exclusive_lock) do
+          queues.write([{ "key" => "empty-000", "creation_request" => { "id" => "request", "fingerprint" => "proof" } }], target: archive).first
+        end
+        state = queues.read
+        pending = Marshal.load(Marshal.dump(state))
+        pending["migrations"].delete("empty-000")
+        journal = if operation == :cleanup
+                    { "version" => 2, "operation" => "migration_cleanup", "queues" => pending }
+                  else
+                    target = operation == :agents ? HQ::AGENTS_FILE : archive
+                    records = operation == :agents ? JSON.parse(File.read(target)) : archive_record
+                    records = Marshal.load(Marshal.dump(records))
+                    record = operation == :agents ? records.first : records
+                    record["name"] = "Recovered synthetic agent"
+                    { "version" => 1, "target" => target, "records" => records, "queues" => pending }
+                  end
+        HQ::FileStore.write_json(queues.journal_path, journal, backup: false)
+        paths = [HQ::AGENTS_FILE, archive, HQ::QueueStore.path, queues.journal_path]
+        paths += paths.map { |path| HQ::FileStore.backup_path(path) }
+        before = paths.to_h { |path| [path, File.exist?(path) ? File.binread(path) : nil] }
+        2.times do
+          begin
+            store.cleanup_empty_queue_migrations
+            raise "dry run accepted pending #{operation} transaction"
+          rescue IOError => e
+            assert(e.message.include?("Queue transaction needs recovery"), "dry run returned an unclear pending error")
+          end
+          assert(before.all? { |path, bytes| (File.exist?(path) ? File.binread(path) : nil) == bytes },
+                 "dry run installed pending #{operation} transaction or changed backup bytes")
+        end
+        report = store.cleanup_empty_queue_migrations(apply: true)
+        assert(report["mode"] == "apply" && report["removed"] == %w[empty-001 empty-002], "apply did not plan from recovered state")
+        assert(!File.exist?(queues.journal_path) && queues.read["migrations"].size == 100, "apply did not recover and finish")
+        assert(queues.read["agents"] == state["agents"], "apply recovery changed queue authority")
+        assert(store.read_snapshot.first.size == 103, "apply recovery broke active loading")
+        archives = HQ::AgentArchiveStore.new(root: File.dirname(File.dirname(archive)))
+        assert(archives.find_creation_request("request").agent.key == "empty-000", "apply recovery broke archive request proof")
+        unless operation == :cleanup
+          actual = JSON.parse(File.read(journal["target"]))
+          assert(actual == journal["records"], "apply did not recover version 1 target")
+        end
       end
     end
   end
