@@ -29,12 +29,19 @@ an authenticated `gh` session.
 ## Optional browser checks
 
 `bin/remote-ui-smoke` needs Node.js, npm, Chrome/Chromium, and access to the
-npm registry to install Playwright in its temporary directory. Set
+npm registry to install Playwright in its temporary directory. Browser previews
+also use pinned Markdown, sanitization, diagram, and syntax libraries from
+jsDelivr. These browser checks are not an offline dependency test. Set
 `CHROME_PATH` if the browser is outside the default macOS locations. It
 starts a loopback server with generated config, agents, attachments, fake
 harness output, and a fake GitHub API. It needs no running Tycho service or
 operator credentials. Its fixture server gets an isolated HOME and clears
 managed-agent launch variables and the shared credential list.
+
+For the small delegation fixture, run
+`TYCHO_REMOTE_UI_DELEGATION_FIXTURE_ONLY=1 bin/remote-ui-smoke`. See
+[the base/head comparison](research/card-868-delegation-verification.md) for
+the two setup defects and preserved assertions.
 
 Run the full smoke with `bin/remote-ui-smoke`, or select a focused mode from
 [the repository commands](../AGENTS.md). Focused modes do not prove every

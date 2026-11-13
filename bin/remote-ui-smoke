@@ -99,6 +99,15 @@ def write_fixture(dir)
     exit 0 if ARGV == ["auth", "status"]
     File.open("#{__FILE__}.launches", "a") { |file| file.puts(ENV["TYCHO_AGENT_KEY"]) }
     prompt = STDIN.read
+    parent_gate = "#{__FILE__}.#{ENV.fetch("TYCHO_AGENT_KEY", "unknown")}.parent"
+    if prompt.include?("ORCHESTRATOR_SMOKE_HOLD") && !File.exist?("#{parent_gate}.held")
+      File.write("#{parent_gate}.held", "held")
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 15
+      until File.exist?("#{parent_gate}.release")
+        abort "Synthetic parent gate timed out" if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+        sleep 0.01
+      end
+    end
     hold_marker = "#{__FILE__}.#{ENV.fetch("TYCHO_AGENT_KEY", "unknown")}.held"
     prior_queue_smoke_runs = File.exist?(hold_marker) ? File.read(hold_marker).to_i : 0
     queue_smoke_run = if prompt.include?("QUEUE_SMOKE_HOLD") || prior_queue_smoke_runs.positive?
@@ -420,6 +429,28 @@ def wait_for_delegation_callback(base_url, parent_key)
 
     sleep 0.05
   end
+end
+
+# STARTED belongs to the parent run that launches the child. Keep that run
+# alive until the real native-start acknowledgement is durably recorded.
+def start_delegated_fixture_review(base_url, fixture, parent_key, child_key)
+  gate = "#{fixture.fetch(:fake_codex_path)}.#{parent_key}.parent"
+  deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 10
+  start_agent(base_url, parent_key)
+  until File.exist?("#{gate}.held")
+    raise "Synthetic parent did not reach its gate" if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+    sleep 0.01
+  end
+  start_agent(base_url, child_key, parent_agent_key: parent_key)
+  loop do
+    blocks = JSON.parse(Net::HTTP.get(URI("#{base_url}/agents/#{parent_key}/conversation"))).fetch("conversation")
+    break if blocks.any? { |block| block.dig("metadata", "event") == "agent_started" &&
+                                  block.dig("metadata", "agent_reference", "agent_key") == child_key }
+    raise "Delegated native start was not recorded on its running parent" if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+    sleep 0.01
+  end
+ensure
+  File.write("#{gate}.release", "release") if gate
 end
 
 def append_context_pressure_signal(base_url, agent_key)
@@ -1690,9 +1721,9 @@ title: !123 value
         await page.setViewportSize({ width: 390, height: 844 });
         const liveMobileContract = await page.evaluate(() => {
           const callback = document.querySelector(".message-list > .delegation-callback-event");
-          const pane = document.querySelector("[data-agent-conversation-scroll]");
-          callback?.scrollIntoView({ block: "start" });
-          if (pane) pane.scrollTop = Math.max(0, pane.scrollTop - 12);
+          // Mobile uses document scrolling. Center the target before measuring
+          // clearance; start alignment places it behind the fixed header.
+          callback?.scrollIntoView({ block: "center" });
           const rect = callback?.getBoundingClientRect();
           const header = document.querySelector(".app-header")?.getBoundingClientRect();
           const dock = document.querySelector("[data-agent-dock]")?.getBoundingClientRect();
@@ -1875,6 +1906,8 @@ title: !123 value
         await page.waitForSelector(".message-list", { state: "visible", timeout: 10_000 });
         const installSummaryAttentionFixture = async () => page.evaluate((key) => {
           state.conversations[key] = {
+            loaded: true,
+            loading: false,
             blocks: [
               {
                 kind: "run_summary",
@@ -1900,14 +1933,21 @@ title: !123 value
               },
             ],
           };
+          window.__summaryAttentionFixture = structuredClone(state.conversations[key]);
           state.renderedRouteKey = null;
           state.renderedViewHtml = "";
           render();
         }, delegatedAgentKey);
         await installSummaryAttentionFixture();
-        const summaryAttentionContract = async () => page.evaluate(() => {
-          const suppressed = document.querySelector("[data-run-summary-id='delegated-attention-suppressed']");
-          const ordinary = document.querySelector("[data-run-summary-id='operator-attention-normal']");
+        const summaryAttentionContract = async () => page.evaluate((key) => {
+          // Keep synthetic input and its measurement in the same browser turn;
+          // a real poll between Node calls can replace client-only fixtures.
+          state.conversations[key] = structuredClone(window.__summaryAttentionFixture);
+          state.renderedRouteKey = null;
+          state.renderedViewHtml = "";
+          render();
+          const suppressed = document.querySelector(".message-list article[data-run-summary-id='delegated-attention-suppressed']");
+          const ordinary = document.querySelector(".message-list article[data-run-summary-id='operator-attention-normal']");
           const role = suppressed?.querySelector(".message-role");
           const time = role?.querySelector(".message-time");
           const indicator = role?.querySelector(".summary-suppression-indicator");
@@ -1929,7 +1969,7 @@ title: !123 value
               : null,
             overflow: suppressed ? suppressed.scrollWidth > suppressed.clientWidth : true,
           };
-        });
+        }, delegatedAgentKey);
         const assertSummaryAttentionContract = (contract, viewport) => {
           if (contract.count !== 1 || contract.headerCount !== 1 || contract.contentCount !== 0 ||
               contract.ordinaryCount !== 0 || !contract.previousIsTime || !contract.parentIsRole ||
@@ -1951,6 +1991,7 @@ title: !123 value
         }
         await installSummaryAttentionFixture();
         const unreadUnsuppressedCount = await page.evaluate((key) => {
+          state.conversations[key] = structuredClone(window.__summaryAttentionFixture);
           state.conversations[key].blocks[0].metadata.unread_suppressed = false;
           state.renderedRouteKey = null;
           state.renderedViewHtml = "";
@@ -1962,6 +2003,7 @@ title: !123 value
         }
         await installSummaryAttentionFixture();
         const notificationUnsuppressedCount = await page.evaluate((key) => {
+          state.conversations[key] = structuredClone(window.__summaryAttentionFixture);
           const metadata = state.conversations[key].blocks[0].metadata;
           metadata.unread_suppressed = true;
           metadata.notification_suppressed = false;
@@ -4492,7 +4534,8 @@ title: !123 value
         await page.setViewportSize({ width: 1440, height: 900 });
         const delegationEventContract = await page.evaluate(() => {
           const callback = document.querySelector(".delegation-callback-event");
-          const started = document.querySelector(".delegation-event-header");
+          const started = [...document.querySelectorAll(".delegation-started-event .delegation-event-header")]
+            .find((header) => header.querySelector(".delegation-event-brand")?.textContent === "STARTED");
           const callbackRect = callback?.getBoundingClientRect();
           const messageListRect = document.querySelector(".message-list")?.getBoundingClientRect();
           return {
@@ -6177,14 +6220,25 @@ title: !123 value
           }));
           throw new Error(`Unscheduled agent missing from combined list: ${JSON.stringify(agentState)} / ${error.message}`);
         }
+        // Both views group delegated children. Compare their rendered order
+        // with all groups expanded, rather than a flat sort of raw records.
+        await agentsRegressionPage.click("#header-mark");
+        await agentsRegressionPage.waitForSelector("#unread-agent-search", { state: "visible" });
+        await agentsRegressionPage.evaluate(() => showAllAgentsInSwitcher());
+        const relevancyGroups = agentsRegressionPage.locator("[data-toggle-switcher-delegation]");
+        if (await relevancyGroups.getAttribute("aria-expanded") === "false") await relevancyGroups.click();
         const relevancyOrder = await agentsRegressionPage.evaluate(() => ({
           sort: state.agentSort,
           direct: Boolean(document.querySelector(".agent-flat-list")),
           visible: Array.from(document.querySelectorAll(".agent-flat-list [data-open-agent]"), (row) => row.dataset.openAgent),
-          expected: currentAgents().sort(compareQuickSwitchAgents).map((agent) => agent.key),
+          expected: Array.from(document.querySelectorAll(".unread-panel-list [data-open-agent]"), (row) => row.dataset.openAgent),
+          allKeys: currentAgents().map((agent) => agent.key).sort(),
         }));
+        await agentsRegressionPage.keyboard.press("Escape");
         if (relevancyOrder.sort !== "relevancy" || !relevancyOrder.direct ||
-            relevancyOrder.visible.join("|") !== relevancyOrder.expected.join("|")) {
+            relevancyOrder.visible.join("|") !== relevancyOrder.expected.join("|") ||
+            [...new Set(relevancyOrder.expected)].sort().join("|") !== relevancyOrder.allKeys.join("|") ||
+            relevancyOrder.expected.length !== relevancyOrder.allKeys.length) {
           throw new Error(`Agents default no longer matches quick-switch Relevancy: ${JSON.stringify(relevancyOrder)}`);
         }
         await agentsRegressionPage.fill("#agent-filter", "unscheduled");
@@ -6216,6 +6270,8 @@ title: !123 value
           { timeout: 10_000 }
         );
         await assertQuickAgentPriority(agentsRegressionPage);
+        const searchGroups = agentsRegressionPage.locator("[data-toggle-switcher-delegation]");
+        if (await searchGroups.getAttribute("aria-expanded") === "false") await searchGroups.click();
         const switcherAgentCount = await agentsRegressionPage.locator(".switcher-agent-row").count();
         if (switcherAgentCount < 2) {
           throw new Error(`Agent switcher did not include both smoke agents: ${switcherAgentCount}`);
@@ -6228,11 +6284,14 @@ title: !123 value
               const title = row.querySelector(":scope > .row-title");
               const avatarRect = avatar?.getBoundingClientRect();
               const titleRect = title?.getBoundingClientRect();
+              const rowLeft = row.getBoundingClientRect().left;
+              // Delegated rows have an intentional tree indent. Their inner
+              // avatar/title columns must still align within each row.
               return avatarRect && titleRect ? {
-                avatarLeft: avatarRect.left,
+                avatarLeft: avatarRect.left - rowLeft,
                 avatarWidth: avatarRect.width,
                 avatarHeight: avatarRect.height,
-                titleLeft: titleRect.left,
+                titleLeft: titleRect.left - rowLeft,
                 gap: titleRect.left - avatarRect.right,
               } : null;
             };
@@ -11013,6 +11072,21 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       run_conversation_browser_smoke!(dir:, base_url:, agent_key: "", browser:, test_name: "project_metadata_lifecycle_smoke", metadata_fixture:)
       next
     end
+    if ENV["TYCHO_REMOTE_UI_DELEGATION_FIXTURE_ONLY"] == "1"
+      idle_parent = create_agent(base_url, name: "Idle fixture parent")
+      idle_child = create_agent(base_url, name: "Idle fixture child", parent_agent_key: idle_parent)
+      send_agent_message(base_url, idle_child, "Synthetic accepted message", parent_agent_key: idle_parent)
+      start_agent(base_url, idle_child, parent_agent_key: idle_parent)
+      wait_for_delegation_callback(base_url, idle_parent)
+      parent = create_agent(base_url, name: "Active fixture parent", prompt: "ORCHESTRATOR_SMOKE_HOLD")
+      child = create_agent(base_url, name: "API contract review", parent_agent_key: parent)
+      send_agent_message(base_url, child, "Synthetic accepted message", parent_agent_key: parent)
+      start_delegated_fixture_review(base_url, fixture, parent, child)
+      wait_for_delegation_callback(base_url, parent)
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key: parent, browser:, test_name: "delegation_fixture_smoke",
+                                     metadata_fixture: { idle_parent_key: idle_parent, child_key: child })
+      next
+    end
     mark_schedule_daemon_running(fixture.fetch(:logs_dir), @server_pid)
     agent_key ||= create_agent(base_url)
     if ENV["TYCHO_REMOTE_UI_MANUAL_SCHEDULE_QUEUE_ONLY"] == "1"
@@ -11206,7 +11280,7 @@ if ENV["TYCHO_REMOTE_UI_CONVERSATION_ANIMATION_ONLY"] == "1"
     orchestrator_agent_key = create_agent(
       base_url,
       name: "Checkout Orchestrator",
-      prompt: "Coordinate three focused reviews and synthesize the result."
+      prompt: "ORCHESTRATOR_SMOKE_HOLD Coordinate three focused reviews and synthesize the result."
     )
     delegated_agent_key = create_agent(
       base_url,
@@ -11274,7 +11348,7 @@ if ENV["TYCHO_REMOTE_UI_CONVERSATION_ANIMATION_ONLY"] == "1"
       raise
     end
     archive_agent(base_url, archived_agent_key)
-    start_agent(base_url, delegated_agent_key, parent_agent_key: orchestrator_agent_key)
+    start_delegated_fixture_review(base_url, fixture, orchestrator_agent_key, delegated_agent_key)
     wait_for_delegation_callback(base_url, orchestrator_agent_key)
     queue_entry_ids = []
     start_agent(base_url, queue_agent_key)
