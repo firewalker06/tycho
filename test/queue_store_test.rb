@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "tmpdir"
+require_relative "../lib/hq/domain/agent_archive_store"
 require_relative "../lib/hq/domain/agent_store"
 require_relative "../lib/hq/domain/agent_list_cache"
 
@@ -8,6 +9,12 @@ module QueueStoreTest
   module_function
 
   def run!
+    assert_empty_migration_cleanup
+    assert_cleanup_pending_transactions
+    assert_cleanup_placeholder_intent
+    assert_cleanup_limit
+    assert_cleanup_recovery
+    assert_cleanup_concurrency
     assert_lossless_migration
     assert_restart_boundaries
     assert_concurrent_mutations
@@ -53,6 +60,208 @@ module QueueStoreTest
         "native_start_acknowledged" => true
       } }]
     }
+  end
+
+  def seed_cleanup(queues, store)
+    records = 103.times.map { |index| { "key" => format("empty-%03d", index) } }
+    store.send(:with_exclusive_lock) { queues.write(records) }
+    records
+  end
+
+  def assert_empty_migration_cleanup
+    with_store do |queues, store, dir|
+      records = seed_cleanup(queues, store)
+      archive_root = File.join(dir, "archives")
+      archive = File.join(archive_root, "synthetic-empty-000", "agent_manifest.json")
+      archived = store.send(:with_exclusive_lock) { queues.write([{ "key" => "empty-000", "creation_request" => { "id" => "request", "fingerprint" => "proof" } }], target: archive) }.first
+      state = queues.read
+      state["migrations"]["missing"] = HQ::QueueStore::EMPTY_MIGRATION.dup
+      state["migrations"]["placeholder"] = HQ::QueueStore::EMPTY_MIGRATION.dup
+      state["agents"]["placeholder"] = {}
+      %w[prompt_queue prompt_queue_claim queue_work runs request_receipts unknown].each do |field|
+        key = "evidence-#{field}"
+        state["migrations"][key] = HQ::QueueStore::EMPTY_MIGRATION.dup
+        state["agents"][key] = { "generation" => "stable", field => { "proof" => "keep" } }
+      end
+      state["migrations"]["nonempty"] = HQ::QueueStore::EMPTY_MIGRATION.merge("entry_ids" => ["old"])
+      state["agents"]["nonempty"] = { "generation" => "stable" }
+      HQ::FileStore.write_json(HQ::QueueStore.path, state)
+      before = [HQ::AGENTS_FILE, archive, HQ::QueueStore.path].to_h { |path| [path, File.binread(path)] }
+      report = store.cleanup_empty_queue_migrations
+      assert(report["candidates"] == %w[empty-000 empty-001 empty-002], "wrong bounded candidates")
+      assert(report["retained"]["missing"] == "missing_queue" && report["retained"]["placeholder"] == "missing_queue", "missing queues treated as empty")
+      assert(before.all? { |path, bytes| File.binread(path) == bytes }, "dry run wrote data")
+      applied = store.cleanup_empty_queue_migrations(apply: true)
+      after = JSON.parse(File.read(HQ::QueueStore.path))
+      assert(applied["removed"] == report["candidates"], "apply differs from dry run")
+      assert(after["agents"] == state["agents"], "cleanup changed queue authority")
+      expected = state["migrations"].reject { |key, _| report["candidates"].include?(key) }
+      assert(after["migrations"] == expected, "cleanup removed protected receipts")
+      assert(File.binread(archive) == before[archive] && File.binread(HQ::AGENTS_FILE) == before[HQ::AGENTS_FILE], "cleanup changed references or request proof")
+      assert(queues.hydrate(archived)["creation_request"]["id"] == "request", "archive receipt lost")
+      archives = HQ::AgentArchiveStore.new(root: archive_root)
+      assert(archives.find("empty-000").agent.key == "empty-000", "archive no longer loads")
+      assert(archives.find_creation_request("request").agent.key == "empty-000", "duplicate creation proof lost")
+      assert(store.read_snapshot.first.size == records.size, "active agents no longer load")
+      assert(store.cleanup_empty_queue_migrations(apply: true)["removed"].empty?, "cleanup was not idempotent")
+      store.send(:with_exclusive_lock) { queues.write(records + [{ "key" => "created-after-cleanup" }]) }
+      assert(queues.read["migrations"].keys.grep(/empty-00[012]/).empty?, "removed receipts recreated")
+      begin
+        queues.hydrate({ "key" => "missing", "queue_ref" => "missing", "queue_generation" => nil })
+        raise "missing queue accepted"
+      rescue IOError => e
+        raise unless e.message == "Missing queue record for missing"
+      end
+    end
+  end
+
+  def assert_cleanup_pending_transactions
+    %i[cleanup agents archive].each do |operation|
+      with_store do |queues, store, dir|
+        seed_cleanup(queues, store)
+        archive = File.join(dir, "archives", "synthetic-empty-000", "agent_manifest.json")
+        archive_record = store.send(:with_exclusive_lock) do
+          queues.write([{ "key" => "empty-000", "creation_request" => { "id" => "request", "fingerprint" => "proof" } }], target: archive).first
+        end
+        state = queues.read
+        pending = Marshal.load(Marshal.dump(state))
+        pending["migrations"].delete("empty-000")
+        journal = if operation == :cleanup
+                    { "version" => 2, "operation" => "migration_cleanup", "queues" => pending }
+                  else
+                    target = operation == :agents ? HQ::AGENTS_FILE : archive
+                    records = operation == :agents ? JSON.parse(File.read(target)) : archive_record
+                    records = Marshal.load(Marshal.dump(records))
+                    record = operation == :agents ? records.first : records
+                    record["name"] = "Recovered synthetic agent"
+                    { "version" => 1, "target" => target, "records" => records, "queues" => pending }
+                  end
+        HQ::FileStore.write_json(queues.journal_path, journal, backup: false)
+        paths = [HQ::AGENTS_FILE, archive, HQ::QueueStore.path, queues.journal_path]
+        paths += paths.map { |path| HQ::FileStore.backup_path(path) }
+        before = paths.to_h { |path| [path, File.exist?(path) ? File.binread(path) : nil] }
+        2.times do
+          begin
+            store.cleanup_empty_queue_migrations
+            raise "dry run accepted pending #{operation} transaction"
+          rescue IOError => e
+            assert(e.message.include?("Queue transaction needs recovery"), "dry run returned an unclear pending error")
+          end
+          assert(before.all? { |path, bytes| (File.exist?(path) ? File.binread(path) : nil) == bytes },
+                 "dry run installed pending #{operation} transaction or changed backup bytes")
+        end
+        report = store.cleanup_empty_queue_migrations(apply: true)
+        assert(report["mode"] == "apply" && report["removed"] == %w[empty-001 empty-002], "apply did not plan from recovered state")
+        assert(!File.exist?(queues.journal_path) && queues.read["migrations"].size == 100, "apply did not recover and finish")
+        assert(queues.read["agents"] == state["agents"], "apply recovery changed queue authority")
+        assert(store.read_snapshot.first.size == 103, "apply recovery broke active loading")
+        archives = HQ::AgentArchiveStore.new(root: File.dirname(File.dirname(archive)))
+        assert(archives.find_creation_request("request").agent.key == "empty-000", "apply recovery broke archive request proof")
+        unless operation == :cleanup
+          actual = JSON.parse(File.read(journal["target"]))
+          assert(actual == journal["records"], "apply did not recover version 1 target")
+        end
+      end
+    end
+  end
+
+  def assert_cleanup_placeholder_intent
+    with_store do |queues, store, _dir|
+      seed_cleanup(queues, store)
+      state = queues.read
+      state["agents"]["placeholder"] = {}
+      journal = { "version" => 2, "operation" => "migration_cleanup", "queues" => state }
+      HQ::FileStore.write_json(queues.journal_path, journal)
+      records = JSON.parse(File.read(HQ::AGENTS_FILE))
+      records << { "key" => "placeholder", "queue_ref" => "placeholder", "queue_generation" => nil }
+      HQ::FileStore.write_json(HQ::AGENTS_FILE, records)
+      begin
+        store.read_snapshot
+        raise "pending cleanup treated referenced placeholder as empty"
+      rescue IOError => e
+        raise unless e.message == "Missing queue record for placeholder"
+      end
+      store.send(:with_exclusive_lock) { nil }
+      begin
+        store.read_snapshot
+        raise "recovered cleanup treated referenced placeholder as empty"
+      rescue IOError => e
+        raise unless e.message == "Missing queue record for placeholder"
+      end
+    end
+  end
+
+  def assert_cleanup_limit
+    with_store do |queues, store, _dir|
+      state = { "version" => 1, "agents" => {}, "migrations" => {} }
+      1105.times do |index|
+        key = format("bounded-%04d", index)
+        state["agents"][key] = { "generation" => "stable" }
+        state["migrations"][key] = HQ::QueueStore::EMPTY_MIGRATION.dup
+      end
+      HQ::FileStore.write_json(HQ::QueueStore.path, state)
+      report = store.cleanup_empty_queue_migrations(apply: true)
+      assert(report["removed"].size == 1000 && report["retained"].values.count("per_run_limit") == 5, "delete limit ignored")
+      assert(store.cleanup_empty_queue_migrations(apply: true)["removed"].size == 5, "remaining candidates lost")
+      assert(queues.read["migrations"].size == 100, "retention window ignored")
+      state["migrations"] = []
+      HQ::FileStore.write_json(HQ::QueueStore.path, state)
+      begin
+        store.cleanup_empty_queue_migrations(apply: true)
+        raise "invalid receipts accepted"
+      rescue IOError
+        assert(!File.exist?(queues.journal_path), "invalid receipts produced intent")
+      end
+    end
+  end
+
+  def assert_cleanup_recovery
+    %i[journal queues].each do |boundary|
+      with_store do |queues, store, _dir|
+        seed_cleanup(queues, store)
+        pid = fork do
+          original = HQ::FileStore.method(:write_json)
+          HQ::FileStore.define_singleton_method(:write_json) do |path, value, **options|
+            result = original.call(path, value, **options)
+            stop = boundary == :journal ? queues.journal_path : HQ::QueueStore.path
+            Process.exit!(86) if path == stop
+            result
+          end
+          store.cleanup_empty_queue_migrations(apply: true)
+          Process.exit!(87)
+        end
+        _, status = Process.wait2(pid)
+        assert(status.exitstatus == 86, "cleanup crash boundary not reached")
+        assert(store.read_snapshot.first.size == 103, "snapshot failed with cleanup intent")
+        store.send(:with_exclusive_lock) { nil }
+        assert(queues.read["migrations"].size == 100 && !queues.recover!, "cleanup recovery failed")
+      end
+    end
+  end
+
+  def assert_cleanup_concurrency
+    with_store do |queues, store, _dir|
+      seed_cleanup(queues, store)
+      reader, writer = IO.pipe
+      pid = fork do
+        reader.close
+        store.send(:with_exclusive_lock) do
+          state = queues.read
+          state["agents"]["empty-000"]["prompt_queue"] = [{ "id" => "accepted", "prompt" => "Synthetic" }]
+          HQ::FileStore.write_json(HQ::QueueStore.path, state)
+          writer.write("ready")
+          writer.close
+          sleep 0.1
+        end
+        Process.exit!(0)
+      end
+      writer.close
+      reader.read
+      report = store.cleanup_empty_queue_migrations(apply: true)
+      Process.wait(pid)
+      assert(report["retained"]["empty-000"] == "queue_evidence", "cleanup ignored concurrent work")
+      assert(queues.read.dig("agents", "empty-000", "prompt_queue", 0, "id") == "accepted", "concurrent prompt lost")
+    end
   end
 
   def assert_legacy_empty_queue_placeholders

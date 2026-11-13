@@ -24,6 +24,19 @@ verification, and unsupported features. The shared Remote UI harness label now
 includes the official DeepSeek whale icon, with unchanged upstream SVG bytes
 and palette-aware rendering in Settings and existing agent surfaces.
 
+## Empty queue migration audit retention
+
+The local `queue-work cleanup-migrations` command reports obsolete empty
+migration receipts. Explicit apply retains 100 eligible receipts and removes
+at most 1,000 per run under the lifecycle lock and recoverable queue journal.
+It preserves all queue records, generations, archive references, creation
+receipts, and completion evidence. Missing queues never qualify as empty.
+Dry run never installs a pending transaction: it returns a recovery-required
+error without a plan and leaves queue, agent, archive, journal, and backup data
+unchanged. Apply retains lifecycle recovery before it plans cleanup.
+See [retention policy](QUEUE_MIGRATION_RETENTION.md) for selection and limits.
+No operator cleanup is part of this change.
+
 ## Scheduler startup intent
 
 Daemon ticks preserve paused and stopped schedule state. A stopped target now
@@ -50,6 +63,15 @@ link with the existing gear icon at the bottom of the desktop sidebar; mobile
 Settings stays in the context menu.
 Schedule save, cancel, and Back actions return to Schedules. The Now empty-state
 follow-up remains separate in card #860.
+
+## Manual queue delivery with inactive schedules
+
+The agent queue offers a one-time selected or full delivery while its linked
+schedule is paused or stopped. CLI and API calls use the same locked selection
+path. Schedule state remains unchanged and later automatic dispatch stays off.
+This action reports inquiry, workspace, running-agent, and recovery blockers
+before saving selection. Failed launches retain claims for explicit Retry.
+See [Remote Sessions queue processing](REMOTE_SERVER.md#post-agentskeyprompt-queueprocess).
 
 ## Central queue storage
 

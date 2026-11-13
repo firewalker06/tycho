@@ -28,7 +28,8 @@ def write_fixture(dir)
   config_dir = File.join(dir, "config")
   home_dir = File.join(dir, "home")
   tycho_home_dir = File.join(dir, "tycho-home")
-  workspace = File.join(dir, "workspace")
+  workspace_name = ENV["TYCHO_REMOTE_UI_MARKDOWN_IMAGES_ONLY"] == "1" ? "workspace #1 ? %23" : "workspace"
+  workspace = File.join(dir, workspace_name)
   FileUtils.mkdir_p(config_dir)
   FileUtils.mkdir_p(home_dir)
   FileUtils.mkdir_p(tycho_home_dir)
@@ -715,6 +716,10 @@ def write_summary_idle_stop_fixture(logs_dir, agent_key)
   File.write(agent.fetch("log_path").sub(/\.raw\.log\z/, ".memory.jsonl"), events.map { |event| JSON.generate(event) }.join("\n") + "\n")
 end
 
+def markdown_image_reference(path)
+  URI.encode_www_form_component(path).gsub("%2F", "/").gsub("+", "%20")
+end
+
 def run_attachment_preview_smoke!(dir:, base_url:, agent_key:, fixture:, browser:)
   agents = JSON.parse(File.read(File.join(fixture.fetch(:logs_dir), "managed_agents.json")))
   agent = agents.find { |item| item["key"] == agent_key }
@@ -734,21 +739,122 @@ def run_attachment_preview_smoke!(dir:, base_url:, agent_key:, fixture:, browser
     records << { "type" => "file", "title" => "Schedule JSON", "path" => File.join(workspace, "schedule-resume.json"), "created_at" => Time.now.iso8601 }
     records << { "type" => "file", "title" => "Events JSONL", "path" => File.join(workspace, "events.jsonl"), "created_at" => Time.now.iso8601 }
   end
+  if ENV["TYCHO_REMOTE_UI_MARKDOWN_IMAGES_ONLY"] == "1"
+    records << { "type" => "file", "title" => "Registered absolute image", "path" => File.join(dir, "registered image.svg"), "created_at" => Time.now.iso8601 }
+    [
+      ["Reserved image paths", File.join(workspace, "docs #1 ? 100%", "report.md")],
+      ["Literal percent image paths", File.join(workspace, "docs%23", "report.md")],
+      ["Registered reserved name", File.join(dir, "registered #1 ? %23.svg")],
+      ["Decode once", File.join(dir, "literal%23.svg")]
+    ].each { |title, path| records << { "type" => "file", "title" => title, "path" => path, "created_at" => Time.now.iso8601 } }
+  end
   File.write(agent.fetch("log_path").sub(/\.raw\.log\z/, ".attachments.json"), JSON.pretty_generate("attachments" => records))
   File.write(File.join(workspace, "docs", "guide.md"), "# Release review\n\nThe release is ready for operator review.\n\n" + 80.times.map { |i| "## Check #{i + 1}\n\nThe attachment preview keeps this document beside the conversation and Summary." }.join("\n\n"))
+  if ENV["TYCHO_REMOTE_UI_MARKDOWN_IMAGES_ONLY"] == "1"
+    image = <<~SVG.strip
+      <svg xmlns="http://www.w3.org/2000/svg" width="640" height="180" viewBox="0 0 640 180"><rect width="640" height="180" rx="16" fill="#303b50"/><rect x="24" y="24" width="8" height="132" rx="4" fill="#88c0d0"/><text x="56" y="64" font-family="sans-serif" font-size="26" fill="#eceff4">Local Markdown image</text><text x="56" y="102" font-family="sans-serif" font-size="18" fill="#d8dee9">Synthetic fixture / authenticated resource</text><circle cx="572" cy="120" r="26" fill="#a3be8c"/><path d="m560 120 9 9 16-19" stroke="#303b50" stroke-width="5" fill="none"/></svg>
+    SVG
+    File.write(File.join(workspace, "docs", "local image.svg"), image)
+    File.write(File.join(dir, "registered image.svg"), image.sub("Local Markdown image", "Registered absolute image").sub("#88c0d0", "#b48ead"))
+    FileUtils.mkdir_p(File.join(workspace, ".ssh"))
+    FileUtils.cp(File.join(workspace, "diagram.png"), File.join(workspace, ".ssh", "secret.png"))
+    FileUtils.cp(File.join(workspace, "diagram.png"), File.join(dir, "outside.png"))
+    File.symlink(File.join(dir, "outside.png"), File.join(workspace, "escape.png"))
+    reserved_dir = File.join(workspace, "docs #1 ? 100%")
+    FileUtils.mkdir_p(reserved_dir)
+    blue = <<~SVG.strip
+      <svg xmlns="http://www.w3.org/2000/svg" width="640" height="64"><rect width="640" height="64" fill="#2e6bcc"/><text x="20" y="40" font-size="24" font-family="sans-serif" fill="white">Correct blue image: reserved path</text></svg>
+    SVG
+    red = blue.sub("#2e6bcc", "#ff0000").sub("Correct blue image: reserved path", "Wrong red image: root fallback")
+    green = blue.sub("#2e6bcc", "#00ff00").sub("Correct blue image: reserved path", "PRIVATE_IMAGE_SENTINEL")
+    percent_dir = File.join(workspace, "docs%23")
+    hash_dir = File.join(workspace, "docs#")
+    FileUtils.mkdir_p(percent_dir)
+    FileUtils.mkdir_p(hash_dir)
+    percent_blue = blue.sub("Correct blue image: reserved path", "Literal %23 image: correct blue")
+    hash_red = red.sub("Wrong red image: root fallback", "Actual # image: distinct red")
+    File.write(File.join(percent_dir, "image%23.svg"), percent_blue)
+    File.write(File.join(percent_dir, "image#.svg"), hash_red)
+    File.write(File.join(hash_dir, "image%23.svg"), hash_red)
+    File.write(File.join(percent_dir, "%2e%2e%2fescape.svg"), percent_blue)
+    File.write(File.join(workspace, "image%23.svg"), percent_blue)
+    File.write(File.join(workspace, "image#.svg"), hash_red)
+    File.write(File.join(percent_dir, "report.md"), <<~MARKDOWN)
+      # Literal percent and actual hash images
+
+      ![Literal percent filename](image%2523.svg)
+
+      ![Actual hash filename](image%23.svg)
+
+      ![Literal percent directory](../docs%2523/image%2523.svg)
+
+      ![Actual hash directory](../docs%23/image%2523.svg)
+
+      ![Literal encoded-looking traversal](%252e%252e%252fescape.svg)
+
+      ![Blocked private alias](../public.svg)
+
+      ![Blocked direct private file](../.ssh/private.svg)
+
+      ![Blocked external alias](../escape.png)
+    MARKDOWN
+    File.write(File.join(reserved_dir, "image.svg"), blue)
+    File.write(File.join(reserved_dir, "image#?%.svg"), blue)
+    File.write(File.join(workspace, "image.svg"), red)
+    File.write(File.join(workspace, ".ssh", "private.svg"), green)
+    File.write(File.join(dir, "registered #1 ? %23.svg"), blue)
+    File.write(File.join(dir, "literal%23.svg"), blue)
+    File.write(File.join(dir, "literal#.svg"), red)
+    File.symlink(File.join(reserved_dir, "image.svg"), File.join(workspace, "safe-internal.svg"))
+    File.symlink(reserved_dir, File.join(workspace, "safe-docs"))
+    File.symlink(File.join(workspace, ".ssh", "private.svg"), File.join(workspace, "public.svg"))
+    File.symlink(File.join(workspace, ".ssh"), File.join(workspace, "private-docs"))
+    File.write(File.join(reserved_dir, "report.md"), <<~MARKDOWN)
+      # Reserved paths and private targets
+
+      ![Correct document directory](image.svg)
+
+      ![Encoded reserved name](image%23%3F%25.svg?cache=1#preview)
+
+      ![Registered reserved name](#{markdown_image_reference(File.join(dir, "registered #1 ? %23.svg"))})
+
+      ![Decoded once](#{markdown_image_reference(File.join(dir, "literal%23.svg"))})
+
+      ![Safe internal file link](../safe-internal.svg)
+
+      ![Safe internal directory link](../safe-docs/image.svg)
+
+      ![Blocked private file alias](../public.svg)
+
+      ![Blocked private directory alias](../private-docs/private.svg)
+
+      ![Blocked external alias](../escape.png)
+    MARKDOWN
+    File.write(File.join(workspace, "docs", "guide.md"), "# Local image report\n\n![Relative image](local%20image.svg)\n\n![Absolute image](#{dir}/registered%20image.svg)\n\n![Blocked remote](https://example.test/tracker.png)\n\n![Blocked traversal](../../outside.png)\n\n![Blocked symlink](../escape.png)\n\n![Blocked secret](../.ssh/secret.png)\n")
+  end
   detail = JSON.parse(Net::HTTP.get(URI("#{base_url}/agents/#{agent_key}"))).fetch("agent")
   memory_path = agent.fetch("log_path").sub(/\.raw\.log\z/, ".memory.jsonl")
   File.open(memory_path, "a") do |file|
     %w[preview-prior preview-current].each_with_index do |id, index|
-      file.puts JSON.generate("type" => "run_summary", "content" => "## Release review complete\n\nReview the report and supporting files.\n\n- The conversation stays visible.\n- The selected document opens beside this Summary.", "status" => "success", "created_at" => Time.now.iso8601,
-                              "metadata" => { "summary_id" => id, "run_number" => index + 1, "attachments" => detail.fetch("attachments") })
+      file.puts JSON.generate("type" => "run_summary", "content" => ENV["TYCHO_REMOTE_UI_MARKDOWN_IMAGES_ONLY"] == "1" ? "## Plain image Summary\n\n![Plain Summary file URI](file://#{markdown_image_reference(File.join(workspace, "docs", "local image.svg"))})\n\n![Plain Summary registered](#{dir}/registered%20image.svg)" : "## Release review complete\n\nReview the report and supporting files.\n\n- The conversation stays visible.\n- The selected document opens beside this Summary.", "status" => "success", "created_at" => Time.now.iso8601,
+                              "metadata" => { "summary_id" => id, "run_number" => index + 1, "attachments" => detail.fetch("attachments"),
+                                              "summary_sections" => ENV["TYCHO_REMOTE_UI_MARKDOWN_IMAGES_ONLY"] == "1" && index == 1 ? [{ "type" => "text", "text" => "## Local image Summary\n\n![Summary relative](docs/local%20image.svg)\n\n![Summary absolute](#{dir}/registered%20image.svg)" }] : [] })
+    end
+  end
+  if ENV["TYCHO_REMOTE_UI_MARKDOWN_IMAGES_ONLY"] == "1"
+    File.open(memory_path, "a") do |file|
+      file.puts JSON.generate("type" => "run_summary", "content" => "## Literal percent Summary\n\n![Literal percent image](image%2523.svg)\n\n![Actual hash image](image%23.svg)",
+                              "status" => "success", "created_at" => Time.now.iso8601,
+                              "metadata" => { "summary_id" => "literal-percent-summary", "run_number" => 3, "attachments" => detail.fetch("attachments") })
     end
   end
   other_agent_key = create_agent(base_url, name: "Other preview session")
   node_dir = File.join(dir, "node")
   install_playwright!(node_dir)
   script = File.join(node_dir, "attachment-preview.js")
-  smoke_file = if ENV["TYCHO_REMOTE_UI_JSON_PREVIEW_ONLY"] == "1"
+  smoke_file = if ENV["TYCHO_REMOTE_UI_MARKDOWN_IMAGES_ONLY"] == "1"
+                 "markdown_images_smoke.js"
+               elsif ENV["TYCHO_REMOTE_UI_JSON_PREVIEW_ONLY"] == "1"
                  "json_preview_smoke.js"
                elsif ENV["TYCHO_REMOTE_UI_ATTACHMENT_LOAD_ONLY"] == "1"
                  "attachment_load_smoke.js"
@@ -10860,6 +10966,11 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     raise "Failed to seed inquiry receipt fixture: #{out}" unless status.success?
   end
 
+  if ENV["TYCHO_REMOTE_UI_MANUAL_SCHEDULE_QUEUE_ONLY"] == "1"
+    out, status = Open3.capture2e(env, RbConfig.ruby, "test/browser/manual_schedule_queue_fixture.rb", fixture.fetch(:workspace), chdir: ROOT)
+    raise "Failed to seed manual schedule queue fixture: #{out}" unless status.success?
+  end
+
   if ENV["TYCHO_REMOTE_UI_USAGE_SCOPE_ONLY"] == "1"
     agent_key = "web-agent-usage-scope"
     out, status = Open3.capture2e(env, RbConfig.ruby, "test/browser/usage_scope_fixture.rb", fixture.fetch(:workspace), chdir: ROOT)
@@ -10892,6 +11003,10 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     end
     mark_schedule_daemon_running(fixture.fetch(:logs_dir), @server_pid)
     agent_key ||= create_agent(base_url)
+    if ENV["TYCHO_REMOTE_UI_MANUAL_SCHEDULE_QUEUE_ONLY"] == "1"
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "manual_schedule_queue_smoke")
+      next
+    end
     if ENV["TYCHO_REMOTE_UI_QUEUE_RESULT_ONLY"] == "1"
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "queue_result_smoke")
       next
@@ -11061,7 +11176,7 @@ if ENV["TYCHO_REMOTE_UI_CONVERSATION_ANIMATION_ONLY"] == "1"
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "conversation_animation_smoke")
       exit 0
     end
-    if ENV["TYCHO_REMOTE_UI_ATTACHMENT_PREVIEW_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_ATTACHMENT_FILTER_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_ATTACHMENT_LOAD_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_JSON_PREVIEW_ONLY"] == "1"
+    if ENV["TYCHO_REMOTE_UI_MARKDOWN_IMAGES_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_ATTACHMENT_PREVIEW_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_ATTACHMENT_FILTER_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_ATTACHMENT_LOAD_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_JSON_PREVIEW_ONLY"] == "1"
       run_attachment_preview_smoke!(dir:, base_url:, agent_key:, fixture:, browser:)
       exit 0
     end

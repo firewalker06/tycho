@@ -848,6 +848,8 @@ Response:
 
 Returns one normalized attachment payload. File attachments include `agent_key`, `format`, and `blob_path`; text and Markdown files inline `content` up to the preview limit.
 
+In the Remote UI, local Markdown images in Summary and attachment detail use authenticated image reads. Summary references resolve from the agent workspace. Attachment references resolve from the Markdown file directory. Relative paths, absolute local paths, and local file URIs can select a registered image attachment or a contained workspace image. An image outside the workspace must be registered as an image attachment. Filesystem metadata preserves literal `#`, `?`, and `%` characters. Each Markdown URL reference is decoded once in the browser. The resolved path is then encoded for query transport and decoded once by the HTTP handler. The workspace reader uses that filesystem path literally and does not decode it again. For example, `image%2523.svg` in Markdown selects the literal filename `image%23.svg`, distinct from `image#.svg`. Workspace reads check both the requested alias and the canonical target against the private-path policy. Safe internal symlinks remain readable; private targets and symlinks that leave the workspace are rejected. Remote URLs, inline data images, and unsupported references show an unavailable label. Image reads use the owning server route and credentials. A failed image read can be retried with Refresh. Blob URLs are released when their images leave the view.
+
 ```bash
 curl http://127.0.0.1:7373/attachments/att_abc123
 ```
@@ -1090,6 +1092,27 @@ curl -X POST http://127.0.0.1:7373/agents/web-charlie-agent-8/prompt-queue/proce
   -H "Content-Type: application/json" \
   -d '{"entry_ids":["ENTRY_ID"],"expected_entry_ids":["ENTRY_ID","OTHER_ID"]}'
 ```
+
+For a linked paused or stopped schedule, this is an explicit one-time action.
+The agent UI shows **Process queue once** and **Process selected**. Neither action
+resumes the schedule or changes its saved state. Later automatic queue dispatch
+stays suppressed. Running agents, active or suspended inquiries, busy workspaces,
+unavailable workspaces, and context or claim recovery block this action before
+queue selection is saved. The response gives the blocker as a conflict (409).
+Failed claims retain the existing guarded **Retry** action.
+
+The supported local and remote CLI uses the same selected-entry operation:
+
+```bash
+bin/tycho queue-work process AGENT_KEY --entry-ids ENTRY_ID --expected-entry-ids ENTRY_ID,OTHER_ID --json
+bin/tycho queue-work process AGENT_KEY --entry-ids ENTRY_ID --expected-entry-ids ENTRY_ID,OTHER_ID --server SERVER_KEY --json
+```
+
+The queue payload's `processing.manual_once` reports the linked schedule status
+and a nullable `blocker`. This is a display snapshot. The store checks it again
+under its lock before delivery. A blocked request saves no deferred permission
+to launch later. Existing FIFO claims, authority stamps, native start recovery,
+and expected-entry snapshot checks apply.
 
 ### `POST /agents/{key}/prompt-queue/remove` <!-- local-path-ok -->
 
