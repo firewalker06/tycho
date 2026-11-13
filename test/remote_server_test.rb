@@ -23,6 +23,7 @@ module RemoteServerTest
     assert_remote_agent_lifecycle
     assert_remote_creation_retries
     assert_creation_with_legacy_archives
+    assert_creation_with_damaged_archive_queues
     assert_legacy_archive_timestamp_boundaries
     assert_creation_receipt_requires_complete_archive_scan
     assert_accepted_creation_retry_stays_uncertain
@@ -1504,6 +1505,92 @@ module RemoteServerTest
       end
     end
     puts "legacy timestamp boundaries: ok"
+  end
+
+  def assert_creation_with_damaged_archive_queues
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      FileUtils.mkdir_p(workspace)
+      registry = registry_for(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      attrs = { "project_key" => "web", "prompt" => "Project New Agent",
+                "client_request_id" => "client-project-archive-queue" }
+      accepted = service.create_agent(attrs)
+      service.archive_agent(accepted[:key])
+      healthy = HQ::AgentArchiveStore.new.find(accepted[:key])
+      damaged_dir = File.join(HQ::AGENT_ARCHIVE_DIR, "20261111-090459-unrelated")
+      FileUtils.mkdir_p(damaged_dir)
+      damaged_path = File.join(damaged_dir, "agent_manifest.json")
+      damaged = JSON.parse(File.read(healthy.manifest_path)).merge(
+        "key" => "unrelated", "queue_ref" => "unrelated", "queue_generation" => "missing-generation",
+        "creation_request" => { "id" => "other-request", "fingerprint" => "other-fingerprint" }
+      )
+      File.write(damaged_path, JSON.generate(damaged))
+      queues = JSON.parse(File.read(HQ::QueueStore.path))
+      queues["agents"]["retained-work"] = {
+        "generation" => "retained-generation",
+        "prompt_queue" => [{ "id" => "pending", "prompt" => "Pending work", "source" => "user" }],
+        "queue_work" => { "version" => 1, "batches" => [{
+          "id" => "completed-batch", "state" => "resolved", "delivery_count" => 1,
+          "entries" => [{ "id" => "completed", "prompt" => "Completed work", "source" => "user" }],
+          "dispositions" => { "completed" => { "outcome" => "completed" } }
+        }] }
+      }
+      HQ::FileStore.write_json(HQ::QueueStore.path, queues)
+      queue_before = File.binread(HQ::QueueStore.path)
+      manifest_before = File.binread(damaged_path)
+      replay = HQ::RemoteService.new(registry: registry).create_agent(attrs)
+      assert(replay[:key] == accepted[:key] && replay[:archived], "expected exact archived replay beside a damaged unrelated queue")
+      begin
+        service.create_agent(attrs.merge("prompt" => "Changed options"))
+        raise "expected duplicate conflict"
+      rescue HQ::RemoteService::Error => e
+        assert(e.status == 409, "expected archived duplicate conflict beside damaged queue")
+      end
+      assert(File.binread(HQ::QueueStore.path) == queue_before, "expected replay and conflict to leave queue generations and work unchanged")
+      created = service.create_agent(attrs.merge("client_request_id" => "client-fresh-project-request"))
+      assert(created[:project_key] == "web" && created[:key] != accepted[:key], "expected fresh Project context creation beside damaged archived queue")
+      queue_after_creation = JSON.parse(File.read(HQ::QueueStore.path))
+      original_queues = JSON.parse(queue_before)
+      assert(queue_after_creation["agents"].reject { |key, _| key == created[:key] } == original_queues["agents"],
+             "expected new creation to preserve every existing queue record")
+      assert(!queue_after_creation["agents"].key?("unrelated") && File.binread(damaged_path) == manifest_before,
+             "expected no invented queue record or archive repair")
+      damaged["creation_request"] = JSON.parse(File.read(healthy.manifest_path))["creation_request"]
+      File.write(damaged_path, JSON.generate(damaged))
+      begin
+        service.create_agent(attrs)
+        raise "expected multiple archived receipts to fail closed"
+      rescue HQ::RemoteService::Error => e
+        assert(e.status == 503, "expected duplicate archived receipt identity to remain uncertain")
+      end
+      assert(File.binread(HQ::QueueStore.path) == JSON.pretty_generate(queue_after_creation),
+             "expected duplicate archived receipt lookup to preserve queue records")
+      # A matching archive still requires complete hydration; unknown queue history
+      # must never be projected as an empty queue or accepted as a fresh request.
+      FileUtils.rm_rf(healthy.directory)
+      protected_paths = [HQ::QueueStore.path, HQ::AGENTS_FILE, damaged_path]
+      before = protected_paths.to_h { |path| [path, File.binread(path)] }
+      begin
+        service.create_agent(attrs)
+        raise "expected damaged matching receipt to fail closed"
+      rescue HQ::RemoteService::Error => e
+        assert(e.status == 503 && !e.details&.dig(:creation_rejected), "expected uncertain matching archive to remain blocked")
+      end
+      assert(before.all? { |path, bytes| File.binread(path) == bytes }, "expected failed lookup to leave durable state unchanged")
+      [{}, { "id" => "other-request" }, "invalid"].each do |receipt|
+        damaged["creation_request"] = receipt
+        File.write(damaged_path, JSON.generate(damaged))
+        begin
+          service.create_agent(attrs.merge("client_request_id" => "client-uncertain-manifest"))
+          raise "expected malformed receipt to fail closed"
+        rescue HQ::RemoteService::Error => e
+          assert(e.status == 503, "expected malformed receipt to preserve uncertainty")
+        end
+        assert(File.binread(HQ::QueueStore.path) == before[HQ::QueueStore.path] &&
+               File.binread(HQ::AGENTS_FILE) == before[HQ::AGENTS_FILE], "expected malformed receipt to leave queue and agent state unchanged")
+      end
+    end
   end
 
   def assert_creation_receipt_requires_complete_archive_scan
