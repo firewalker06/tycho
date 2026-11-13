@@ -8339,6 +8339,11 @@ module RemoteServerTest
            marks.include?('opencode: "/harness-logos/opencode-logo-dark.svg"') &&
            marks.include?('pi: "/harness-logos/pi-logo-auto.svg"'),
            "expected every built-in harness mark to map to its packaged upstream file")
+    assert(marks.include?('agy: "/harness-logos/antigravity-icon-one-color.svg"'),
+           "expected Antigravity to use its official one-color product icon")
+    assert(Digest::SHA256.file(File.join(HQ::RemoteUI::HARNESS_LOGO_ROOT, "antigravity-icon-one-color.svg")).hexdigest ==
+           "5b5d0cfd07cb79ba5d299d80b754e7c91d782dc1199811688dec67a0a11ba240",
+           "expected the Antigravity press asset to remain byte-identical")
     %w[
       --ds-background-canvas
       --ds-text-primary

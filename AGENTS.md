@@ -183,3 +183,5 @@ Also call out changes to Bubbletea input handling, bracketed paste behavior, or 
 - `bundle exec ruby test/remote_workspace_image_security_test.rb`: verify authenticated image reads for reserved filenames and safe, private-target, and external symlinks with isolated fixture roots.
 
 - Set `TYCHO_REMOTE_UI_MANUAL_SCHEDULE_QUEUE_ONLY=1` with `bin/remote-ui-smoke` to check one-time selected queue delivery for paused and stopped schedules, unchanged schedule state, later automatic suppression, polling, pending-click protection, and desktop/mobile Dark/Light layout. Use `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the repository for screenshots.
+
+- Set `TYCHO_REMOTE_UI_HARNESS_LOGO_ONLY=1` with `bin/remote-ui-smoke` to check the Antigravity shared mark in Settings, skill rows, agent metadata, agent Settings, archive, and text-only native selectors on desktop/mobile Dark/Light/System. Use `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the repository for screenshots.

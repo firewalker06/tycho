@@ -1064,6 +1064,14 @@ def write_smoke_script(path)
       });
       page.on("pageerror", (error) => errors.push(error.message));
 
+      if (process.env.TYCHO_REMOTE_UI_HARNESS_LOGO_ONLY === "1") {
+        const smoke = require(#{File.join(ROOT, "test", "browser", "harness_logo_smoke.js").inspect});
+        await smoke({ page, baseUrl, captureDir, agentKey });
+        if (errors.length) throw new Error(errors.join("; "));
+        await browser.close();
+        return;
+      }
+
       if (process.env.TYCHO_REMOTE_UI_SETTINGS_ONLY === "1") {
         const smoke = require(#{File.join(ROOT, "test", "browser", "settings_smoke.js").inspect});
         await smoke({ page, baseUrl });
