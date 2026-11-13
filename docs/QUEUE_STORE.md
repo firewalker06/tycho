@@ -79,3 +79,39 @@ claim, delegated-report, retry, native-start, and dispatch-gate tests.
 `test/delegation_runner_test.rb` checks real detached fixture runner completion.
 Run the full `bin/test` suite and follow [Local CI](LOCAL_CI.md) for exact-commit
 signoff.
+
+## Damaged archived queue references
+
+Creation receipt scans read each archive manifest's identity and receipt before
+hydrating only the matching archived agent. An unrelated archive's missing queue
+record therefore does not prevent Project New Agent creation. Invalid or unreadable
+manifests and malformed receipts still block creation with HTTP 503: absence of a
+receipt must be proven. A matching receipt whose queue cannot be hydrated also
+remains unavailable; retry cannot create a second agent. Archive browsing and queue
+hydration retain their existing strict checks.
+
+Recovery is an operator-controlled data repair, not part of receipt lookup. Before
+any repair, stop every writer and preserve a complete immutable copy of the logs
+root described above. Record affected manifest paths, agent keys, queue references
+and generations, file hashes, and the observed error in the incident evidence.
+Work first against an isolated copy. A readable manifest backup can recover receipt
+identity under the existing manifest fallback rules, but it does not recover missing
+queue history.
+
+Restore a missing referenced queue only from authoritative retained evidence of that
+exact agent and generation, such as a consistent full logs snapshot or a validated
+transaction journal. Preserve pending entries, claims, completed batches,
+dispositions, and native-start evidence byte for byte where retained. Validate the
+candidate with `QueueStore#hydrate` against its matching manifest in the isolated
+copy, and verify receipt replay, conflicts, and unrelated creation there before an
+operator authorizes installing a consistent recovery set. Record the source hashes,
+validation results, installed hashes, and rollback snapshot. Do not roll back the
+whole queue file independently: that could replay newer accepted work.
+
+If no exact, consistent queue evidence survives, preserve the damaged manifest and
+report its queue history as unavailable. Do not remove `queue_ref`, change its
+generation, insert an empty queue, delete the archive, or infer completion from a
+migration checksum. Those actions invent history or discard duplicate protection.
+Unrelated creation can proceed with this fix; the damaged matching request must
+remain blocked until authoritative recovery is possible. This procedure grants no
+permission to alter live data or restart services.

@@ -71,7 +71,7 @@ module HQ
       rescue Errno::ENOENT
         return nil
       end
-      records = entries.sort.filter_map do |entry|
+      matches = entries.sort.filter_map do |entry|
         directory = File.join(@root, entry)
         raise ReceiptLookupError, "Archive directory is a symbolic link" if File.symlink?(directory)
         next unless File.stat(directory).directory?
@@ -82,7 +82,17 @@ module HQ
           next
         end
 
-        load_record(path, strict: true)
+        hash = FileStore.read_json(path, fallback: {})
+        unless hash.is_a?(Hash) && hash["key"].is_a?(String) && !hash["key"].empty?
+          raise ReceiptLookupError, "Invalid archive manifest"
+        end
+        receipt = hash["creation_request"]
+        unless receipt.nil? || (receipt.is_a?(Hash) && %w[id fingerprint].all? { |field| receipt[field].is_a?(String) && !receipt[field].empty? })
+          raise ReceiptLookupError, "Invalid archive creation receipt"
+        end
+        # Receipt identity lives in the manifest. Hydrating unrelated archives
+        # needlessly depends on their queue history being intact.
+        [path, hash] if receipt && receipt["id"] == id
       end
       if missing_manifests.positive?
         @receipt_scan_health = {
@@ -93,7 +103,10 @@ module HQ
           "#{missing_manifests} pre-receipt archives have no manifest or backup; archive history is unavailable, not verified healthy"
         end
       end
-      records.find { |record| record.agent.creation_request&.fetch("id", nil) == id }
+      raise ReceiptLookupError, "Multiple archived creation receipts" if matches.length > 1
+
+      match = matches.first
+      load_record(match[0], strict: true, hash: match[1]) if match
     rescue StandardError
       raise ReceiptLookupError, "Could not check creation request. Try again."
     end
@@ -152,8 +165,8 @@ module HQ
       []
     end
 
-    def load_record(path, strict: false)
-      hash = FileStore.read_json(path, fallback: {})
+    def load_record(path, strict: false, hash: nil)
+      hash ||= FileStore.read_json(path, fallback: {})
       if strict && (!hash.is_a?(Hash) || hash["key"].to_s.empty?)
         raise ReceiptLookupError, "Could not check creation request. Try again."
       end

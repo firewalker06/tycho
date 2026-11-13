@@ -117,9 +117,9 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       const response = await creationResponse;
       await page.waitForFunction(() => [...pendingAgentCreations.values()].every(entry => !entry.pending));
       await capture(`legacy-${quick ? "quick" : "project"}-${startAgent ? "run" : "idle"}-response`);
-      receipts.push({ width, flow: "legacy-archive", quick, startAgent, status: response.status() });
+      receipts.push({ width, flow: "archive-missing-queue", quick, startAgent, status: response.status() });
       if (captureDir) fs.writeFileSync(path.join(captureDir, "browser-receipts.json"), JSON.stringify(receipts, null, 2));
-      assert.equal(response.status(), 201, "legacy log-only archive blocked creation");
+      assert.equal(response.status(), 201, "unrelated missing archived queues or legacy history blocked creation");
       const health = (await response.json()).agent.creation_archive_health;
       assert.equal(health.status, "history_unavailable");
       assert.equal(health.missing_manifests, 4);
