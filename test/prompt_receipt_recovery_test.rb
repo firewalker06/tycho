@@ -10,7 +10,8 @@ module PromptReceiptRecoveryTest
       workspace = File.join(dir, "workspace")
       RemoteServerTest.write_project_workspace(workspace)
       registry = RemoteServerTest.registry_for_project(dir, workspace)
-      service = HQ::RemoteService.new(registry:, web_push_notifier: RemoteServerTest::RecordingPushNotifier.new)
+      service = HQ::RemoteService.new(registry:, github_client: RemoteServerTest::FakeGitHubDiffClient.new,
+                                      web_push_notifier: RemoteServerTest::RecordingPushNotifier.new)
       agent = service.create_agent("project_key" => "web", "prompt" => "Synthetic recovery fixture")
       attrs = { "response_mode" => "receipt", "expected_server_id" => agent.dig(:delegation, :server_id),
                 "client_request_id" => "client-recovery-original", "prompt" => "Synthetic reply", "start" => false }

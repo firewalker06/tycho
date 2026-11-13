@@ -3674,6 +3674,11 @@ title: !123 value
         });
         const htmlFrame = page.frameLocator(".html-attachment-frame");
         await htmlFrame.locator("h1").waitFor({ state: "visible", timeout: 10_000 });
+        // The heading can paint before the deferred fixture script runs.
+        await htmlFrame.locator("body").evaluate(() => new Promise((resolve) => {
+          if (document.readyState !== "loading") resolve();
+          else document.addEventListener("DOMContentLoaded", resolve, { once: true });
+        }));
         await htmlFrame.locator("#answer").click();
         const htmlResult = await htmlFrame.locator("#result").textContent();
         if (htmlResult !== "Correct") {
@@ -4463,6 +4468,10 @@ title: !123 value
           state: "visible",
           timeout: 10_000,
         });
+        // Delegated rows now start collapsed. Expand the parent before checking
+        // the new child's visible link; retain the activity topology assertions.
+        const activityGroup = page.locator(`[data-switcher-group='${orchestratorAgentKey}'][aria-expanded='false']`);
+        if (await activityGroup.count()) await activityGroup.click();
         if (await page.locator(`[data-show-linked-agents='${activityLinkedContract.childKey}']`).count() !== 1) {
           throw new Error("Activity polling did not mark a newly delegated child with its parent link");
         }

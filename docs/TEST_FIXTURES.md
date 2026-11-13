@@ -22,7 +22,9 @@ tracked files in `test/fixtures`. Paths inside parsed events are synthetic
 text. They do not require matching files on disk. Archive, attachment,
 workspace, Git, and queue tests create their own data in temporary roots.
 The damaged archive queue coverage in `test/remote_server_test.rb` generates
-its input; no copied agent archive is required.
+its input; no copied agent archive is required. PR receipt recovery uses
+the shared fake GitHub client, so PR removal and replay checks do not need
+an authenticated `gh` session.
 
 ## Optional browser checks
 
