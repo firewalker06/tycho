@@ -1431,10 +1431,19 @@ Adopts an idle, unscheduled managed agent as a normal schedule whose target incl
 
 ### Manual project creation
 
-The Agents page and first-run screen provide **New project**. Enter a name and a
-unique lowercase key, plus an optional group and server folder. An empty folder
-field uses `HOME/tycho-projects/KEY`. Existing folders can be registered without
-changing their files. Custom folder parents must already exist.
+The Agents page and first-run screen provide **New project**. A compact,
+single-column form leads with Name and the exact destination. The key follows
+the name while it matches the generated value; edits are preserved, including
+through reload. **Project key and group** exposes the secondary controls.
+Native validation opens a collapsed section before focusing an invalid field.
+
+The destination shows a home-relative label when the server home is known.
+An empty folder field uses `HOME/tycho-projects/KEY`. **Change folder** accepts
+the full project folder path, not its parent. That folder is created if missing,
+or used as-is if it exists; existing files stay unchanged. Custom folder parents
+must already exist. Form values, focus and disclosure state survive polling;
+text drafts also survive reload. Mobile actions follow the fields so expanded
+options remain visible above the buttons.
 
 `GET /setup/project-creation` returns the server home and starter directory. <!-- local-path-ok -->
 `POST /projects` accepts `name`, `key`, `group`, and `path`, and returns a created project. <!-- local-path-ok -->

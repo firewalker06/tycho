@@ -10407,3 +10407,66 @@ body:has(.inquiry-form-full-screen) {
     color: var(--text);
   }
 }
+
+
+/* Manual creation is one compact flow, independent of editor card grids. */
+.new-project-form {
+  width: 100%;
+  max-width: 720px;
+  margin: 28px auto;
+  padding: 28px;
+  gap: 24px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+}
+.new-project-form .ui-field { gap: 8px; align-content: start; }
+.new-project-form .ui-input {
+  width: 100%;
+  height: 44px;
+  min-height: 44px;
+  padding: 10px 12px;
+}
+.new-project-form .field-label { font-weight: 600; }
+.new-project-form .error-message { margin: 0; color: var(--danger); font-size: 14px; line-height: 1.5; }
+.new-project-form .project-field-help {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.project-destination { display: grid; gap: 8px; min-width: 0; }
+.project-destination-path {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  color: var(--text);
+}
+.new-project-form summary {
+  width: fit-content;
+  min-height: 44px;
+  align-content: center;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 14px;
+}
+.new-project-form summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+.new-project-form details > .ui-field { margin-top: 8px; }
+.project-secondary-options { border-top: 1px solid var(--border); padding-top: 8px; }
+.project-secondary-fields { align-items: start; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px; }
+.project-create-actions { justify-content: flex-end; gap: 12px; }
+@media (max-width: 759px) {
+  .new-project-form { margin: 0 auto; padding: 20px 12px 0; border: 0; background: transparent; gap: 20px; }
+  .project-secondary-fields { grid-template-columns: 1fr; }
+  .project-create-actions {
+    margin: 0 -12px;
+    padding: 12px 12px calc(12px + env(safe-area-inset-bottom, 0px));
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+  }
+  .project-create-actions .primary { flex: 1; }
+}

@@ -49,7 +49,11 @@ No operator cleanup is part of this change.
 
 The Agents page and onboarding screen provide New project with a visible
 `HOME/tycho-projects` starter. Manual creation supports arbitrary valid home
-paths and safe internal aliases. Existing configuration and CLI/agent path
+paths and safe internal aliases. The compact 720px desktop form leads with Name
+and a home-relative destination preview. Editable generated keys and optional
+groups use a native disclosure; a custom path names the final folder, not its
+parent. Dark/Light desktop/mobile browser checks cover drafts, focus, validation
+and existing custom folders. Existing configuration and CLI/agent path
 behavior stay in place.
 
 The operator explicitly approved trusting same-user and root processes.
