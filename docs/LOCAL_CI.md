@@ -8,6 +8,9 @@ replacement for independent review where that is needed.
 
 The [Interaction Profiler](REMOTE_UI_INTERACTION_PROFILER.md) is optional verification for interaction feature work. Its profiling runs and Chrome smoke check are outside `bin/test`, normal CI, and the required signoff. Lightweight configuration and report-code checks remain in `bin/test`; they do not launch Chrome or run feature profiles.
 
+See [test fixtures and prerequisites](TEST_FIXTURES.md) for normal checks,
+optional browser tools, and installed harness checks.
+
 ## Markdown path check
 
 `bin/test` first scans every line of every tracked Markdown file, including
@@ -44,7 +47,7 @@ reproductions, including code containers that end without a closing fence.
 
 ## Test notification safety
 
-`bin/test` gives each command a fresh temporary Tycho home and logs root,
+`bin/test` gives each command a fresh temporary HOME, Tycho home, skills home, and logs root,
 clears inherited config-path overrides and per-run managed-agent variables
 (`TYCHO_NATIVE_RELEASE_PATH`, `TYCHO_AGENT_KEY`, and the others listed in
 `test/support/test_environment.rb`), and preloads

@@ -189,11 +189,14 @@ module PiRpcTransportTest
   end
 
   def assert_installed_pi_handled_input(dir)
+    unless ENV["TYCHO_TEST_INSTALLED_PI"] == "1"
+      puts "pi_rpc_transport_test: installed Pi check skipped (set TYCHO_TEST_INSTALLED_PI=1)"
+      return
+    end
     pi = ENV.fetch("PATH", "").split(File::PATH_SEPARATOR).map { |path| File.join(path, "pi") }
             .find { |path| File.file?(path) && File.executable?(path) }
     unless pi
-      puts "pi_rpc_transport_test: installed Pi check skipped (pi not installed)"
-      return
+      raise "TYCHO_TEST_INSTALLED_PI=1 requires pi on PATH"
     end
     received = File.join(dir, "installed-pi-prompt")
     extension = File.join(dir, "handled.mjs")

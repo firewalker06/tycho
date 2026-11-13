@@ -1,6 +1,6 @@
 {
   "name": "Schedule Resume",
-  "url": "https://macbookpro-gi041.tail952bf7.ts.net/",
+  "url": "http://127.0.0.1:7373/",
   "timeoutMs": 30000,
   "steps": [
     { "action": "open", "url": "/ui#schedules" },
@@ -9,14 +9,14 @@
       "name": "Resume changes to Pause",
       "trigger": {
         "action": "click",
-        "selector": ".schedule-toggle-button[data-schedule-key='secondbrain-memory-reconciliation']",
+        "selector": ".schedule-toggle-button[data-schedule-key='smoke']",
         "text": "Resume"
       },
       "expect": {
-        "selector": ".schedule-toggle-button[data-schedule-key='secondbrain-memory-reconciliation']",
+        "selector": ".schedule-toggle-button[data-schedule-key='smoke']",
         "text": "Pause"
       },
-      "screenshot": ".schedule-row:has([data-schedule-key='secondbrain-memory-reconciliation'])",
+      "screenshot": ".schedule-row:has([data-schedule-key='smoke'])",
       "withinMs": 100
     }
   ]

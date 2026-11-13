@@ -6,7 +6,9 @@ root = File.expand_path("..", __dir__)
 script = <<~'JAVASCRIPT'
   const assert = require("node:assert/strict");
   const { validateConfig, scheduleConfig, renderReport } = require("./bin/remote-ui-interaction-report");
-  validateConfig(require("./config/interaction-tests/schedule-resume.json"));
+  const example = validateConfig(require("./config/interaction-tests/schedule-resume.json"));
+  assert.equal(new URL(example.url).hostname, "127.0.0.1");
+  assert(example.steps[1].trigger.selector.includes("'smoke'"));
   const scenario = () => ({
     url: "http://localhost:7373/",
     steps: [{ action: "measure", name: "Open panel", trigger: { action: "click", selector: "#open" },

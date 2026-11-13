@@ -12,7 +12,7 @@ bin/remote-ui-interaction-report \
   --output path/to/temp/tycho-schedule-report.html
 ```
 
-The checked-in example uses the original live schedule. Change the URL and schedule selectors before you run it on another target. The schedule must show Resume. Actions change application state and are not undone.
+The checked-in example uses a loopback URL and a synthetic schedule key, `smoke`. Start your own temporary fixture server, then set its URL and schedule selectors before you run the example. The example does not start a server. The schedule must show Resume. Actions change application state and are not undone.
 
 For a page with your own controls, the structure is:
 
@@ -92,8 +92,8 @@ Set `TYCHO_REMOTE_TOKEN` in the shell before the command if the server needs a t
 
 ```sh
 bin/remote-ui-interaction-report \
-  --url https://macbookpro-gi041.tail952bf7.ts.net/ \
-  --schedule secondbrain-memory-reconciliation \
+  --url http://127.0.0.1:7373/ \
+  --schedule smoke \
   --output path/to/temp/tycho-schedule-report.html
 ```
 

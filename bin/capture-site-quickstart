@@ -10,6 +10,7 @@ require "socket"
 require "tmpdir"
 require "timeout"
 require "time"
+require_relative "../test/support/test_environment"
 require "uri"
 
 ROOT = File.expand_path("..", __dir__)
@@ -271,6 +272,9 @@ def write_capture_script(path)
 
         await page.keyboard.press("Escape");
         await page.goto(`${process.env.TYCHO_REMOTE_UI_URL}/#agents`, { waitUntil: "networkidle" });
+        // The capture requires project groups; the default sort is a flat list.
+        await page.locator("[data-agent-sort-menu] > summary").click();
+        await page.locator("[data-agent-sort-menu] [data-agent-sort-choice='project_asc']").click();
         const rows = page.locator(".agent-row");
         await rows.first().waitFor({ state: "visible" });
         const rowCount = await rows.count();
@@ -335,6 +339,7 @@ browser = ensure_prerequisites!
 FileUtils.mkdir_p(OUTPUT_DIR)
 
 Dir.mktmpdir("tycho-site-quickstart-capture") do |dir|
+  TestEnvironment.command_env(dir).each { |key, value| value ? ENV[key] = value : ENV.delete(key) }
   running_pids = 2.times.map do
     Process.spawn("sleep", "600", pgroup: true, out: File::NULL, err: File::NULL)
   end
