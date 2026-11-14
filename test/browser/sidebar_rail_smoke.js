@@ -56,13 +56,15 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           node.append(probe);
           const expected = getComputedStyle(probe);
           const result = { shadow: style.boxShadow, border: style.borderLeftWidth,
+            otherBorder: style.borderRightWidth, borderColor: style.borderLeftColor, otherBorderColor: style.borderRightColor,
             background: style.backgroundColor, color: style.color,
             expectedBackground: expected.backgroundColor, expectedColor: expected.color };
           probe.remove();
           return result;
         });
         assert.equal(selection.shadow, "none", "selected icon has no bold left shadow");
-        assert.equal(selection.border, "0px", "selected icon has no left border");
+        assert.equal(selection.border, selection.otherBorder, "selected icon has no thicker left border");
+        assert.equal(selection.borderColor, selection.otherBorderColor, "selected icon has no separate left border color");
         assert.equal(selection.background, selection.expectedBackground, "selected background is preserved");
         assert.equal(selection.color, selection.expectedColor, "selected color is preserved");
         const settings = page.getByRole("link", { name: "Settings", exact: true });
