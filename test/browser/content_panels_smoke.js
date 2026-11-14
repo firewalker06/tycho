@@ -62,17 +62,19 @@ module.exports = async function contentPanelsSmoke({ browser, baseUrl, agentKey,
     const saved = await page.evaluate(() => [document.querySelector(".agent-conversation-scroll").scrollTop, document.querySelector(".summary-attachment-preview-scroll").scrollTop]);
     assert(saved[0] > 0 && saved[1] > 0, `Fixture must scroll: ${saved}`);
     const selection = await page.evaluate(() => state.summaryAttachmentPreview.id);
-    await toggle("summary").click();
-    await check(2);
-    assert(!(await panel("preview").isVisible()));
-    await page.evaluate(async () => { await refresh({ force: true, preserveFocusedWorkspace: true }); render(); });
-    await check(2);
-    await toggle("preview").click();
-    await check(2);
-    assert.equal(await page.evaluate(() => document.querySelector(".summary-attachment-preview-scroll").scrollTop), saved[1]);
-    await toggle("conversation").click();
-    assert.equal(await composer.inputValue(), "Keep this unsent panel draft.");
-    assert.equal(await page.evaluate(() => document.querySelector(".agent-conversation-scroll").scrollTop), saved[0]);
+    for (let cycle = 0; cycle < 12; cycle++) {
+      await toggle("summary").click();
+      await check(2);
+      assert(!(await panel("preview").isVisible()));
+      await page.evaluate(async () => { await refresh({ force: true, preserveFocusedWorkspace: true }); render(); });
+      await check(2);
+      await toggle("preview").click();
+      await check(2);
+      assert.equal(await page.evaluate(() => document.querySelector(".summary-attachment-preview-scroll").scrollTop), saved[1], `Attachment scroll after poll cycle ${cycle}`);
+      await toggle("conversation").click();
+      assert.equal(await composer.inputValue(), "Keep this unsent panel draft.");
+      assert.equal(await page.evaluate(() => document.querySelector(".agent-conversation-scroll").scrollTop), saved[0], `Conversation scroll after poll cycle ${cycle}`);
+    }
     await capture("constrained-conversation");
     await page.setViewportSize({ width: 2200, height: 900 });
     await page.waitForFunction(() => document.querySelector(".agent-workspace")?.dataset.visiblePanels?.split(" ").length === 3);
