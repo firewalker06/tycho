@@ -313,7 +313,7 @@ module.exports = async function attachmentPreviewSmoke({ browser, baseUrl, agent
     await assert(await pane.isVisible(), "Resize back to wide lost the preview");
   }
 
-  for (const [name, width, height] of [["normal", 1440, 900], ["mobile", 390, 844]]) {
+  for (const [name, width, height] of [["normal", 1320, 900], ["mobile", 390, 844]]) {
     await page.setViewportSize({ width, height });
     await page.goto(summaryUrl, { waitUntil: "networkidle" });
     await previewButton("Release review").waitFor({ state: "visible" });
@@ -336,7 +336,7 @@ module.exports = async function attachmentPreviewSmoke({ browser, baseUrl, agent
     await capture(`attachment-detail-${name}`);
   }
   await assert(errors.length === 0, `Browser errors: ${errors.join("; ")}`);
-  if (captureDir) fs.writeFileSync(path.join(captureDir, "attachment-preview-results.json"), JSON.stringify({ layout, wideLayouts, closedLayouts, resizedLayouts, independentScroll, raceResults, errors, tested: ["1920", "2200", "2560", "closed at each wide width", "1760", "1759", "1440", "390", "keyboard", "polling", "run/agent lifecycle", "secure renderers", "missing file", "metadata failure", "repeated-ID metadata/image races after render/polling", "delayed response after navigation"] }, null, 2));
+  if (captureDir) fs.writeFileSync(path.join(captureDir, "attachment-preview-results.json"), JSON.stringify({ layout, wideLayouts, closedLayouts, resizedLayouts, independentScroll, raceResults, errors, tested: ["1920", "2200", "2560", "closed at each wide width", "1760", "1759", "1440", "1320", "390", "keyboard", "polling", "run/agent lifecycle", "secure renderers", "missing file", "metadata failure", "repeated-ID metadata/image races after render/polling", "delayed response after navigation"] }, null, 2));
   console.log(`attachment-preview-smoke: ok ${JSON.stringify(layout)}`);
   await page.close();
 };

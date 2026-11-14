@@ -27,7 +27,10 @@ the existing workspace. Mobile resize moves focus from a hidden panel control
 to the visible composer, or the Summary region for read-only sessions. Panel
 controls retain focus through changed renders. Native scroll anchoring is
 disabled for these panes because their offsets are restored explicitly.
-Navigation rail changes are separate.
+The merged desktop icon rail uses 56 px on split routes. Panel fit still uses
+the measured remaining width, so rail contraction can make three readable
+panels fit at a viewport that previously held two. The rail keeps its Light
+selected fill and has no separate left selection border.
 
 ## DeepSeek Harness
 
