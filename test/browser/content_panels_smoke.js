@@ -56,7 +56,7 @@ module.exports = async function contentPanelsSmoke({ browser, baseUrl, agentKey,
         const labelRect = label.getBoundingClientRect();
         const target = document.getElementById(button.getAttribute("aria-controls"));
         return { key: heading.dataset.contentPanelHeading, collapsed: heading.classList.contains("is-collapsed"),
-          expanded: button.getAttribute("aria-expanded"), name: button.getAttribute("aria-label"), tooltip: button.title,
+          expanded: button.getAttribute("aria-expanded"), collapseUnavailable: button.getAttribute("aria-disabled") === "true", name: button.getAttribute("aria-label"), tooltip: button.title,
           targetVisible: target?.getClientRects().length > 0, targetExists: Boolean(target),
           x: rect.x, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height,
           labelWidth: labelRect.width, labelHeight: labelRect.height };
@@ -82,7 +82,9 @@ module.exports = async function contentPanelsSmoke({ browser, baseUrl, agentKey,
         assert.equal(heading.collapsed, !expanded);
         assert.equal(heading.targetVisible, expanded);
         assert(heading.targetExists && heading.name.includes(expanded ? "Collapse" : "Expand"));
-        assert.equal(heading.tooltip, heading.name);
+        assert.equal(heading.collapseUnavailable, expanded && count === 1);
+        if (heading.collapseUnavailable) assert(heading.tooltip.includes("must remain expanded"), "Unavailable collapse must explain why the panel stays expanded");
+        else assert.equal(heading.tooltip, heading.name);
         if (index) assert(layout.headings[index - 1].right <= heading.x, "Panel headers and strips must remain at distinct panel positions");
         if (!expanded) {
           assert(Math.abs(heading.width - 48) <= 1, `Collapsed strip width: ${JSON.stringify(heading)}`);
@@ -117,6 +119,11 @@ module.exports = async function contentPanelsSmoke({ browser, baseUrl, agentKey,
     assert(await panel("summary").isVisible());
     assert.equal(await page.evaluate(() => parseRoute().summaryId), "preview-prior");
     await toggle("conversation").focus();
+    assert(await toggle("conversation").evaluate(button => {
+      const event = new KeyboardEvent("keydown", { key: "ArrowRight", ctrlKey: true, bubbles: true, cancelable: true });
+      button.dispatchEvent(event);
+      return !event.defaultPrevented && button === document.activeElement;
+    }), "Accordion keys must not take modified browser shortcuts");
     await page.keyboard.press("ArrowRight");
     assert(await toggle("summary").evaluate(button => button === document.activeElement), "Right arrow must focus the next panel control");
     await page.keyboard.press("ArrowLeft");
@@ -247,6 +254,22 @@ module.exports = async function contentPanelsSmoke({ browser, baseUrl, agentKey,
     await toggle("conversation").click();
     await check(1);
     assert(await panel("conversation").isVisible());
+    assert(await toggle("conversation").evaluate(button => button === document.activeElement), "Expanding the only fitting panel must retain keyboard focus");
+    await page.keyboard.press("Space");
+    assert(await panel("conversation").isVisible() && await toggle("conversation").evaluate(button => button === document.activeElement), "The last expanded panel must stay open without dropping focus");
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Space");
+    assert(await panel("summary").isVisible() && await toggle("summary").evaluate(button => button === document.activeElement), "Single-panel accordion must expand Summary with Space and retain focus");
+    assert.equal(await panel("summary").evaluate(element => element.scrollTop), 120);
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Enter");
+    assert(await panel("preview").isVisible() && await toggle("preview").evaluate(button => button === document.activeElement), "Single-panel accordion must expand Attachment with Enter and retain focus");
+    assert.equal(await panel("preview").locator(".summary-attachment-preview-scroll").evaluate(element => element.scrollTop), saved[1]);
+    await page.keyboard.press("Home");
+    await page.keyboard.press("Enter");
+    assert(await panel("conversation").isVisible() && await toggle("conversation").evaluate(button => button === document.activeElement));
+    assert.equal(await panel("conversation").locator(".agent-conversation-scroll").evaluate(element => element.scrollTop), saved[0]);
+    stateResults.push({ theme, case: "single-expanded-panel-keyboard-focus", minimumOne: "preserved", focus: "preserved", scroll: "preserved" });
     await page.evaluate(() => { document.querySelector(".agent-workspace").style.removeProperty("width"); });
     await page.setViewportSize({ width: 390, height: 844 });
     assert(!(await page.locator(".content-panel-controls").isVisible()));

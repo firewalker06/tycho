@@ -10237,6 +10237,11 @@ body:has(.inquiry-form-full-screen) {
     color: var(--text);
   }
 
+  .content-panel-toggle[aria-disabled="true"] {
+    color: var(--muted);
+    cursor: default;
+  }
+
   .content-panel-toggle-icon {
     display: inline-flex;
     flex-shrink: 0;
