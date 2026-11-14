@@ -9762,10 +9762,6 @@ body:has(.inquiry-form-full-screen) {
     font-size: 13px;
   }
 
-  .app-shell > .bottom-nav button.active {
-    box-shadow: inset 3px 0 currentColor;
-  }
-
   /* Split routes use a rail without changing navigation state or preferences. */
   .app-shell:has(> .content.agent-split-active) > .bottom-nav {
     width: 56px;

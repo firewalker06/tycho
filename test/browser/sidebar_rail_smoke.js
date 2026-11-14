@@ -49,7 +49,22 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           assert(parseFloat(await button.evaluate(node => getComputedStyle(node).outlineWidth)) >= 2);
         }
         assert.equal(await nav.locator('[aria-current="page"]').getAttribute("data-tab"), "agents");
-        assert((await nav.locator("button.active").evaluate(node => getComputedStyle(node).boxShadow)).includes("inset"), "active destination has a visible marker in both themes");
+        const selection = await nav.locator("button.active").evaluate(node => {
+          const style = getComputedStyle(node);
+          const probe = document.createElement("span");
+          probe.style.cssText = "background: var(--accent-soft); color: var(--accent)";
+          node.append(probe);
+          const expected = getComputedStyle(probe);
+          const result = { shadow: style.boxShadow, border: style.borderLeftWidth,
+            background: style.backgroundColor, color: style.color,
+            expectedBackground: expected.backgroundColor, expectedColor: expected.color };
+          probe.remove();
+          return result;
+        });
+        assert.equal(selection.shadow, "none", "selected icon has no bold left shadow");
+        assert.equal(selection.border, "0px", "selected icon has no left border");
+        assert.equal(selection.background, selection.expectedBackground, "selected background is preserved");
+        assert.equal(selection.color, selection.expectedColor, "selected color is preserved");
         const settings = page.getByRole("link", { name: "Settings", exact: true });
         assert(await settings.isVisible());
         assert.equal(await settings.getAttribute("title"), "Settings");
