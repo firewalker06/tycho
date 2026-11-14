@@ -17,6 +17,7 @@ description: Manages Tycho projects, managed agents, delegation, and schedules. 
 | **agent** | `agent create <project-key> <prompt>` | Create (and optionally run) a managed agent |
 | | `agent list [<project-key>]` | List agents, optionally filtered by project |
 | | `agent status <agent-key>` | Show full status and metadata |
+| | `agent focus <agent-key>` | Read or replace durable current actionable state |
 | | `agent run <agent-key>` | Start or re-run an existing agent |
 | | `agent stop <agent-key>` | Stop a running agent |
 | | `agent logs <agent-key>` | Print agent log |
@@ -128,6 +129,42 @@ tycho agent list --include-archived # active and archived agents
 ```
 
 Output columns: Key, Project, Name, Parent, Harness, State, Status, Runs.
+
+---
+
+## `tycho agent focus`
+
+Focus is one durable current-state artifact per agent. Use it for actionable
+items, blockers, review requests, or an orchestrator's work list. It persists
+across runs, separately from Summary and Conversation, and appears above the
+Remote UI Conversation. Archive retains read-only Focus history. Clones start
+with empty Focus.
+
+```bash
+tycho agent focus AGENT_KEY --json
+tycho agent focus AGENT_KEY --file path/to/focus.json --revision N --json
+```
+
+Both forms support `--server KEY`. Read returns `revision`, `updated_at`, and
+`sections`. The replacement file contains only the sections array; `--file -`
+reads stdin. Read first, preserve unrelated items, then replace with the returned
+revision. A stale different write conflicts: read again and reapply the change.
+An exact retry of the latest write is safe after an uncertain response. Send
+`[]` to clear. Update when actionable state changes, not merely at every run.
+
+```json
+[{"title":"Ready for Review","subtitle":null,"icon":"todo_done","items":[{"title":"Review changes","subtitle":"PR is ready","attachments":[{"type":"link","title":"Review PR","url":"https://github.com/example/app/pull/12"}]}]}]
+```
+
+Icons: `todo_done`, `todo_working`, `todo_pending`, `blocked`, `note` (default).
+Titles are required plain text; subtitles are optional. Items are ordered arrays.
+Attachments default to `[]`. Links use HTTP or HTTPS without credentials. Files
+use `type: "file"`, `title`, and a `path` that exactly matches an existing agent
+attachment. Focus does not register new file paths. Limits: 20 sections, 100
+items total, 10 attachments per item, 2,000 characters per text field, 128 KiB.
+The command always returns JSON. A change advances the revision; an unchanged
+replacement does not. Do not include Focus updates in every run's prose unless
+the operator needs that notification.
 
 ---
 
