@@ -10287,7 +10287,7 @@ body:has(.inquiry-form-full-screen) {
     max-width: 100%;
   }
 
-  .content-panel-controls :is(.content-panel-toggle, .content-panel-restore):focus-visible {
+  :root .content-panel-controls :is(.content-panel-toggle, .content-panel-restore):focus-visible {
     outline-offset: -4px;
   }
 

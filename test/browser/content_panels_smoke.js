@@ -140,6 +140,19 @@ module.exports = async function contentPanelsSmoke({ browser, baseUrl, agentKey,
     assert(await toggle("preview").evaluate(button => button === document.activeElement), "End must focus the last panel control");
     await page.keyboard.press("Home");
     assert(await toggle("conversation").evaluate(button => button === document.activeElement), "Home must focus the first panel control");
+    const stripFocus = await toggle("conversation").evaluate(button => {
+      const style = getComputedStyle(button);
+      const bounds = button.getBoundingClientRect();
+      const clip = button.closest(".content-panel-heading").getBoundingClientRect();
+      const outside = parseFloat(style.outlineOffset) + parseFloat(style.outlineWidth);
+      return { active: button === document.activeElement, visible: button.matches(":focus-visible"),
+        width: parseFloat(style.outlineWidth), style: style.outlineStyle, offset: parseFloat(style.outlineOffset),
+        contained: bounds.left - outside >= clip.left && bounds.right + outside <= clip.right && bounds.top - outside >= clip.top && bounds.bottom + outside <= clip.bottom };
+    });
+    assert(stripFocus.active && stripFocus.visible && stripFocus.width >= 2 && stripFocus.style === "solid" && stripFocus.contained,
+      `Keyboard outline must remain inside the collapsed strip: ${JSON.stringify({ theme, ...stripFocus })}`);
+    stateResults.push({ theme, case: "unclipped-collapsed-keyboard-outline", ...stripFocus });
+    await capture("constrained-focus");
     await page.keyboard.press("Space");
     assert.equal(await panel("conversation").locator(".agent-conversation-scroll").evaluate(element => element.scrollTop), 180, "First preview must preserve Conversation position before any poll");
     assert.equal(await composer.inputValue(), "Keep this unsent panel draft.");
