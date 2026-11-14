@@ -1433,8 +1433,8 @@ Adopts an idle, unscheduled managed agent as a normal schedule whose target incl
 
 The Agents page and first-run screen provide **New project**. Only **Project Name**
 is initially visible. **Options** contains **Project Key** and **Group**. The key
-follows Name until explicitly edited. Automatic/manual ownership, input, focus
-and disclosure state survive polling and reload. Clearing a custom key does not
+follows Name until explicitly edited. Input values and automatic/manual key
+ownership survive reload. Focus and disclosure state survive polling. Clearing a custom key does not
 restore automatic mode; **Use name** deliberately restores it. Native validation
 opens Options before focusing an invalid field.
 
