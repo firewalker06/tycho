@@ -14,14 +14,23 @@ type: project
 
 ## PWA startup screen
 
-The startup screen uses a fixed Tycho mark with a slow orbit and signal pulse.
-Reduced motion shows a static mark. Appearance Settings has one plain-text
-Startup message field, with a 240-character limit and a useful empty fallback.
+The startup screen selects one of two animations at random once per startup:
+the original rotating mark with radial particles, or three fast sequential
+curved strokes around a fixed mark. Both use equal gaps between the logo dots.
+Reduced motion stops motion and removes particles. Startup text uses responsive
+21–35 pixel bold type. Appearance Settings has a plain-text textarea with one
+candidate per line (8,000 characters total, 240 per displayed candidate). Blank
+lines are ignored; one candidate is selected once per startup. Absent or blank
+lists use “The factory must grow” and “Orchestrating the orchestrator”. Existing
+single-message values remain compatible.
+
 The preference belongs to this browser and server origin, as with appearance;
-it is read inline before app scripts. It does not change project or account
-settings. Inline recovery offers Retry if the app script cannot load. App
-readiness and its existing timeout, offline, authentication, and retry paths
-control the shell. See [Remote UI appearance](REMOTE_UI_APPEARANCE.md).
+it is read safely inline before app scripts. It does not change project or
+account settings. Inline recovery offers Retry if the app script cannot load.
+App readiness and its existing timeout, offline, authentication, and retry paths
+control the shell without an artificial startup delay. Neither Retry nor
+Settings rotates the selected animation mid-load. The preserved legacy source
+snapshot remains intact. See [Remote UI appearance](REMOTE_UI_APPEARANCE.md).
 
 ## DeepSeek Harness
 

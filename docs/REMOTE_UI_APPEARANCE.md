@@ -111,26 +111,43 @@ and System/Dark at desktop and mobile sizes. Set
 screenshots.
 
 
-## Startup message and motion
+## Startup text and motion
 
-Settings > Appearance > Startup message saves one message as plain text, up to
-240 characters. It saves as you type. Empty or unavailable storage uses
-“Loading Tycho…”. Examples: “The factory must grow…” and “Your agent can do what?”.
+Settings > Configuration > Appearance > Startup text saves plain text as you type.
+Use one candidate per line, up to 8,000 characters for the list and 240 characters
+per displayed candidate. Blank lines are ignored. One candidate is selected at
+random once per startup. Absent, all-blank, or unavailable storage uses
+“The factory must grow” and “Orchestrating the orchestrator”. Existing saved
+single messages remain one candidate. The text uses responsive 21–35 pixel bold
+type and wraps long phrases.
+
 This preference uses browser local storage for the current origin (scheme,
 host, and port). Other browsers, devices, and server addresses have separate
 values. It is not an account or project setting. Storage failure is shown in
-Settings; that choice cannot persist for the next startup.
+Settings; that choice cannot persist for the next startup. The inline shell
+reads and renders safe plain text before app scripts run.
 
-The inline shell reads the message before app scripts run. The Tycho mark stays
-fixed while an orange orbit and three signal cells animate with CSS. Reduced
-motion stops both animations. No external animation assets or timed progress
-are used. The shell leaves when the selected route is ready. The existing
-15-second app timeout and offline/error retry paths remain available. An inline
-15-second fallback also offers page reload if the main app script never starts.
-This fallback does not delay readiness. The operating system's installed PWA
-launch image is outside the page's control; this screen begins when HTML loads.
+A separate random choice selects one of two animations once per startup. The
+legacy variant restores the original rotating mark (2 seconds, with a rest for
+the first quarter) and radial particles: 3–5 per burst, 100–200 milliseconds
+between bursts, and 600–900 milliseconds per particle. The curves variant uses
+three sequential curved strokes (1.2 seconds, with 0.4-second offsets) around
+a fixed mark. Both variants use the same corrected logo with equal dot gaps.
+Neither Retry nor Settings changes select another variant during a load.
+Reduced motion stops both animations and removes particles; changing that
+preference during loading takes effect immediately. Particles stop and are
+removed on failure or readiness. The old source snapshot remains preserved.
+No external animation assets or dependencies are used.
+
+The shell leaves when the selected route is ready, without an artificial delay.
+The existing 15-second app timeout and offline/error retry paths remain
+available. An inline 15-second fallback also offers page reload if the main app
+script never starts. This fallback does not delay readiness. The operating
+system's installed PWA launch image is outside the page's control; this screen
+begins when HTML loads.
 
 Run `TYCHO_REMOTE_UI_STARTUP_ONLY=1 bin/remote-ui-smoke` for real Chrome startup,
-Settings persistence, literal text, reduced motion, route readiness, missing
+both random variants, equal dot gaps, Settings persistence, literal text, reduced
+motion, route readiness, missing
 script, and offline retry checks in desktop/mobile Dark/Light. Set
 `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the repository to retain screenshots.

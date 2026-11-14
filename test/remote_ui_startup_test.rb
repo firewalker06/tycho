@@ -11,8 +11,8 @@ module RemoteUIStartupTest
       const vm = require("node:vm");
       const fs = require("node:fs");
       const code = fs.readFileSync("lib/hq/remote_ui/assets/startup.js", "utf8");
-      function fixture(saved, blocked = false, random = 0) {
-        const elements = Object.fromEntries(["shell", "message", "retry"].map(name => ["tycho-boot-" + name, { dataset: {}, setAttribute() {}, classList: { contains: () => false } }]));
+      function fixture(saved, blocked = false, random = 0, animationRandom = 0) {
+        const elements = Object.fromEntries(["shell", "message", "retry", "particles"].map(name => ["tycho-boot-" + name, { dataset: { state: "loading" }, replaceChildren() {}, setAttribute() {}, classList: { contains: () => false } }]));
         let timeout, cleared = false, reloads = 0;
         const values = new Map([["hq.remote.startup-message", saved]]);
         const window = {
@@ -22,12 +22,13 @@ module RemoteUIStartupTest
             setItem: (key, value) => { if (blocked) throw Error("full"); values.set(key, value); },
           },
           setTimeout: (fn, ms) => { assert.equal(ms, 15000); timeout = fn; return 1; },
-          clearTimeout: id => { assert.equal(id, 1); cleared = true; },
+          clearTimeout: id => { if (id === 1) cleared = true; },
+          matchMedia: () => ({ matches: true, addEventListener() {}, removeEventListener() {} }),
           location: { reload: () => reloads++ },
         };
         let draws = 0;
-        vm.runInNewContext(code, { window, Math: { floor: Math.floor, random: () => { draws++; return random; } } });
-        assert.equal(draws, 1, "select exactly once per startup");
+        vm.runInNewContext(code, { window, Math: { floor: Math.floor, random: () => ++draws === 1 ? random : animationRandom } });
+        assert.equal(draws, 2, "select text and animation exactly once per startup");
         return { window, elements, values, expire: () => timeout(), cleared: () => cleared, reloads: () => reloads };
       }
       for (const value of [undefined, null, "", "   "]) {
@@ -51,6 +52,17 @@ module RemoteUIStartupTest
       }
       assert.equal(fixture(" \n\r\n", false, .99).elements["tycho-boot-message"].textContent, "Orchestrating the orchestrator");
       assert.equal(fixture("x".repeat(300)).elements["tycho-boot-message"].textContent.length, 240);
+      for (const [draw, expected] of [[0, "legacy"], [.499, "legacy"], [.5, "curves"], [.999, "curves"]]) {
+        const f = fixture("candidate", false, 0, draw);
+        assert.equal(f.elements["tycho-boot-shell"].dataset.animation, expected);
+        f.window.TychoStartup.setMessage("new text");
+        f.window.TychoStartup.syncMotion();
+        assert.equal(f.window.TychoStartup.getState().animation, expected);
+        f.expire();
+        assert.equal(f.elements["tycho-boot-shell"].dataset.state, "failed");
+        assert.equal(f.elements["tycho-boot-retry"].hidden, false);
+        f.window.TychoStartup.finish();
+      }
       const blocked = fixture("saved", true);
       assert.equal(blocked.elements["tycho-boot-message"].textContent, "The factory must grow");
       blocked.window.TychoStartup.setMessage("next");
