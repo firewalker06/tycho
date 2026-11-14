@@ -59,8 +59,9 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       await page.waitForTimeout(250);
       await page.locator("#tycho-boot-message").filter({ hasText: "Your agent can do what?" }).waitFor();
       assert.equal(await page.locator("#tycho-boot-shell").evaluate(el => el.hidden), false);
-      releaseData(); await page.unroute(/\/servers\/resources(?:\?|$)/);
+      releaseData();
       await page.locator("#tycho-boot-shell").waitFor({ state: "hidden" });
+      await page.unroute(/\/servers\/resources(?:\?|$)/);
       // Safe literal content persists through reload and Settings rendering.
       await page.goto(`${baseUrl}/ui#settings`);
       await input.fill('<img src=x onerror="window.injected=true">');
