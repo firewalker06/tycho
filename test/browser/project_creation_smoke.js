@@ -17,7 +17,9 @@ const { chromium } = require(process.env.TYCHO_PLAYWRIGHT_PATH || "playwright");
   fs.mkdirSync(tychoHome);
   const config = path.join(root, "hq.yml");
   const prompts = path.join(root, "prompts.yml");
-  fs.writeFileSync(config, "projects: []\n");
+  const existingProjectPath = path.join(home, "tycho-projects", "existing");
+  fs.mkdirSync(existingProjectPath, { recursive: true });
+  fs.writeFileSync(config, `projects:\n  - key: existing\n    name: Existing project\n    path: ${JSON.stringify(existingProjectPath)}\n    agent: codex\n`);
   fs.writeFileSync(prompts, 'custom: "Inspect this workspace."\n');
   const socket = net.createServer();
   await new Promise(resolve => socket.listen(0, "127.0.0.1", resolve));
@@ -105,15 +107,81 @@ const { chromium } = require(process.env.TYCHO_PLAYWRIGHT_PATH || "playwright");
       await name.fill(label); await name.fill(`${label} project`);
       assert.equal(await key.inputValue(), label);
       await page.getByLabel("Group", { exact: true }).fill("Design");
-      await options.locator("summary").click();
-      // A definite server rejection is editable and cannot show success.
-      await page.route("**/projects", route => route.request().method() === "POST"
-        ? route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ error: "Choose a different project name", details: { creation_rejected: true } }) }) : route.continue(), { times: 1 });
-      await create.click();
-      await page.getByRole("alert").filter({ hasText: "Choose a different project name" }).waitFor();
+      // A definite server rejection restores the field and text selection used
+      // to submit with Enter. Manual key ownership remains active.
+      for (const [field, selection] of [[name, [2, 6]], [key, [1, 4]]]) {
+        if (field === key) await openOptions();
+        await field.focus();
+        await field.evaluate((input, [start, end]) => input.setSelectionRange(start, end), selection);
+        await page.route("**/projects", route => route.request().method() === "POST"
+          ? route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ error: "Choose a different project name", details: { creation_rejected: true } }) }) : route.continue(), { times: 1 });
+        const rejectedResponse = page.waitForResponse(response => response.url().endsWith("/projects") && response.request().method() === "POST");
+        await field.press("Enter");
+        assert.equal((await rejectedResponse).status(), 400);
+        await page.getByRole("alert").filter({ hasText: "Choose a different project name" }).waitFor();
+        assert.equal(await field.evaluate(input => input.disabled), false);
+        assert.deepEqual(await field.evaluate(input => [input.selectionStart, input.selectionEnd]), selection);
+        assert.equal(await field.evaluate(input => document.activeElement === input), true, `${field === name ? "Name" : "Project Key"} focus must return after a definite rejection`);
+        assert.equal(await page.locator("#project-created-dialog").evaluate(dialog => dialog.open), false);
+      }
       assert.equal(await name.inputValue(), `${label} project`);
-      assert.equal(await name.isEnabled(), true);
-      assert.equal(await page.locator("#project-created-dialog").evaluate(dialog => dialog.open), false);
+      assert.equal(await key.inputValue(), label);
+      await name.fill(`${label} revised`);
+      assert.equal(await key.inputValue(), label, "manual key ownership must survive a rejected Enter submission");
+      await name.fill(`${label} project`);
+
+      for (const scenario of ["options-focus", "leave-return"]) {
+        await openOptions();
+        let releaseRejection;
+        let markRequestStarted;
+        const rejectionGate = new Promise(resolve => { releaseRejection = resolve; });
+        const requestStarted = new Promise(resolve => { markRequestStarted = resolve; });
+        await page.route("**/projects", async route => {
+          if (route.request().method() !== "POST") return route.continue();
+          markRequestStarted();
+          await rejectionGate;
+          await route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ error: `Held ${scenario}`, details: { creation_rejected: true } }) });
+        }, { times: 1 });
+        await name.focus();
+        await name.press("Enter");
+        await requestStarted;
+        if (scenario === "leave-return") {
+          await page.evaluate(() => navigate({ type: "tab", tab: "agents" }));
+          await page.waitForURL(/#agents$/);
+          await page.getByRole("button", { name: "New project", exact: true }).click();
+          await ready();
+        }
+        const optionsSummary = options.locator("summary");
+        const focusGenerationBeforeChoice = await page.evaluate(() => projectCreationFocusGeneration);
+        await optionsSummary.focus();
+        assert.equal(await optionsSummary.evaluate(element => document.activeElement === element), true);
+        const focusGenerationAfterChoice = await page.evaluate(() => projectCreationFocusGeneration);
+        releaseRejection();
+        await page.getByRole("alert").filter({ hasText: `Held ${scenario}` }).waitFor();
+        await page.waitForFunction(() => !projectCreationSubmitting && !document.querySelector("#new-project-name").disabled);
+        assert.equal(await optionsSummary.evaluate(element => document.activeElement === element), true,
+          `a late ${scenario} rejection must preserve the user's newer focus choice (${focusGenerationBeforeChoice} -> ${focusGenerationAfterChoice})`);
+        await page.screenshot({ path: path.join(capture, `${label}-${scenario}-focus.png`) });
+      }
+
+      const pendingFocus = page.locator("#agent-filter");
+      let rejectPending;
+      const rejectionDone = new Promise(resolve => { rejectPending = resolve; });
+      await page.route("**/projects", async route => {
+        if (route.request().method() !== "POST") return route.continue();
+        await new Promise(resolve => setTimeout(resolve, 100));
+        await route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ error: "Choose a different project name", details: { creation_rejected: true } }) });
+        rejectPending();
+      }, { times: 1 });
+      await name.press("Enter");
+      await page.evaluate(() => navigate({ type: "tab", tab: "agents" }));
+      await page.waitForURL(/#agents$/);
+      await pendingFocus.waitFor({ state: "visible" });
+      await pendingFocus.focus();
+      await rejectionDone;
+      assert.equal(await pendingFocus.evaluate(button => document.activeElement === button), true,
+        `a late rejection must not steal focus after navigation: ${await page.evaluate(() => `${location.hash} ${document.activeElement?.outerHTML || document.activeElement?.tagName}`)}`);
+      await openForm();
       const formHash = new URL(page.url()).hash;
       let release;
       const held = new Promise(resolve => { release = resolve; });
@@ -180,7 +248,10 @@ const { chromium } = require(process.env.TYCHO_PLAYWRIGHT_PATH || "playwright");
         assert.equal(catalog.projects.filter(project => project.key === expectedKey).length, 1, "retry must register once");
       }
       assert.deepEqual(errors, []);
-      results.push({ label, width, height, minimalFields: true, manualKey: true, oneActionModal: true, confirmedOnly: true, pollStable: true, focusTrap: true, reloadRecovery: true, lostReplyReplay: true, malformedReplyReplay: true });
+      results.push({ label, width, height, minimalFields: true, manualKey: true, definiteRejectionFocus: true,
+        optionsFocusAfterHeldRejection: true, optionsFocusAfterRouteReturn: true, oneActionModal: true,
+        confirmedOnly: true, pollStable: true, focusTrap: true, reloadRecovery: true,
+        lostReplyReplay: true, malformedReplyReplay: true });
       await context.close();
     }
     fs.writeFileSync(path.join(capture, "results.json"), JSON.stringify(results, null, 2));

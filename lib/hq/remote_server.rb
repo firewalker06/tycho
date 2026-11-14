@@ -2825,6 +2825,7 @@ module HQ
     end
 
     def confirmed_created_project(key, request_id)
+      @registry.load!
       reload_projects_from_registry!
       result = project(key)
       request_id.empty? ? result : result.merge(creation_request_id: request_id)

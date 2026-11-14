@@ -78,6 +78,15 @@ module ProjectCreationReceiptTest
     end
 
     with_fixture do |_home, config, factory|
+      attrs = { "key" => "stale-cache", "name" => "Stale cache", "creation_request_id" => SecureRandom.uuid }
+      stale_service = HQ::RemoteService.new(registry: factory.call)
+      created = HQ::RemoteService.new(registry: factory.call).create_project(attrs)
+      replay = stale_service.create_project(attrs)
+      assert(replay[:key] == created[:key], "a receipt replay must confirm a project after another registry creates it")
+      assert(YAML.safe_load(File.read(config))["projects"].size == 1, "stale-cache replay must not create another project")
+    end
+
+    with_fixture do |_home, config, factory|
       registry = factory.call
       attrs = { "key" => "lost", "name" => "Lost reply", "creation_request_id" => SecureRandom.uuid }
       registry.define_singleton_method(:load!) { raise HQ::ConfigError, "synthetic post-commit failure" }

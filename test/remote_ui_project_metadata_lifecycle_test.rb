@@ -32,7 +32,7 @@ script = <<~'JS'
       ensureRouteData: async () => {}, setConnection() {}, syncPollingWindow() {}, stopSpeechMode() {},
     };
     vm.createContext(c);
-    vm.runInContext("let promptQueueNavigationGeneration = 0, scheduleFormNavigationGeneration = 0;\n" +
+    vm.runInContext("let promptQueueNavigationGeneration = 0, scheduleFormNavigationGeneration = 0, projectCreationRouteGeneration = 0;\n" +
       section("let projectMetadataTimer = null;", "\nfunction projectWorkspaceKey") +
       section('window.addEventListener("hashchange",', '\nwindow.addEventListener("scroll",') +
       section('document.addEventListener("visibilitychange",', '\nwindow.matchMedia("(prefers-reduced-motion:'), c);
