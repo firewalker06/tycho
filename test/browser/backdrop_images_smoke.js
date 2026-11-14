@@ -115,6 +115,12 @@ module.exports = async function backdropImagesSmoke({ browser, baseUrl, agentKey
     await page.locator("[data-theme-image-file]").setInputFiles(file(transfer, "image/webp", "transferred.webp")); await saved();
     await page.evaluate(() => window.TychoAppearance.setPreference("dark"));
     assert.equal(await page.evaluate(() => window.TychoBackdropImages.getState().image.x), 75);
+    const focusApi = `${baseUrl}/agents/${agentKey}/focus`;
+    const focusBefore = await (await context.request.get(focusApi)).json();
+    const focusSave = await context.request.put(focusApi, { data: { revision: focusBefore.focus.revision, sections: [
+      { title: "Theme integration", subtitle: "Synthetic Focus fixture", icon: "todo_done", items: [{ title: "Raster and peer panels", subtitle: "Keep text surfaces opaque and the Close control borderless." }] }
+    ] } });
+    assert(focusSave.ok(), await focusSave.text());
     for (const [device, viewport] of Object.entries({ desktop: { width: 1440, height: 1000 }, mobile: { width: 390, height: 844 } })) {
       await page.setViewportSize(viewport);
       for (const colorMode of ["dark", "light"]) {
@@ -122,6 +128,21 @@ module.exports = async function backdropImagesSmoke({ browser, baseUrl, agentKey
         await page.goto(route); await page.locator("#prompt-input").fill(`Local raster backdrop - ${colorMode} ${device}.`); await saved();
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
         if (device === "mobile") await page.waitForFunction(() => Math.abs(document.querySelector(".app-header").getBoundingClientRect().left) < 1);
+        const focusPanel = page.locator("[data-agent-focus]");
+        const openFocus = page.locator("[data-show-agent-focus]");
+        const closeFocus = page.getByRole("button", { name: "Close Focus panel", exact: true });
+        if (!(await focusPanel.isVisible())) await openFocus.click();
+        await focusPanel.waitFor({ state: "visible" });
+        assert(await focusPanel.evaluate(element => {
+          const probe = document.createElement("div"); probe.style.background = "var(--ds-background-surface)"; probe.style.visibility = "hidden";
+          document.body.append(probe); const expected = getComputedStyle(probe).backgroundColor; probe.remove();
+          return getComputedStyle(element).backgroundColor === expected;
+        }), "Focus inherits the opaque semantic surface over raster art");
+        assert.equal(await closeFocus.evaluate(element => getComputedStyle(element).borderTopWidth), "0px");
+        await capture(`raster-${colorMode}-${device}-focus`);
+        await closeFocus.click();
+        await focusPanel.waitFor({ state: "hidden" });
+        assert.equal(await page.locator("#prompt-input").inputValue(), `Local raster backdrop - ${colorMode} ${device}.`);
         await capture(`raster-${colorMode}-${device}-conversation`);
         await settings();
         await page.locator(".theme-image-preview").evaluate(element => element.scrollIntoView({ block: "center", behavior: "instant" }));
