@@ -2777,6 +2777,15 @@ span.harness-mark {
   padding: 2px 0;
 }
 
+.search-box:focus-within {
+  outline: var(--ds-focus-width) solid var(--ds-focus-ring);
+  outline-offset: var(--ds-focus-offset);
+}
+
+.search-box input:focus-visible {
+  outline: 0;
+}
+
 .agent-sort-menu {
   position: relative;
   flex: 0 0 auto;
