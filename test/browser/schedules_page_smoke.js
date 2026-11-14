@@ -62,6 +62,12 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
         assert.equal(await listMenu.locator('[data-scheduler-action="restart"]').isVisible(), status !== "stopped");
         assert.equal(await listMenu.locator('[data-scheduler-action="stop"]').isVisible(), status !== "stopped");
         await assertHeaderBounds();
+        if (status !== "stopped") {
+          const restart = await listMenu.locator('[data-scheduler-action="restart"]').boundingBox();
+          const stop = await listMenu.locator('[data-scheduler-action="stop"]').boundingBox();
+          const archive = await listMenu.locator('[data-archive-all-schedule-sessions]').boundingBox();
+          assert(restart.y < stop.y && stop.y < archive.y, "daemon menu keeps its original action order");
+        }
         if (captureDir && ["running", "stopped"].includes(status)) {
           fs.mkdirSync(captureDir, { recursive: true });
           await page.screenshot({ path: path.join(captureDir, `schedule-header-${status}-${theme}-${width}.png`) });
