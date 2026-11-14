@@ -10258,7 +10258,8 @@ body:has(.inquiry-form-full-screen) {
     overflow: hidden;
     padding: 0;
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-top: 0;
+    border-radius: 0;
     background: var(--ds-background-surface-sunken);
   }
 
@@ -10269,7 +10270,7 @@ body:has(.inquiry-form-full-screen) {
     min-height: 0;
     padding: 12px 0;
     border: 0;
-    border-radius: 6px;
+    border-radius: 0;
     background: transparent;
   }
 
