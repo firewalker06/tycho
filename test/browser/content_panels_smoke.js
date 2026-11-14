@@ -49,6 +49,7 @@ module.exports = async function contentPanelsSmoke({ browser, baseUrl, agentKey,
     assert(await panel("summary").isVisible());
     assert.equal(await page.evaluate(() => parseRoute().summaryId), "preview-prior");
     await capture("constrained");
+    await page.evaluate(() => { document.querySelector(".agent-detail-pane").scrollTop = 120; });
     await toggle("conversation").focus();
     await page.keyboard.press("Enter");
     await check(2);
@@ -66,6 +67,7 @@ module.exports = async function contentPanelsSmoke({ browser, baseUrl, agentKey,
       await toggle("summary").click();
       await check(2);
       assert(!(await panel("preview").isVisible()));
+      assert.equal(await page.evaluate(() => document.querySelector(".agent-detail-pane").scrollTop), 120);
       await page.evaluate(async () => { await refresh({ force: true, preserveFocusedWorkspace: true }); render(); });
       await check(2);
       await toggle("preview").click();
@@ -89,11 +91,13 @@ module.exports = async function contentPanelsSmoke({ browser, baseUrl, agentKey,
       await toggle(key).click();
       await check(3);
     }
+    await composer.focus();
     for (const width of [900, 1024, 1100, 1280, 1464, 1463, 1760]) {
       await page.setViewportSize({ width, height: 900 });
       await page.evaluate(() => syncContentPanelLayout());
       const fit = await measure();
       await check(fit.visible.length);
+      if (width === 900) assert(await toggle("conversation").evaluate(button => button === document.activeElement), "Resize must move focus out of a hidden composer");
       assert(fit.visible.length <= (fit.usable < 1284 ? 2 : 3));
     }
     await page.setViewportSize({ width: 1180, height: 900 });
@@ -118,6 +122,9 @@ module.exports = async function contentPanelsSmoke({ browser, baseUrl, agentKey,
     await page.setViewportSize({ width: 2200, height: 900 });
     await page.waitForFunction(() => document.querySelector(".agent-workspace")?.dataset.visiblePanels?.split(" ").length === 3);
     await check(3);
+    assert.equal(await page.evaluate(() => document.querySelector(".summary-attachment-preview-scroll").scrollTop), saved[1], "Attachment scroll after mobile resize");
+    assert.equal(await page.evaluate(() => document.querySelector(".agent-conversation-scroll").scrollTop), saved[0], "Conversation scroll after mobile resize");
+    assert.equal(await panel("summary").evaluate(element => element.scrollTop), 120, "Summary scroll after mobile resize");
     assert.equal(await page.evaluate(() => state.summaryAttachmentPreview.id), selection);
     assert.equal(await page.evaluate(() => parseRoute().summaryId), "preview-prior");
     assert.equal(await composer.inputValue(), "Keep this unsent panel draft.");

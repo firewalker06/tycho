@@ -16,7 +16,7 @@ module RemoteUIAttachmentCacheRaceTest
         const assert = require("assert");
         const source = fs.readFileSync("lib/hq/remote_ui/assets/app.js", "utf8");
         const loaders = source.slice(source.indexOf("async function ensureAttachment("), source.indexOf("\nfunction render(options"));
-        const preview = source.slice(source.indexOf("function summaryAttachmentPreviewAvailable"), source.indexOf("\nfunction renderSummaryAttachmentList"));
+        const preview = source.slice(source.indexOf("const CONTENT_PANELS"), source.indexOf("\nfunction renderSummaryAttachmentList"));
         const clear = source.slice(source.indexOf("function clearAttachmentCache"), source.indexOf("\nfunction deletedAttachmentFallbackRoute"));
         const requests = [];
         const created = [];

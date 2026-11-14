@@ -882,6 +882,13 @@ def run_attachment_preview_smoke!(dir:, base_url:, agent_key:, fixture:, browser
                               "metadata" => { "summary_id" => "literal-percent-summary", "run_number" => 3, "attachments" => detail.fetch("attachments") })
     end
   end
+  if ENV["TYCHO_REMOTE_UI_CONTENT_PANELS_ONLY"] == "1"
+    entries = File.readlines(memory_path).map { |line| JSON.parse(line) }
+    entries.select { |entry| entry["type"] == "run_summary" }.each do |entry|
+      entry["content"] += "\n\n" + 40.times.map { |i| "Panel check #{i + 1}: Keep this Summary position through resize, panel switching, and polling." }.join("\n\n")
+    end
+    File.write(memory_path, entries.map { |entry| JSON.generate(entry) }.join("\n") + "\n")
+  end
   other_agent_key = create_agent(base_url, name: "Other preview session")
   node_dir = File.join(dir, "node")
   install_playwright!(node_dir)
