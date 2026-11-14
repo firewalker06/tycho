@@ -8218,7 +8218,7 @@ module RemoteServerTest
            "expected root shell to provide an accessible server-rendered loading surface")
     assert(response[:body].include?('class="tycho-boot-mark"') &&
            response[:body].include?('class="tycho-boot-orbit"') &&
-           response[:body].include?('@keyframes tycho-boot-pulse') &&
+           response[:body].include?('animation: tycho-boot-orbit 1.2s') &&
            response[:body].include?('id="tycho-boot-message"') &&
            response[:body].include?('id="tycho-boot-retry"') &&
            response[:body].include?('hq.remote.startup-message') &&
