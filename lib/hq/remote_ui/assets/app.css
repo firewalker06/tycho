@@ -10753,6 +10753,7 @@ body:has(.agent-workspace.has-focus-panel) { overflow: hidden; }
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
 }
+.agent-focus-panel [data-close-agent-focus] { border: 0; }
 .agent-focus-panel-heading > div { display: flex; align-items: baseline; gap: 12px; }
 .agent-focus-panel-heading h2 { margin: 0; font-size: 16px; }
 .agent-focus-panel-heading span { color: var(--muted); font-size: 12px; }

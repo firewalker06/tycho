@@ -82,6 +82,16 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     if (!(await visible()).includes("focus")) { await open.focus(); await page.keyboard.press("Enter"); await frames(); }
     await focus.waitFor({ state: "visible" });
     assert.equal(await close.isVisible(), true);
+    const closeStyle = () => close.evaluate(el => {
+      const style = getComputedStyle(el), rect = el.getBoundingClientRect();
+      return { borders: [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth], width: rect.width, height: rect.height, name: el.getAttribute("aria-label"), outline: style.outlineStyle, outlineWidth: style.outlineWidth, focusVisible: el.matches(":focus-visible") };
+    });
+    const closeNormal = await closeStyle();
+    assert.deepEqual(closeNormal.borders, ["0px", "0px", "0px", "0px"]);
+    assert(closeNormal.width >= 44 && closeNormal.height >= 44, JSON.stringify(closeNormal));
+    assert.equal(closeNormal.name, "Close Focus panel");
+    await close.hover();
+    assert.deepEqual((await closeStyle()).borders, ["0px", "0px", "0px", "0px"], "hover must remain borderless");
     assert.equal(await focus.locator(".agent-focus-section").count(), 3);
     assert.equal(await focus.locator(".agent-focus-icon svg").count(), 3);
     assert.equal(await focus.getByRole("link", { name: "Review PR #12" }).getAttribute("href"), "https://github.com/example/web/pull/12");
@@ -94,8 +104,16 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     assert((await visible()).includes("focus"), "polling lost explicit open");
     assert.equal(await composer.inputValue(), "Keep this draft near the conversation bottom");
     await focusScroll.evaluate(el => { el.scrollTop = 0; });
+    await composer.focus();
     await capture("open");
-    await close.focus(); await page.keyboard.press("Enter"); await frames();
+    await close.focus();
+    await page.keyboard.press("Shift+Tab"); await page.keyboard.press("Tab");
+    assert(await close.evaluate(el => document.activeElement === el));
+    const closeKeyboard = await closeStyle();
+    assert(closeKeyboard.focusVisible && closeKeyboard.outline !== "none" && parseFloat(closeKeyboard.outlineWidth) >= 2, JSON.stringify(closeKeyboard));
+    assert.deepEqual(closeKeyboard.borders, ["0px", "0px", "0px", "0px"]);
+    await capture("keyboard-focus");
+    await page.keyboard.press("Enter"); await frames();
     assert((await visible()).includes("conversation"));
     assert(!(await visible()).includes("focus"));
     const closedScroll = await page.locator("[data-agent-conversation-scroll]").evaluate(el => ({ top: el.scrollTop, height: el.clientHeight, total: el.scrollHeight, width: el.clientWidth }));
@@ -135,7 +153,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     await focus.getByRole("link", { name: "Read review notes" }).click();
     await page.getByRole("heading", { name: "Review notes", exact: true }).waitFor();
     assert.deepEqual(errors, []);
-    results.push({ width, theme, nesting, geometry, scroll, checks: "long bottom, defaults, user open/close, independent scroll, polling, late update, resize, navigation, draft, Summary and attachment" });
+    results.push({ width, theme, nesting, geometry, scroll, closeNormal, closeKeyboard, checks: "long bottom, defaults, user open/close, independent scroll, polling, late update, resize, navigation, draft, Summary and attachment" });
     await context.close();
   }
   // A document first created by polling must not steal a previously empty Conversation.
