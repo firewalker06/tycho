@@ -2350,6 +2350,29 @@ span.harness-mark {
   padding: 8px 10px 10px;
 }
 
+/* Keep list controls in the page header, with a separate row on narrow screens. */
+@media (max-width: 700px) {
+  .header-row:has(.schedule-management-actions) > .header-actions {
+    display: contents;
+  }
+
+  .header-row:has(.schedule-management-actions) > .identity {
+    grid-column: 1 / 3;
+  }
+
+  .header-row:has(.schedule-management-actions) #header-more-button {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .header-row:has(.schedule-management-actions) .header-schedule-menu {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    min-width: 0;
+    width: 100%;
+  }
+}
+
 .schedule-management-actions {
   display: flex;
   align-items: center;
@@ -2358,6 +2381,14 @@ span.harness-mark {
   flex-wrap: wrap;
   width: 100%;
   padding: 2px 0;
+}
+
+body[data-route-tab="schedules"] .header-more-panel {
+  width: 280px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - var(--app-header-height) - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .schedule-management-actions button {

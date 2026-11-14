@@ -8809,7 +8809,7 @@ module RemoteServerTest
     assert(css[:body].include?(".schedule-management-actions") && css[:body].include?("justify-content: flex-end"),
            "expected Schedule management actions to align right")
     assert(css[:body].include?("align-items: center;") && css[:body].include?(".schedule-action-menu"),
-           "expected Schedule daemon menu to align with the New schedule button")
+           "expected schedule row menus to retain shared action alignment")
     assert(css[:body].include?(".schedule-row") && css[:body].include?("grid-template-columns: auto minmax(0, 1fr) auto"),
            "expected Schedule rows to reserve a right-side action column")
     assert(css[:body].include?(".schedule-summary-grid > .status-mark") &&
@@ -9662,10 +9662,10 @@ module RemoteServerTest
            "expected scheduled conversations to remove automation with confirmed history-preserving UX")
     assert(js[:body].include?("data-new-schedule"),
            "expected Remote UI to expose schedule creation")
-    assert(js[:body].include?("${renderScheduleDaemonActions(daemon, schedules)}") &&
-           js[:body].include?('data-overlay-key="schedule-daemon"') &&
-           js[:body].include?('aria-label="Schedule list actions"'),
-           "expected daemon actions to share the New schedule toolbar behind a context menu")
+    assert(js[:body].include?("scheduleListMenuItems(state.scheduleDaemon, schedules)") &&
+           js[:body].include?("...settingsMoreMenuItems(state.setup, key)") &&
+           !js[:body].include?('data-overlay-key="schedule-daemon"'),
+           "expected one header menu to combine schedule list and page actions")
     assert(js[:body].include?('label: "Restart daemon"') &&
            js[:body].include?('label: "Stop daemon"') &&
            !js[:body].include?('class="compact-actions schedule-daemon-actions"'),

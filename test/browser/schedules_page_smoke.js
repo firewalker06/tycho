@@ -18,7 +18,172 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       assert.equal(await page.locator('#bottom-nav [aria-current="page"]').getAttribute("data-tab"), "schedules");
       assert.equal(await page.locator(".schedule-card details.schedule-details").count(), 0);
       assert.equal(await page.locator(".schedule-card summary.schedule-summary-row").count(), 0);
-      assert(await page.locator("[data-new-schedule]").isVisible());
+      const create = page.locator(".app-header [data-new-schedule]");
+      const trigger = page.locator("#header-more-button");
+      const listMenu = page.locator("#header-more-panel");
+      const waitForMenuFocus = () => page.waitForFunction(() =>
+        document.activeElement === document.querySelector('#header-more-panel [role="menuitem"]:not(:disabled)'));
+      const openMenu = async () => {
+        if (await trigger.getAttribute("aria-expanded") !== "true") {
+          await trigger.click();
+          await waitForMenuFocus();
+        }
+      };
+      const closeMenu = async () => {
+        await page.keyboard.press("Escape");
+        await page.waitForFunction(() => document.activeElement === document.querySelector("#header-more-button"));
+        assert.equal(await trigger.getAttribute("aria-expanded"), "false");
+      };
+      assert(await create.isVisible(), "New schedule is in the page header");
+      assert.equal(await page.locator(".schedule-card [data-new-schedule], .schedule-daemon-menu").count(), 0,
+        "there is no duplicate create button or separate list menu");
+      assert.equal(await page.locator('.app-header [aria-haspopup="menu"]:visible').count(), 1,
+        "one header trigger serves both page and list actions");
+      await create.focus();
+      await page.evaluate(() => refresh({ force: true }));
+      assert(await create.evaluate(node => node === document.activeElement), "refresh keeps header button focus");
+      await trigger.focus();
+      await page.keyboard.press("Enter");
+      await waitForMenuFocus();
+      await listMenu.locator("[data-archive-all-schedule-sessions]").focus();
+      await page.evaluate(() => refresh({ force: true }));
+      assert.equal(await trigger.getAttribute("aria-expanded"), "true", "refresh keeps the combined menu open");
+      assert(await listMenu.locator("[data-archive-all-schedule-sessions]").evaluate(node => node === document.activeElement),
+        "refresh keeps focus on the same menu action");
+      await closeMenu();
+      await openMenu();
+      await page.locator("#screen-title").click();
+      assert.equal(await trigger.getAttribute("aria-expanded"), "false", "outside click closes the combined menu");
+      const assertHeaderBounds = async () => {
+        await page.waitForTimeout(250);
+        for (const selector of ["#screen-title", ".app-header [data-new-schedule]", "#header-more-button"]) {
+          const box = await page.locator(selector).boundingBox();
+          assert(box && box.x >= 0 && box.x + box.width <= page.viewportSize().width,
+            `${selector} stays inside the viewport`);
+        }
+        if (await trigger.getAttribute("aria-expanded") === "true") {
+          const box = await listMenu.boundingBox();
+          assert(box.x >= 0 && box.x + box.width <= page.viewportSize().width && box.y + box.height <= page.viewportSize().height,
+            "the combined menu stays inside the viewport");
+        }
+        const title = await page.locator("#screen-title").boundingBox();
+        const button = await create.boundingBox();
+        assert(title.y + title.height <= button.y || title.x + title.width <= button.x,
+          "the title and create button do not overlap");
+      };
+      const original = await page.evaluate(() => ({ daemon: state.scheduleDaemon, setup: state.setup }));
+      // Synthetic readiness variants preserve page permissions and list status rules.
+      for (const status of ["running", "stale", "untracked", "stopped"]) {
+        await page.evaluate(status => {
+          clearTimeout(state.timer);
+          state.scheduleDaemon = { status };
+          state.setup = { ...state.setup, server: { ...state.setup.server, restartable: false, update: { available: true } } };
+          render();
+        }, status);
+        await trigger.focus();
+        await page.keyboard.press("Enter");
+        await waitForMenuFocus();
+        const selectors = [
+          ...(status === "stopped" ? ['[data-scheduler-action="start"]'] : ['[data-scheduler-action="restart"]', '[data-scheduler-action="stop"]']),
+          "[data-archive-all-schedule-sessions]", "[data-open-settings]", "[data-update-tycho]", "[data-restart-server]",
+        ];
+        assert.equal(await listMenu.locator('[role="menuitem"]').count(), selectors.length, "all combined actions appear exactly once");
+        let previousY = -1;
+        for (const selector of selectors) {
+          const item = listMenu.locator(selector);
+          assert(await item.isVisible(), `${selector} remains available in the combined menu`);
+          const box = await item.boundingBox();
+          assert(box.y > previousY, "schedule actions precede page actions in an understandable order");
+          previousY = box.y;
+        }
+        assert(await listMenu.locator("[data-restart-server]").isDisabled(), "server restart permission stays disabled");
+        assert(await listMenu.locator("[data-archive-all-schedule-sessions]").evaluate(node => node.nextElementSibling?.getAttribute("role") === "separator"),
+          "a separator divides list and page actions");
+        assert.equal(await listMenu.locator("[data-delete-schedule], [data-edit-schedule]").count(), 0, "row actions stay independent");
+        await page.keyboard.press("End");
+        assert(await listMenu.locator("[data-update-tycho]").evaluate(node => node === document.activeElement),
+          "keyboard navigation skips disabled actions");
+        await assertHeaderBounds();
+        if (captureDir && ["running", "stopped"].includes(status)) {
+          fs.mkdirSync(captureDir, { recursive: true });
+          await page.screenshot({ path: path.join(captureDir, `schedule-header-${status}-${theme}-${width}.png`) });
+        }
+        await closeMenu();
+      }
+      await openMenu();
+      await listMenu.locator("[data-open-settings]").focus();
+      await page.evaluate(() => { state.scheduleDaemon = { status: "running" }; render(); });
+      assert(await listMenu.locator("[data-open-settings]").evaluate(node => node === document.activeElement),
+        "a daemon state change keeps focus on an existing page action");
+      await listMenu.locator("[data-update-tycho]").focus();
+      await page.evaluate(() => { state.setup.server.update.available = false; render(); });
+      assert.equal(await listMenu.locator("[data-update-tycho]").count(), 0);
+      assert(await listMenu.locator('[data-scheduler-action="restart"]').evaluate(node => node === document.activeElement),
+        "a removed focused action falls back to the first enabled menu item");
+      await page.evaluate(() => { state.setup.server.update.available = true; render(); });
+      await closeMenu();
+      if (width === 390) {
+        for (const viewport of [{ width: 320, height: 900 }, { width: 390, height: 360 }]) {
+          await page.setViewportSize(viewport);
+          await openMenu();
+          await assertHeaderBounds();
+          await page.keyboard.press("End");
+          assert(await listMenu.locator("[data-update-tycho]").evaluate(node => node === document.activeElement));
+          await closeMenu();
+        }
+        await page.setViewportSize({ width, height: 900 });
+      }
+      if (width === 1440 && theme === "dark") {
+        const requests = [];
+        const stubAction = async route => {
+          requests.push(new URL(route.request().url()).pathname);
+          await route.fulfill({ status: 403, contentType: "application/json", body: '{"error":"Synthetic action denial"}' });
+        };
+        const urls = ["**/schedules/daemon/*", "**/schedules/archive-sessions", "**/server/restart", "**/update"];
+        for (const url of urls) await page.route(url, stubAction);
+        const actions = [
+          ["start", '[data-scheduler-action="start"]', "/schedules/daemon/start", null],
+          ["restart", '[data-scheduler-action="restart"]', "/schedules/daemon/restart", "Restart daemon"],
+          ["stop", '[data-scheduler-action="stop"]', "/schedules/daemon/stop", "Stop daemon"],
+          ["archive", "[data-archive-all-schedule-sessions]", "/schedules/archive-sessions", "Archive all sessions"],
+          ["server", "[data-restart-server]", "/server/restart", "Restart server"],
+          ["update", "[data-update-tycho]", "/update", "Update Tycho"],
+        ];
+        for (const [action, selector, endpoint, confirmation] of actions) {
+          await page.evaluate(action => {
+            clearTimeout(state.timer);
+            state.scheduleDaemon = { status: action === "start" ? "stopped" : "running" };
+            state.setup.server.restartable = true;
+            render();
+          }, action);
+          await openMenu();
+          if (confirmation) {
+            const before = requests.length;
+            await listMenu.locator(selector).click();
+            assert.equal(await page.locator("[data-confirmation-accept]").textContent(), confirmation);
+            await page.locator("[data-confirmation-cancel]").click();
+            assert.equal(requests.length, before, "cancelled confirmation does not send a mutation");
+            await openMenu();
+          }
+          const denied = page.waitForResponse(response => response.status() === 403 && new URL(response.url()).pathname === endpoint);
+          await listMenu.locator(selector).click();
+          if (confirmation) await page.locator("[data-confirmation-accept]").click();
+          await denied;
+          await page.waitForFunction(() => document.querySelector("#screen-subtitle").textContent.includes("Synthetic action denial"));
+          assert.equal(requests.at(-1), endpoint, `${action} retains its endpoint and confirmation semantics`);
+          assert.equal(await trigger.getAttribute("aria-expanded"), "false", "an action closes the combined menu");
+        }
+        for (const url of urls) await page.unroute(url, stubAction);
+      }
+      await page.evaluate(original => {
+        state.scheduleDaemon = original.daemon;
+        state.setup = original.setup;
+        render();
+      }, original);
+      await openMenu();
+      assert.equal(await listMenu.locator("[data-update-tycho]").count(), original.setup.server.update?.available ? 1 : 0,
+        "unavailable updates keep their original visibility rule");
+      await closeMenu();
       const link = page.locator(".sidebar-settings-link");
       assert.equal(await link.isVisible(), width >= 1100);
       assert.equal(await page.locator("#bottom-nav .sidebar-settings-link").count(), 0);
@@ -90,7 +255,8 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       await page.locator("#schedule-form").waitFor();
       await page.locator("[data-cancel-schedule-form]").click();
       await page.waitForURL("**/ui#schedules");
-      await page.locator("[data-new-schedule]").click();
+      await page.locator("[data-new-schedule]").focus();
+      await page.keyboard.press("Enter");
       await page.locator("#schedule-form").waitFor();
       await page.locator("#back-button").click();
       await page.waitForURL("**/ui#schedules");
