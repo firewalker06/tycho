@@ -9677,6 +9677,7 @@ body:has(.inquiry-form-full-screen) {
 
   .app-shell:has(> .bottom-nav:not(.hidden)):has(.content.agent-split-active) {
     max-width: 1600px;
+    grid-template-columns: 56px minmax(0, 1fr);
   }
 
   .app-shell:has(> .bottom-nav:not(.hidden)) .app-header {
@@ -9746,9 +9747,10 @@ body:has(.inquiry-form-full-screen) {
     width: 144px;
     max-width: 144px;
     margin-top: calc(var(--safe-area-top) + 12px);
-    border: 1px solid var(--border);
-    border-radius: 10px;
+    border: 0;
+    border-radius: 0;
     padding: 6px;
+    background: transparent;
     transform: none;
   }
 
@@ -9758,6 +9760,41 @@ body:has(.inquiry-form-full-screen) {
     min-height: var(--touch-target);
     padding: 8px 10px;
     font-size: 13px;
+  }
+
+  .app-shell > .bottom-nav button.active {
+    box-shadow: inset 3px 0 currentColor;
+  }
+
+  /* Split routes use a rail without changing navigation state or preferences. */
+  .app-shell:has(> .content.agent-split-active) > .bottom-nav {
+    width: 56px;
+    max-width: 56px;
+  }
+
+  .app-shell:has(> .content.agent-split-active) > .bottom-nav button {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    padding: 8px;
+  }
+
+  .app-shell:has(> .content.agent-split-active) > .bottom-nav button > span:last-child,
+  .app-shell:has(> .content.agent-split-active) > .sidebar-settings-link > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .app-shell:has(> .content.agent-split-active) > .sidebar-settings-link {
+    justify-content: center;
+    width: 44px;
+    margin-left: 6px;
+    padding: 8px;
   }
 
   .quick-agent-fab {
