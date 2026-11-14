@@ -43,6 +43,100 @@ module.exports = async function appearanceSmoke({ browser, baseUrl, agentKey, ca
     await page.screenshot({ path: path.join(captureDir, `${name}.png`) });
   };
   try {
+    // Exercise custom themes through Settings in the actual browser engine.
+    await page.goto(`${baseUrl}/ui#settings`);
+    await page.locator("[data-theme-mode=dark]").waitFor();
+    await page.locator('[data-scroll-settings-section="settings-configuration"]').click();
+    await page.locator("#custom-theme-editor > summary").click();
+    const darkTheme = await page.evaluate(() => window.TychoAppearance.getThemeState().sample);
+    const lightTheme = await page.evaluate(() => window.TychoAppearance.getThemeState().samples.light);
+    for (const theme of [darkTheme, lightTheme]) {
+      await page.locator("[data-custom-theme-json]").fill(JSON.stringify(theme, null, 2));
+      await page.locator("[data-theme-save]").click();
+      assert.equal(await page.locator(`[data-theme-mode=${theme.mode}]`).inputValue(), theme.id);
+    }
+    assert.equal(await page.locator("html").getAttribute("data-theme"), "midnight", "saving a light theme does not change the active mode");
+    await page.locator("[data-custom-theme-json]").fill('{"bad":true}');
+    await page.locator("[data-theme-save]").click();
+    assert.match(await page.locator("[data-theme-result]").textContent(), /unique theme id/);
+    assert.equal(await page.locator("html").getAttribute("data-theme"), "midnight");
+    await page.locator("[data-theme-load=dark]").click();
+    assert.deepEqual(JSON.parse(await page.locator("[data-custom-theme-json]").inputValue()), darkTheme);
+    const draft = `${JSON.stringify(darkTheme, null, 2)} `;
+    await page.locator("[data-custom-theme-json]").fill(draft);
+    await page.locator("[data-custom-theme-json]").focus();
+    await page.evaluate(() => refresh({ force: true }));
+    assert.equal(await page.locator("[data-custom-theme-json]").inputValue(), draft, "polling preserves theme JSON drafts");
+    assert(await page.locator("#custom-theme-editor").getAttribute("open") !== null, "polling preserves the editor disclosure");
+    for (const [device, viewport] of Object.entries({ desktop: { width: 1440, height: 1000 }, mobile: { width: 390, height: 844 } })) {
+      await page.setViewportSize(viewport);
+      for (const theme of [darkTheme, lightTheme]) {
+        await page.locator("[data-appearance-preference]").selectOption(theme.mode);
+        assert.equal(await page.locator("html").getAttribute("data-theme"), theme.id);
+        assert.equal(await page.locator('meta[name="theme-color"]').getAttribute("content"), theme.colors.canvas);
+        assert.equal(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), theme.mode === "dark" ? "rgb(23, 21, 43)" : "rgb(244, 239, 230)");
+        await readable(page.locator("#appearance-heading"));
+        await page.locator("#custom-theme-editor").evaluate((element) => { element.open = true; });
+        await readable(page.locator("[data-theme-save]"));
+        await page.locator("#custom-theme-editor").evaluate((element) => { element.open = false; });
+        await page.locator("#settings-panel-configuration").evaluate((element) => element.scrollIntoView({ block: "start", behavior: "instant" }));
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, "custom theme Settings fits the viewport");
+        await capture(`custom-${theme.mode}-${device}-settings`);
+        if (theme.mode === "dark") {
+          await page.locator("#custom-theme-editor > summary").click();
+          await page.locator("#custom-theme-editor").evaluate((element) => element.scrollIntoView({ block: "start", behavior: "instant" }));
+          await page.evaluate(() => settingsScrollRoot().scrollBy({ top: -140, behavior: "instant" }));
+          await capture(`custom-${device}-prompt-guide`);
+        }
+        await page.goto(route);
+        await page.locator("#prompt-input").fill("Custom themes preserve this draft.");
+        await page.evaluate(() => { window.TychoAppearance.setPreference("system"); window.TychoAppearance.setPreference("dark"); window.TychoAppearance.setPreference("light"); });
+        assert.equal(await page.locator("#prompt-input").inputValue(), "Custom themes preserve this draft.");
+        await page.evaluate((mode) => window.TychoAppearance.setPreference(mode), theme.mode);
+        await readable(page.locator(".bottom-nav button.active"));
+        await capture(`custom-${theme.mode}-${device}-conversation`);
+        await page.goto(`${baseUrl}/ui#settings`);
+        await page.locator("[data-theme-mode=dark]").waitFor();
+        await page.locator('[data-scroll-settings-section="settings-configuration"]').click();
+      }
+    }
+    // System resolves the independent custom choices as the OS changes.
+    await page.locator("[data-appearance-preference]").selectOption("system");
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.waitForFunction(() => document.documentElement.dataset.theme === "midnight");
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.waitForFunction(() => document.documentElement.dataset.theme === "sandstone");
+    await page.locator("[data-appearance-preference]").selectOption("light");
+    // Reload with the stylesheet held: the head bootstrap must apply custom colors.
+    let releaseCustomCss;
+    let requestedCustomCss;
+    const customGate = new Promise((resolve) => { releaseCustomCss = resolve; });
+    const customRequested = new Promise((resolve) => { requestedCustomCss = resolve; });
+    await page.route("**/ui.css?*", async (request) => { requestedCustomCss(); await customGate; await request.continue(); });
+    const customReload = page.reload({ waitUntil: "domcontentloaded" });
+    await customRequested;
+    assert.equal(await page.locator("html").getAttribute("data-theme"), "sandstone");
+    assert.equal(await page.evaluate(() => document.documentElement.style.getPropertyValue("--ds-background-canvas")), lightTheme.colors.canvas);
+    releaseCustomCss();
+    await customReload;
+    await page.unroute("**/ui.css?*");
+    await page.locator("[data-theme-mode=dark]").waitFor();
+    await page.locator('[data-scroll-settings-section="settings-configuration"]').click();
+    const themePeer = await context.newPage();
+    await themePeer.goto(route);
+    await themePeer.locator("#prompt-input").fill("Theme tab sync keeps this draft.");
+    await page.locator("[data-theme-mode=light]").selectOption("nord");
+    await themePeer.waitForFunction(() => document.documentElement.dataset.theme === "nord");
+    assert.equal(await themePeer.locator("#prompt-input").inputValue(), "Theme tab sync keeps this draft.");
+    await themePeer.close();
+    await page.locator("[data-theme-mode=light]").selectOption("sandstone");
+    await page.locator("[data-theme-remove=light]").click();
+    await page.locator("[data-theme-remove=dark]").click();
+    assert.equal(await page.locator("[data-theme-mode=light]").inputValue(), "nord");
+    assert.equal(await page.locator("[data-theme-mode=dark]").inputValue(), "dracula");
+    assert.equal(await page.locator("[data-theme-mode=dark] option").count(), 1);
+    await page.locator("[data-appearance-preference]").selectOption("dark");
+    await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto(`${baseUrl}/ui#settings`);
     await page.locator("[data-appearance-preference]").waitFor();
     assert.equal(await mode(page), "dark", "a new browser keeps dark even with a light OS");

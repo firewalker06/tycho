@@ -13,6 +13,7 @@ module RemoteUIAppearanceTest
         const { createAppearance } = require(process.cwd() + "/lib/hq/remote_ui/assets/appearance.js");
         function fixture(saved, options = {}) {
           const values = new Map(saved === undefined ? [] : [["hq.remote.appearance", saved]]);
+          if (options.savedThemes) values.set("hq.remote.themes.v1", options.savedThemes);
           const handlers = {};
           const changes = [];
           const media = { matches: Boolean(options.darkOS), addEventListener: (_, handler) => { media.change = handler; } };
@@ -26,7 +27,7 @@ module RemoteUIAppearanceTest
             addEventListener: (type, handler) => { handlers[type] = handler; },
             CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init.detail; } },
             document: {
-              documentElement: { dataset: {}, style: {} },
+              documentElement: { dataset: {}, style: { setProperty(name, value) { this[name] = value; }, removeProperty(name) { delete this[name]; } } },
               querySelector: () => meta,
               dispatchEvent: (event) => changes.push(event.detail),
             },
@@ -69,6 +70,41 @@ module RemoteUIAppearanceTest
         full.appearance.setPreference("light");
         assert.equal(full.appearance.getState().persistent, false, "a quota failure is disclosed");
         assert.equal(fixture("system", { noMedia: true }).appearance.getState().mode, "dark", "unavailable OS API has a safe default");
+        const custom = fixture("dark");
+        const theme = custom.appearance.getThemeState().sample;
+        custom.appearance.importTheme(JSON.stringify(theme));
+        assert.equal(custom.window.document.documentElement.dataset.theme, "midnight");
+        assert.equal(custom.meta.content, theme.colors.canvas);
+        assert.equal(custom.window.document.documentElement.style["--ds-action-brand"], theme.colors.accent);
+        const savedThemes = custom.values.get("hq.remote.themes.v1");
+        const cold = fixture("dark", { savedThemes });
+        assert.equal(cold.window.document.documentElement.dataset.theme, "midnight", "saved palette applies synchronously on cold load");
+        assert.equal(cold.window.document.documentElement.style["--boot-bg"], theme.colors.canvas);
+        const reloaded = fixture("dark");
+        reloaded.storage(savedThemes, reloaded.window.localStorage, "hq.remote.themes.v1");
+        assert.equal(reloaded.window.document.documentElement.dataset.theme, "midnight", "theme changes sync between tabs");
+        custom.appearance.setPreference("light");
+        assert.equal(custom.window.document.documentElement.dataset.theme, "nord", "light selection is independent");
+        assert.equal(custom.window.document.documentElement.style["--ds-action-brand"], undefined, "custom overrides are removed for built-ins");
+        custom.appearance.setPreference("dark");
+        assert.equal(custom.window.document.documentElement.dataset.theme, "midnight");
+        for (const value of ["invalid", JSON.stringify({ bad: true }), JSON.stringify({ ...theme, colors: { ...theme.colors, accent: ["#ffffff"] } }), JSON.stringify({ ...theme, id: "dracula" }), JSON.stringify({ ...theme, colors: { ...theme.colors, accent: "url(https://example.com)" } }), JSON.stringify({ ...theme, colors: { ...theme.colors, unknown: "#ffffff" } })]) {
+          assert.throws(() => custom.appearance.importTheme(value));
+          assert.equal(custom.window.document.documentElement.dataset.theme, "midnight", "invalid themes preserve the current palette");
+        }
+        assert.equal(custom.appearance.setTheme("light", "midnight"), false);
+        assert.equal(custom.appearance.setTheme("bad", "midnight"), false);
+        assert.throws(() => custom.appearance.importTheme(JSON.stringify({ ...theme, mode: "light" })), /different id/);
+        custom.appearance.importTheme(JSON.stringify({ ...theme, name: "Midnight edited" }));
+        assert.equal(custom.appearance.getThemeState().custom.length, 1, "editing updates one theme");
+        assert.equal(custom.appearance.getThemeState().custom[0].name, "Midnight edited");
+        custom.appearance.removeTheme("dark");
+        assert.equal(custom.window.document.documentElement.dataset.theme, "dracula");
+        assert.equal(custom.appearance.getThemeState().custom.length, 0);
+        reloaded.storage("corrupt", reloaded.window.localStorage, "hq.remote.themes.v1");
+        assert.equal(reloaded.window.document.documentElement.dataset.theme, "dracula");
+        denied.appearance.importTheme(JSON.stringify(theme));
+        assert.equal(denied.appearance.getState().persistent, false);
         assert(light.changes.length > 1, "the UI is notified without rebuilding forms");
       JS
       script.flush

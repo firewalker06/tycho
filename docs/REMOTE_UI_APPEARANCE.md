@@ -1,6 +1,6 @@
 # Remote UI appearance
 
-Settings → Configuration → Appearance offers **Dark**, **Light (Nord)**, and
+Settings → Configuration → Appearance offers **Dark**, **Light**, and
 **System**. Dark remains the default for a new browser, a missing preference,
 or an invalid preference. Selecting System explicitly follows the browser's
 `prefers-color-scheme` value and responds to later OS changes. An explicit Light
@@ -152,3 +152,85 @@ both random variants, equal dot gaps, Settings persistence, literal text, reduce
 motion, route readiness, missing
 script, and offline retry checks in desktop/mobile Dark/Light. Set
 `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the repository to retain screenshots.
+
+## Custom dark and light themes
+
+Settings → Configuration → Appearance has independent **Dark theme** and
+**Light theme** selectors. The defaults are Dracula for Dark and Nord for
+Light. Color mode still controls which selector is active. System switches
+between the two selected palettes when the device color mode changes.
+
+Open **Customize themes and agent prompt guide**. Edit the JSON template, or
+ask an agent to make a palette. Select **Save theme** to add and select it for
+its declared mode. Saving an existing id replaces that palette. Use a new id
+to keep both versions. Saving a light palette while Dark is active does not
+switch color mode. Select Light to preview it.
+
+Use **Load dark JSON** or **Load light JSON** to edit or copy the selected
+custom palette. For a built-in palette, these buttons load a template for that
+mode; set its colors before saving. Copy the JSON to transfer it to another
+browser. **Remove selected custom dark/light theme** removes that palette and
+restores the default for that mode. Selecting a default alone keeps custom
+palettes available.
+
+A theme has this format (all twelve color roles are required):
+
+```json
+{
+  "id": "midnight",
+  "name": "Midnight",
+  "mode": "dark",
+  "colors": {
+    "canvas": "#17152b",
+    "surface": "#242039",
+    "sunken": "#100f20",
+    "text": "#f4edff",
+    "muted": "#c0b5d4",
+    "border": "#807099",
+    "accent": "#c9a0ff",
+    "inverse": "#17152b",
+    "info": "#88dcf0",
+    "success": "#9fe3b0",
+    "warning": "#f7cc85",
+    "danger": "#ff929f"
+  }
+}
+```
+
+- `id`: starts with a lowercase letter, followed by lowercase letters, digits,
+  or hyphens; at most 40 characters. `dracula` and `nord` are reserved.
+- `name`: 1–60 characters. Names are displayed as text.
+- `mode`: `dark` or `light`. Use a new id to change an existing theme's mode.
+- Colors: six-digit hex values only. CSS, URLs, unknown fields, and incomplete
+  palettes are rejected. A browser can store up to 30 custom themes. Each JSON
+  input is limited to 10,000 characters.
+
+Canvas is the page background. Surface is the panel and assistant background.
+Sunken is the recessed background and subtle action fill. Text and muted are
+foregrounds. Border also supplies boundaries in Light. Accent supplies action
+fills, selection and focus. Inverse supplies text on accent fills in Dark.
+Info, success, warning and danger supply state colors. Light uses its readable
+text role on colored controls and badges, and its border role for focus rings.
+Related legacy and Nord/Dracula
+roles are mapped together so existing product components follow the palette.
+
+The importer checks format, not contrast. Check text against each adjacent
+background (at least 4.5:1), and focus rings and control boundaries (at least
+3:1). Check disabled controls, errors, chat, code, PR diffs, and narrow screens.
+Colors are shared across many components; changing an accent can affect more
+than buttons. Images, uploaded documents, Mermaid's built-in mode palette,
+terminal colors, and the PWA launch splash retain their existing behavior.
+
+Example agent prompt:
+
+> Create a Tycho light theme JSON called Sandstone. Use the twelve roles in
+> the template above and six-digit hex colors. Use warm surfaces and a blue
+> accent. Keep text contrast at least 4.5:1 and control borders and focus rings
+> at least 3:1. Return JSON only. Do not change application code.
+
+Palettes and the two choices use `hq.remote.themes.v1` in browser local
+storage. They share the same origin scope as Color mode. They are not written
+to server configuration or sent to agents. Invalid saved data falls back to
+the defaults. If storage is full or blocked, changes apply for this tab and
+Settings reports the limit. Clearing browser storage removes custom themes.
+The head bootstrap applies the selected palette before CSS and app startup.

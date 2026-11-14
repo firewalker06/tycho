@@ -12,6 +12,17 @@ type: project
 
 2026-11-14
 
+## Custom Remote UI themes
+
+Appearance Settings keeps independent dark and light palette choices, with
+Dracula and Nord as defaults. A browser-local JSON editor imports, updates,
+shares, and removes custom palettes without application code changes. Twelve
+validated color roles map to semantic and legacy UI tokens. Settings includes
+an agent prompt guide; [theme documentation](REMOTE_UI_APPEARANCE.md) defines
+the format, storage scope, and contrast checks. Custom palettes apply in the
+head bootstrap before CSS, follow System mode, and sync across same-origin
+tabs without replacing drafts.
+
 ## Schedules page header
 
 The Schedules page keeps New schedule in the top page header. One page menu
