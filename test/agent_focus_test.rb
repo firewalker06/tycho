@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require "tmpdir"
+require "open3"
+require_relative "support/test_environment"
 require_relative "../lib/hq/domain/agent_focus"
 
 FocusTestAgent = Struct.new(:focus_path, :attachments, :archived, keyword_init: true) do
@@ -55,3 +57,29 @@ Dir.mktmpdir("focus-test") do |dir|
   assert(File.read(agent.focus_path) == "broken", "corrupt saved data must not be overwritten")
 end
 puts "agent_focus_test: ok"
+
+Dir.mktmpdir("tycho-focus-cli-") do |dir|
+  workspace = File.join(dir, "workspace")
+  FileUtils.mkdir_p(workspace)
+  config = File.join(dir, "hq.yml")
+  prompts = File.join(dir, "system_prompts.yml")
+  input = File.join(dir, "focus.json")
+  File.write(config, "projects:\n  - key: fixture\n    name: Focus fixture\n    path: #{workspace}\n    agent: codex\n")
+  File.write(prompts, "custom: Synthetic only\n")
+  File.write(input, JSON.generate([{title: "CLI smoke", icon: "note", items: [{title: "Saved through CLI"}]}]))
+  env = TestEnvironment.command_env(dir).merge("TYCHO_CONFIG_PATH" => config, "TYCHO_SYSTEM_PROMPTS_PATH" => prompts)
+  command = lambda do |*args, stdin: ""|
+    out, err, status = Open3.capture3(env, "bundle", "exec", "bin/tycho", *args, stdin_data: stdin)
+    raise "CLI failed: #{err} #{out}" unless status.success?
+    JSON.parse(out)
+  end
+  created = command.call("agent", "create", "fixture", "Synthetic only", "--name", "Focus fixture", "--json")
+  key = created.fetch("key")
+  empty = command.call("agent", "focus", key, "--json")
+  raise "bad initial revision" unless empty["revision"] == 0
+  saved = command.call("agent", "focus", key, "--file", input, "--revision", "0", "--json")
+  raise "bad saved revision" unless saved["revision"] == 1
+  cleared = command.call("agent", "focus", key, "--file", "-", "--revision", "1", stdin: "[]")
+  raise "stdin clear failed" unless cleared["revision"] == 2 && cleared["sections"] == []
+  puts "agent_focus_cli: ok (file, integer revision, JSON, stdin clear)"
+end

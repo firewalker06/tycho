@@ -1917,6 +1917,7 @@ module HQ
     end
 
     def agent_focus(agent_key, opts = {}, out: $stdout, err: $stderr)
+      revision = opts[:revision].nil? ? nil : Integer(opts[:revision].to_s, 10)
       sections = if opts[:file]
                    source = opts[:file] == "-" ? $stdin.read(AgentFocus::MAX_BYTES + 1) : File.read(opts[:file], AgentFocus::MAX_BYTES + 1)
                    raise AgentFocus::Error, "Focus input is too large" if source.bytesize > AgentFocus::MAX_BYTES
@@ -1929,7 +1930,7 @@ module HQ
                    client = remote_client(opts[:server])
                    path = "#{remote_resource_path("agents", agent_key)}/focus"
                    response = if opts[:file]
-                                client.request("PUT", path, body: { "sections" => sections, "revision" => opts[:revision] })
+                                client.request("PUT", path, body: { "sections" => sections, "revision" => revision })
                               else
                                 client.request("GET", path)
                               end
@@ -1941,7 +1942,7 @@ module HQ
                    if opts[:file]
                      result = nil
                      agent_store_for_all.update_agent!(agent_key) do |current|
-                       result = AgentFocus.new(current).replace(sections, expected_revision: opts[:revision])
+                       result = AgentFocus.new(current).replace(sections, expected_revision: revision)
                      end
                      result
                    else
