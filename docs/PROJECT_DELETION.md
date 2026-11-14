@@ -1,7 +1,9 @@
 # Project deletion
 
 In the Remote UI, open a project menu and select **Edit project**. The **Delete
-project** section explains the effects. Type the project key, then select
+project** controls sit in a separate **Danger zone**, with a large gap after Save.
+Visible deletion explanations use at most three sentences, including confirmation.
+Type the project key, then select
 **Delete project**. A second dialog has **Cancel** as its initial focus.
 
 The default stops all project agents, archives them with their pending work and
@@ -10,7 +12,7 @@ The project directory and its files stay on disk. Archived project configuration
 remains available for audit. This uses the same lifecycle and rollback behavior
 as the existing project archive command.
 
-The unchecked **Permanently remove project agents and logs** option removes the
+The unchecked **Permanently remove agents and identified logs** option removes the
 new agent archives, previous agent archives with the same project identity, and
 project-log archives with a matching identity record. This cannot be undone.
 It does not remove the project directory. Old project-log archives without a

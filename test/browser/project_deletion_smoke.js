@@ -13,7 +13,25 @@ const fixture = process.env.TYCHO_DELETION_FIXTURE_ROOT;
   const errors = [];
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   page.on("pageerror", error => errors.push(error.message));
-  const shot = async name => { if (capture) await page.screenshot({ path: path.join(capture, `${name}.png`), fullPage: false }); };
+  const evidence = [];
+  const settle = async () => {
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await page.evaluate(() => Promise.all(document.getAnimations()
+      .filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity)
+      .map(animation => animation.finished.catch(() => {}))));
+  };
+  const copyCount = async state => {
+    const copy = await page.evaluate(() => {
+      const nodes = [...new Set(document.querySelectorAll("[data-project-deletion-effects], [data-project-deletion-status], #confirmation-description, #confirmation-title"))]
+        .filter(node => node.getClientRects().length && getComputedStyle(node).visibility !== "hidden" && node.textContent.trim());
+      const texts = nodes.map(node => node.textContent.trim());
+      const segmenter = new Intl.Segmenter("en", { granularity: "sentence" });
+      return { texts, sentences: texts.reduce((sum, text) => sum + [...segmenter.segment(text)].length, 0) };
+    });
+    assert(copy.sentences <= 3, `${state}: ${copy.sentences} sentences: ${copy.texts.join(" ")}`);
+    evidence.push({ state, ...copy });
+  };
+  const shot = async name => { await settle(); await copyCount(name); if (capture) await page.screenshot({ path: path.join(capture, `${name}.png`), fullPage: false }); };
   const request = async (method, route, data) => {
     const response = await page.request.fetch(`${base}${route}`, { method, data });
     assert(response.ok(), `${method} ${route}: ${response.status()} ${await response.text()}`);
@@ -33,16 +51,35 @@ const fixture = process.env.TYCHO_DELETION_FIXTURE_ROOT;
     await page.getByText("Type the project key to confirm deletion.", { exact: true }).waitFor();
     assert.equal((await request("GET", "/projects/demo/deletion")).deletion, null);
     await page.locator('[name="confirmation"]').fill("demo");
-    await shot("desktop-delete-project");
-    await page.locator('#project-delete-form [type="submit"]').click();
-    await page.getByRole("dialog", { name: "Delete project?" }).waitFor();
-    await shot("desktop-confirm-project");
-    await page.locator('[data-confirmation-cancel]').click();
-    assert.equal((await request("GET", "/projects/demo/deletion")).deletion, null);
-    await page.setViewportSize({ width: 390, height: 844 });
-    await page.locator("#project-delete-form").scrollIntoViewIfNeeded();
-    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-    await shot("mobile-delete-project");
+    for (const removeData of [false, true]) {
+      await page.locator('[name="remove_data"]').setChecked(removeData);
+      await page.evaluate(() => refresh({ force: true }));
+      assert.equal(await page.locator('[name="remove_data"]').isChecked(), removeData);
+      assert.equal(await page.locator('[data-project-deletion-effects]').textContent(), removeData
+        ? "Agents and identified logs are permanently removed; the project directory stays on disk."
+        : "Agents stop and are archived with their logs; the project directory stays on disk.");
+      for (const [viewport, size] of [["desktop", { width: 1440, height: 1000 }], ["mobile", { width: 390, height: 844 }]]) {
+        await page.setViewportSize(size);
+        await settle();
+        await page.locator("#project-delete-form").scrollIntoViewIfNeeded();
+        const gap = await page.evaluate(() => document.querySelector("#project-delete-form .detail-card").getBoundingClientRect().top - document.querySelector("#project-form .form-actions").getBoundingClientRect().bottom);
+        assert(gap >= 64, `${viewport}: Danger zone gap is only ${gap}px`);
+        evidence.push({ state: `${viewport}-${removeData ? "removal" : "default"}`, gap });
+        assert.equal(await page.getByRole("heading", { name: "Danger zone", exact: true }).count(), 1);
+        assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+        await page.locator('[name="confirmation"]').focus();
+        await page.keyboard.press("Tab");
+        assert(await page.locator('#project-delete-form [type="submit"]').evaluate(node => node === document.activeElement));
+        await shot(`${viewport}-${removeData ? "removal" : "default"}-danger-zone`);
+        await page.keyboard.press("Enter");
+        await page.getByRole("dialog", { name: "Delete project?" }).waitFor();
+        await page.waitForFunction(() => document.activeElement?.hasAttribute("data-confirmation-cancel"));
+        await shot(`${viewport}-${removeData ? "removal" : "default"}-confirmation`);
+        await page.locator('[data-confirmation-cancel]').click();
+        assert.equal((await request("GET", "/projects/demo/deletion")).deletion, null);
+      }
+    }
+    await page.locator('[name="remove_data"]').uncheck();
 
     // Hold POST delivery after the actual server has accepted and processed it.
     let release;
@@ -111,6 +148,11 @@ const fixture = process.env.TYCHO_DELETION_FIXTURE_ROOT;
     await page.setViewportSize({ width: 1440, height: 1000 });
     await shot("desktop-project-deletion-error");
     assert.equal(await fs.readFile(path.join(unsafeTarget, "keep.txt"), "utf8"), "keep unsafe target");
+    const failureCopy = await page.locator('[data-project-deletion-status]').textContent();
+    await page.getByRole("button", { name: "Retry deletion", exact: true }).click();
+    await shot("desktop-retry-confirmation");
+    await page.locator('[data-confirmation-cancel]').click();
+    assert.equal(await page.locator('[data-project-deletion-status]').textContent(), failureCopy);
     await fs.unlink(unsafeLink);
     await page.getByRole("button", { name: "Retry deletion", exact: true }).click();
     await page.locator('[data-confirmation-accept]').click();
@@ -129,7 +171,8 @@ const fixture = process.env.TYCHO_DELETION_FIXTURE_ROOT;
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await shot("mobile-project-data-removed");
     assert.deepEqual(errors, []);
-    console.log("project_deletion_smoke: desktop/mobile confirmation, cancel, key validation, delayed response, archive, reload, purge, failure, retry, workspace preservation: ok");
+    if (capture) await fs.writeFile(path.join(capture, "layout-and-copy.json"), JSON.stringify(evidence, null, 2));
+    console.log("project_deletion_smoke: desktop/mobile danger-zone gap >=64px, copy <=3 sentences, keyboard, confirmation, cancel, delayed response, archive, reload, purge, failure/retry, workspace preservation: ok");
   } finally {
     await browser.close();
   }
