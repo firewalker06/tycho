@@ -18,7 +18,86 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       assert.equal(await page.locator('#bottom-nav [aria-current="page"]').getAttribute("data-tab"), "schedules");
       assert.equal(await page.locator(".schedule-card details.schedule-details").count(), 0);
       assert.equal(await page.locator(".schedule-card summary.schedule-summary-row").count(), 0);
-      assert(await page.locator("[data-new-schedule]").isVisible());
+      const create = page.locator(".app-header [data-new-schedule]");
+      assert(await create.isVisible(), "New schedule is in the page header");
+      assert.equal(await page.locator(".schedule-card [data-new-schedule], .schedule-card .schedule-daemon-menu").count(), 0,
+        "the content card has no duplicate list controls");
+      assert.equal(await page.locator(".app-header .schedule-daemon-menu").count(), 1);
+      await create.focus();
+      await page.evaluate(() => refresh({ force: true }));
+      assert(await create.evaluate(node => node === document.activeElement), "refresh keeps header button focus");
+      const listMenu = page.locator(".app-header .schedule-daemon-menu");
+      await listMenu.locator("summary").focus();
+      await page.keyboard.press("Enter");
+      assert(await listMenu.locator("[data-archive-all-schedule-sessions]").isVisible());
+      assert.equal(await listMenu.locator("[data-delete-schedule], [data-edit-schedule]").count(), 0,
+        "the list menu has no row actions");
+      await page.evaluate(() => refresh({ force: true }));
+      assert(await listMenu.getAttribute("open") !== null, "refresh keeps the list menu open");
+      await listMenu.locator("summary").click();
+      const assertHeaderBounds = async () => {
+        await page.waitForTimeout(250);
+        for (const selector of ["#screen-title", ".app-header [data-new-schedule]", ".app-header .schedule-daemon-menu summary", "#header-more-button"]) {
+          const box = await page.locator(selector).boundingBox();
+          assert(box && box.x >= 0 && box.x + box.width <= page.viewportSize().width,
+            `${selector} stays inside the viewport`);
+        }
+        if (await listMenu.getAttribute("open") !== null) {
+          const menuBox = await listMenu.locator(".schedule-action-popover").boundingBox();
+          assert(menuBox.x >= 0 && menuBox.x + menuBox.width <= page.viewportSize().width,
+            "the list menu stays inside the viewport");
+        }
+        const title = await page.locator("#screen-title").boundingBox();
+        const button = await create.boundingBox();
+        assert(title.y + title.height <= button.y || title.x + title.width <= button.x,
+          "the title and create button do not overlap");
+      };
+      await assertHeaderBounds();
+      // Exercise every daemon menu variant without starting or stopping a process.
+      const originalDaemon = await page.evaluate(() => state.scheduleDaemon);
+      for (const status of ["running", "stale", "untracked", "stopped"]) {
+        await page.evaluate(status => { state.scheduleDaemon = { status }; render(); }, status);
+        await listMenu.locator("summary").click();
+        assert(await listMenu.locator("[data-archive-all-schedule-sessions]").isVisible());
+        assert.equal(await listMenu.locator('[data-scheduler-action="restart"]').isVisible(), status !== "stopped");
+        assert.equal(await listMenu.locator('[data-scheduler-action="stop"]').isVisible(), status !== "stopped");
+        await assertHeaderBounds();
+        if (captureDir && ["running", "stopped"].includes(status)) {
+          fs.mkdirSync(captureDir, { recursive: true });
+          await page.screenshot({ path: path.join(captureDir, `schedule-header-${status}-${theme}-${width}.png`) });
+        }
+        await listMenu.locator("summary").click();
+      }
+      if (width === 390) {
+        await page.setViewportSize({ width: 320, height: 900 });
+        await assertHeaderBounds();
+        await page.setViewportSize({ width, height: 900 });
+      }
+      if (width === 1440 && theme === "dark") {
+        const requests = [];
+        const stubAction = async route => {
+          requests.push(new URL(route.request().url()).pathname);
+          await route.fulfill({ status: 403, contentType: "application/json", body: '{"error":"Synthetic action denial"}' });
+        };
+        await page.route("**/schedules/daemon/*", stubAction);
+        await page.route("**/schedules/archive-sessions", stubAction);
+        for (const action of ["start", "restart", "stop", "archive"]) {
+          await page.evaluate(action => { state.scheduleDaemon = { status: action === "start" ? "stopped" : "running" }; render(); }, action);
+          if (action !== "start") await listMenu.locator("summary").click();
+          const trigger = action === "archive" ? listMenu.locator("[data-archive-all-schedule-sessions]")
+            : page.locator(`.app-header [data-scheduler-action="${action}"]`);
+          const denied = page.waitForResponse(response => response.status() === 403);
+          await trigger.click();
+          if (action !== "start") await page.locator("[data-confirmation-accept]").click();
+          await denied;
+          await page.waitForFunction(() => !state.refreshInFlight);
+          assert(requests.includes(action === "archive" ? "/schedules/archive-sessions" : `/schedules/daemon/${action}`),
+            `${action} uses its existing action endpoint`);
+        }
+        await page.unroute("**/schedules/daemon/*", stubAction);
+        await page.unroute("**/schedules/archive-sessions", stubAction);
+      }
+      await page.evaluate(daemon => { state.scheduleDaemon = daemon; render(); }, originalDaemon);
       const link = page.locator(".sidebar-settings-link");
       assert.equal(await link.isVisible(), width >= 1100);
       assert.equal(await page.locator("#bottom-nav .sidebar-settings-link").count(), 0);
@@ -90,7 +169,8 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       await page.locator("#schedule-form").waitFor();
       await page.locator("[data-cancel-schedule-form]").click();
       await page.waitForURL("**/ui#schedules");
-      await page.locator("[data-new-schedule]").click();
+      await page.locator("[data-new-schedule]").focus();
+      await page.keyboard.press("Enter");
       await page.locator("#schedule-form").waitFor();
       await page.locator("#back-button").click();
       await page.waitForURL("**/ui#schedules");

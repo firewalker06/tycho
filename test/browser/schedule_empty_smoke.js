@@ -28,6 +28,8 @@ module.exports = async ({ browser, baseUrl, captureDir, agentKey }) => {
         }
       };
       await capture("empty");
+      assert.equal(await page.locator(".app-header .schedule-management-actions").count(), 0,
+        "the first-schedule action keeps its existing empty-state location");
       const settings = page.locator(".sidebar-settings-link");
       if (width >= 1100) {
         const box = await settings.boundingBox();
@@ -106,6 +108,8 @@ module.exports = async ({ browser, baseUrl, captureDir, agentKey }) => {
       assert(await page.getByText("Schedules unavailable", { exact: true }).isVisible());
       assert.equal(await page.locator("#schedule-empty-title").count(), 0);
       await capture("error");
+      assert.equal(await page.locator(".app-header .schedule-management-actions").count(), 0,
+        "a failed read does not expose list controls");
       await page.unroute(`${baseUrl}/schedules`);
       await page.evaluate(() => refresh({ force: true }));
       await page.locator("#schedule-empty-title").waitFor();
@@ -115,6 +119,8 @@ module.exports = async ({ browser, baseUrl, captureDir, agentKey }) => {
       await page.evaluate(() => { state.schedulesLoaded = false; state.schedules = []; render(); void refresh({ force: true }); });
       assert(await page.locator(".card-title strong").filter({ hasText: "Loading schedules…" }).isVisible());
       assert.equal(await page.locator("#schedule-empty-title").count(), 0);
+      assert.equal(await page.locator(".app-header .schedule-management-actions").count(), 0,
+        "loading does not expose list controls");
       release();
       await page.waitForFunction(() => !state.refreshInFlight);
       await page.locator("#schedule-empty-title").waitFor();

@@ -12,6 +12,15 @@ type: project
 
 2026-11-14
 
+## Schedules page header
+
+The Schedules page puts New schedule and the list action menu in the top page
+header. Narrow screens use a separate header row for these controls. Daemon
+controls keep their existing actions, and each schedule row keeps its own menu.
+The first-schedule action, loading state, and connection error state keep their
+existing behavior. Header controls retain focus and open menus across unchanged
+refreshes.
+
 ## PWA startup screen
 
 The startup screen selects one of two animations at random once per startup:
