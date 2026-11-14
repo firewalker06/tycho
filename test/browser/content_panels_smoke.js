@@ -59,7 +59,7 @@ module.exports = async function contentPanelsSmoke({ browser, baseUrl, agentKey,
           expanded: button.getAttribute("aria-expanded"), collapseUnavailable: button.getAttribute("aria-disabled") === "true", name: button.getAttribute("aria-label"), tooltip: button.title,
           targetVisible: target?.getClientRects().length > 0, targetExists: Boolean(target),
           x: rect.x, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height,
-          topBorder: getComputedStyle(heading).borderTopWidth, radius: getComputedStyle(heading).borderRadius, toggleRadius: getComputedStyle(button).borderRadius,
+          topBorder: getComputedStyle(heading).borderTopWidth, bottomBorder: getComputedStyle(heading).borderBottomWidth, sideBorders: [getComputedStyle(heading).borderLeftWidth, getComputedStyle(heading).borderRightWidth], radius: getComputedStyle(heading).borderRadius, toggleRadius: getComputedStyle(button).borderRadius,
           labelWidth: labelRect.width, labelHeight: labelRect.height };
       });
       return { sidebar, headings, workspace: { top: workspace.top, bottom: workspace.bottom, height: workspace.height }, width: innerWidth, usable: root.clientWidth, visible: root.dataset.visiblePanels?.split(" "), overflow: document.documentElement.scrollWidth > innerWidth,
@@ -81,6 +81,8 @@ module.exports = async function contentPanelsSmoke({ browser, baseUrl, agentKey,
         const expanded = layout.visible.includes(heading.key);
         if (!expanded) {
           assert.equal(heading.topBorder, "0px", "Collapsed strips must join the header without a top border");
+          assert.equal(heading.bottomBorder, "0px", "Collapsed strips must have no bottom border");
+          assert.deepEqual(heading.sideBorders, ["1px", "1px"], "Collapsed strips must retain side separators");
           assert.equal(heading.radius, "0px", "Collapsed strip corners must be square");
           assert.equal(heading.toggleRadius, "0px", "Collapsed toggle corners must be square");
         }
