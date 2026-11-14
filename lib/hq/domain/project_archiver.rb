@@ -19,7 +19,8 @@ module HQ
       @scheduler = scheduler || Scheduler.new(registry:)
     end
 
-    def archive(project_key, now: Time.now, agents: nil)
+    def archive(project_key, now: Time.now, agents: nil, deletion_request_id: nil, remove_configuration: true)
+      @registry.assert_project_not_deleting!(project_key, request_id: deletion_request_id)
       config = @registry.projects.find { |candidate| candidate.key == project_key.to_s }
       raise ArgumentError, "Unknown project: #{project_key}" unless config
 
@@ -33,6 +34,9 @@ module HQ
       FileTransaction.run(transaction_paths) do |transaction|
         project_archive = project.archive_logs!(now:)
         restore_project_logs(transaction, project, project_archive)
+        if project_archive
+          FileStore.write_json(File.join(project_archive, "project_manifest.json"), { "project_key" => project.key }, backup: false)
+        end
         original_paths = project_agents.to_h do |agent|
           [agent.key, agent.log_files.select { |path| File.exist?(path) }]
         end
@@ -50,7 +54,7 @@ module HQ
           reconcile_archived_agent(agent, now:)
           destination
         end
-        @registry.archive_project!(project.key)
+        @registry.archive_project!(project.key, deletion_request_id:) if remove_configuration
         Result.new(
           project: config,
           archived_agent_keys: project_agents.map(&:key),
@@ -84,6 +88,7 @@ module HQ
 
       transaction.on_rollback do
         FileUtils.mkdir_p(File.dirname(project.log_dir))
+        FileUtils.rm_f(File.join(destination, "project_manifest.json"))
         FileUtils.mv(destination, project.log_dir) if File.exist?(destination)
       end
     end
