@@ -2376,10 +2376,6 @@ span.harness-mark {
     gap: 6px;
   }
 
-  .schedule-management-actions > [data-scheduler-action] {
-    order: 1;
-  }
-
   .header-schedule-menu .schedule-daemon-menu {
     position: static;
   }

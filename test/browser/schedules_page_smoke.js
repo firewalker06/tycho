@@ -57,7 +57,11 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       const originalDaemon = await page.evaluate(() => state.scheduleDaemon);
       for (const status of ["running", "stale", "untracked", "stopped"]) {
         await page.evaluate(status => { state.scheduleDaemon = { status }; render(); }, status);
-        await listMenu.locator("summary").click();
+        await create.focus();
+        await page.keyboard.press("Tab");
+        assert(await listMenu.locator("summary").evaluate(node => node === document.activeElement),
+          "the list menu is next after New schedule in keyboard order");
+        await page.keyboard.press("Enter");
         assert(await listMenu.locator("[data-archive-all-schedule-sessions]").isVisible());
         assert.equal(await listMenu.locator('[data-scheduler-action="restart"]').isVisible(), status !== "stopped");
         assert.equal(await listMenu.locator('[data-scheduler-action="stop"]').isVisible(), status !== "stopped");
