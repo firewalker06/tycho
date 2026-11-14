@@ -1,6 +1,6 @@
 # Remote UI appearance
 
-Settings → Configuration → Appearance offers **Dark**, **Light (Nord)**, and
+Settings → Configuration → Appearance offers **Dark**, **Light**, and
 **System**. Dark remains the default for a new browser, a missing preference,
 or an invalid preference. Selecting System explicitly follows the browser's
 `prefers-color-scheme` value and responds to later OS changes. An explicit Light
@@ -152,3 +152,234 @@ both random variants, equal dot gaps, Settings persistence, literal text, reduce
 motion, route readiness, missing
 script, and offline retry checks in desktop/mobile Dark/Light. Set
 `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the repository to retain screenshots.
+
+## Custom dark and light themes
+
+Settings → Configuration → Appearance has independent **Dark theme** and
+**Light theme** selectors. The defaults are Dracula for Dark and Nord for
+Light. Color mode still controls which selector is active. System switches
+between the two selected palettes when the device color mode changes.
+
+Open **Customize themes and agent prompt guide**. Edit the JSON template, or
+ask an agent to make a palette. Select **Save theme** to add and select it for
+its declared mode. Saving an existing id replaces that palette. Use a new id
+to keep both versions. Saving a light palette while Dark is active does not
+switch color mode. Select Light to preview it.
+
+Use **Load dark JSON** or **Load light JSON** to edit or copy the selected
+custom palette. For a built-in palette, these buttons load a template for that
+mode; set its colors before saving. Copy the JSON to transfer it to another
+browser. **Remove selected custom dark/light theme** removes that palette and
+restores the default for that mode. Selecting a default alone keeps custom
+palettes available.
+
+A theme has this format (all twelve color roles are required):
+
+```json
+{
+  "id": "midnight",
+  "name": "Midnight",
+  "mode": "dark",
+  "colors": {
+    "canvas": "#17152b",
+    "surface": "#242039",
+    "sunken": "#100f20",
+    "text": "#f4edff",
+    "muted": "#c0b5d4",
+    "border": "#807099",
+    "accent": "#c9a0ff",
+    "inverse": "#17152b",
+    "info": "#88dcf0",
+    "success": "#9fe3b0",
+    "warning": "#f7cc85",
+    "danger": "#ff929f"
+  }
+}
+```
+
+- `id`: starts with a lowercase letter, followed by lowercase letters, digits,
+  or hyphens; at most 40 characters. `dracula` and `nord` are reserved.
+- `name`: 1–60 characters. Names are displayed as text.
+- `mode`: `dark` or `light`. Use a new id to change an existing theme's mode.
+- Colors: six-digit hex values only. CSS, URLs, unknown fields, and incomplete
+  palettes are rejected. A browser can store up to 30 custom themes. Each JSON
+  input is limited to 10,000 characters.
+
+Canvas is the page background. Surface is the panel and assistant background.
+Sunken is the recessed background and subtle action fill. Text and muted are
+foregrounds. Border also supplies boundaries in Light. Accent supplies action
+fills, selection and focus. Inverse supplies text on accent fills in Dark.
+Info, success, warning and danger supply state colors. Light uses its readable
+text role on colored controls and badges, and its border role for focus rings.
+Related legacy and Nord/Dracula
+roles are mapped together so existing product components follow the palette.
+
+The importer checks format, not contrast. Check text against each adjacent
+background (at least 4.5:1), and focus rings and control boundaries (at least
+3:1). Check disabled controls, errors, chat, code, PR diffs, and narrow screens.
+Colors are shared across many components; changing an accent can affect more
+than buttons. Images, uploaded documents, Mermaid's built-in mode palette,
+terminal colors, and the PWA launch splash retain their existing behavior.
+
+Example agent prompt:
+
+> Create a Tycho light theme JSON called Sandstone. Use the twelve roles in
+> the template above and six-digit hex colors. Use warm surfaces and a blue
+> accent. Keep text contrast at least 4.5:1 and control borders and focus rings
+> at least 3:1. Return JSON only. Do not change application code.
+
+Palettes and the two choices use `hq.remote.themes.v1` in browser local
+storage. They share the same origin scope as Color mode. They are not written
+to server configuration or sent to agents. Invalid saved data falls back to
+the defaults. If storage is full or blocked, changes apply for this tab and
+Settings reports the limit. Clearing browser storage removes custom themes.
+The head bootstrap applies the selected palette before CSS and app startup.
+
+## Scene backdrops and four example themes
+
+The reference in [Card 877](https://fizzy.startkit.tech/1/cards/877) and the
+[ClaudeDevs video](https://x.com/ClaudeDevs/status/2121392666244186327) shows
+scene artwork behind the conversation, including a striped sunset and neon
+grid. Tycho's examples use original, code-drawn vector scenes. No reference
+images or video are bundled or fetched by the UI.
+
+| Example | Mode | Backdrop |
+| --- | --- | --- |
+| Synthwave Sunset | Dark | Striped gold/pink sun, stars, outlined mountains, perspective grid |
+| Aurora Night | Dark | Green/teal ribbons, stars, distant mountain silhouettes |
+| Paper Garden | Light | Sage leaves, curved stems, warm sun, paper-colored ground |
+| Coastal Morning | Light | Blue wave layers, gold sun, distant birds |
+
+All four are available without import. In Settings → Configuration → Appearance,
+select a theme from the Dark/Light selector, or use a **Scene examples** tile.
+A tile selects its theme and its Color mode so you can try it immediately.
+The other mode's choice is retained. Dracula and Nord remain the defaults and
+have no scene. Existing palette-only custom themes retain their selected ids
+and appearance. The examples are separate from the 30-theme custom limit and
+cannot be removed. Their reserved ids start with `builtin:`.
+
+Select an example, then open the prompt guide and use **Load dark JSON** or
+**Load light JSON**. This loads an editable copy with a new custom id, such as
+`synthwave-copy`. Change the id again if you want to keep an existing copy.
+Change its colors or backdrop values and select **Save theme**. The built-in
+example stays available. Copying and importing this JSON transfers the scene
+settings as well as the palette.
+
+Add this optional top-level field beside `colors` in any custom theme JSON:
+
+```json
+"backdrop": {
+  "style": "synthwave",
+  "colors": ["#f6c66e", "#ed4fbd", "#9a9cff"],
+  "intensity": 0.8,
+  "motion": "slow"
+}
+```
+
+- `style`: `synthwave`, `aurora`, `garden`, or `coast`.
+- `colors`: exactly three six-digit hex colors. For synthwave they are sun
+  start, sun end/grid, and glow/mountain lines. For aurora they are ribbon
+  start/mountains, ribbon end, and glow/stars. For garden they are leaves,
+  stems/alternate leaves, and sun. For coast they are waves/birds, deeper
+  waves, and sun/shore.
+- `intensity`: a number from 0 to 1. Zero hides the artwork; 1 shows its full
+  strength. The palette's canvas remains underneath.
+- `motion`: `none` for a still scene, or `slow` for a 28-second eased drift.
+  The device's reduced-motion setting stops this movement.
+
+Remove the `backdrop` field to return a custom theme to a flat canvas. Updating
+an existing custom id can add or remove a backdrop. The same browser storage,
+cold-load, System-mode, cross-tab, and draft-preservation rules apply. Scene
+art stays behind controls and text panels and cannot receive clicks. Mobile
+uses a crop that keeps the right-hand scene visible. All scenes are local SVG
+backgrounds; JSON cannot supply CSS, SVG markup, asset paths, or network URLs.
+
+Example agent prompt for a backdrop:
+
+> Load the Synthwave Sunset example as a custom copy. Keep its twelve palette
+> roles readable. Change the backdrop to aurora, with teal, blue, and pale green
+> hex colors, intensity 0.65, and motion slow. Use a new id and name. Return
+> valid theme JSON only. Do not change application code.
+
+Check scene strength on desktop and mobile, especially text outside cards,
+focus, and disabled controls. The importer checks the field format, not visual
+contrast. Use the existing appearance smoke command to verify all four scenes,
+preview tiles, scene copying, reduced motion, and old palette-only themes.
+
+## Local raster-image backdrops
+
+Settings → Configuration → Appearance → **Local image backdrop** lets you choose
+or replace an image for the current Dark or Light mode. Each mode has one image.
+The image replaces that mode's vector scene but does not change its selected
+palette. Switching palettes keeps the image. **Remove image** restores the
+selected theme's scene or flat canvas. The preview shows the saved image and
+its crop. **Image strength** controls its opacity; **Soft center fade** adds a
+palette-colored fade over the center. This is a fade, not a blur. Horizontal
+and vertical focal-position controls choose the crop with percentages from
+0 to 100. Images use cover sizing, so narrow screens can crop more of the sides.
+Text panels and navigation retain solid semantic surfaces, including peer panels.
+
+Images stay in this browser profile on this device, at this exact origin
+(scheme, host, and port). They are not uploaded to Tycho and are not synced to
+other devices or server addresses. IndexedDB database `tycho-backdrop-images`,
+store `backdrops`, contains one normalized Blob and its settings per mode.
+No image bytes, base64 payloads, or object URLs are written to localStorage or
+portable theme JSON. Existing theme choices and old palette-only themes are
+not migrated or overwritten.
+
+| Input limit | Value |
+| --- | --- |
+| Formats | PNG, JPEG, WebP |
+| Encoded bytes | At most 5 MiB |
+| Dimensions before decode | At most 4096 pixels per side and 12,000,000 pixels total |
+| Saved longest edge | At most 2560 pixels, with aspect ratio retained |
+| Saved bytes | At most 5 MiB per mode |
+
+The controller checks MIME type, file signature, header dimensions, and a real
+browser decode. SVG, GIF, file paths, and network URLs are not accepted. It
+renders the decoded first frame into a canvas and saves a still WebP copy
+(quality 0.9); browsers without canvas WebP encoding can return PNG. This strips
+source metadata and animation. Oversized input, corrupt files, decode failures,
+and failed saves show an error and keep the previous image. The saved copy can
+have different bytes, dimensions, and quality from the original. Keep the
+original file if you need it later.
+
+The small localStorage change marker and BroadcastChannel notify other tabs
+at this origin. Focus and visibility changes also refresh image state. Reload
+reads the saved Blob asynchronously; the existing palette/vector scene is the
+fallback while it loads. No image decoding or encoding runs on scroll, and
+settings changes reuse the same object URL. Replacement, removal, stale loads,
+and page disposal release unused object URLs. Browser data deletion or a
+missing image restores the palette/vector fallback. A damaged stored image
+shows a recovery message and can be replaced or removed. **Retry image storage**
+retries after storage becomes available. A blocked/full store does not silently
+replace the previous saved image. Site data can be cleared or evicted by the
+browser; keep a downloaded copy of images you want to retain.
+
+### Transfer and theme JSON
+
+**Download saved image** exports the normalized raster copy for the active mode,
+with its real file extension. To transfer a complete look, copy the palette or
+vector theme JSON separately, download the image, then choose that downloaded
+file in the other browser. Image strength, center fade, and focal position are
+local mode settings; set them again in the receiving browser. Theme JSON never
+contains a local image id, temporary URL, or missing file reference. Importing
+JSON does not transfer or remove a mode's existing local image. Remove that
+image to see an imported vector scene.
+
+The Settings agent prompt guide keeps this boundary explicit: agents can
+prepare portable palette/vector JSON, while the user chooses a raster file
+through **Local image backdrop**. Do not ask an agent to put image bytes or
+URLs into theme JSON.
+
+### Verification
+
+The existing appearance smoke command also exercises image selection,
+replacement/removal, real PNG/JPEG/WebP decode, dimension and byte limits,
+normalization, reload, two-tab updates, separate modes, storage failures,
+missing records, stale decode cancellation, object URL cleanup, and download
+transfer. All browser state belongs to throwaway fixtures. The synthetic
+landscape is an owned canvas-generated PNG, selected through the actual file
+input. The smoke prints image-load time and measured Settings-scroll frame
+gaps for its fixture and Chrome version; those measurements are not a general
+performance guarantee.

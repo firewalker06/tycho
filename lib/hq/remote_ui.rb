@@ -13,6 +13,7 @@ module HQ
     CSS_PATH = File.join(ROOT, "assets", "app.css")
     LIGHT_CSS_PATH = File.join(ROOT, "assets", "light.css")
     APPEARANCE_JS_PATH = File.join(ROOT, "assets", "appearance.js")
+    BACKDROP_IMAGES_JS_PATH = File.join(ROOT, "assets", "backdrop_images.js")
     STARTUP_JS_PATH = File.join(ROOT, "assets", "startup.js")
     HELPERS_JS_PATH = File.join(ROOT, "assets", "app_helpers.js")
     JS_PATH = File.join(ROOT, "assets", "app.js")
@@ -61,6 +62,7 @@ module HQ
       CSS_PATH,
       LIGHT_CSS_PATH,
       APPEARANCE_JS_PATH,
+      BACKDROP_IMAGES_JS_PATH,
       STARTUP_JS_PATH,
       HELPERS_JS_PATH,
       JS_PATH,
@@ -107,7 +109,7 @@ module HQ
     end
 
     def self.appearance_js
-      asset_content(APPEARANCE_JS_PATH)
+      [asset_content(APPEARANCE_JS_PATH), asset_content(BACKDROP_IMAGES_JS_PATH)].join("\n")
     end
 
     def self.startup_js

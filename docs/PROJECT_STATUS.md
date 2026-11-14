@@ -12,6 +12,26 @@ type: project
 
 2026-11-14
 
+## Custom Remote UI themes
+
+Appearance Settings keeps independent dark and light palette choices, with
+Dracula and Nord as defaults. A browser-local JSON editor imports, updates,
+shares, and removes custom palettes without application code changes. Twelve
+validated color roles map to semantic and legacy UI tokens. Settings includes
+an agent prompt guide; [theme documentation](REMOTE_UI_APPEARANCE.md) defines
+the format, storage scope, and contrast checks. Custom palettes apply in the
+head bootstrap before CSS, follow System mode, and sync across same-origin
+tabs without replacing drafts. Four scene examples (two Dark, two Light) add
+visible SVG backdrops: Synthwave Sunset, Aurora Night, Paper Garden, and Coastal
+Morning. Settings has preview tiles and editable example copies. Custom JSON
+can choose a scene, three colors, intensity, and still/slow motion. Reduced
+motion stops drift; old palette-only themes keep their existing appearance.
+Optional raster backdrops are stored per color mode as browser-local IndexedDB
+Blobs. Settings provides preview, replacement/removal, strength, center fade,
+focal position, recovery, and a separate image download. Portable theme JSON
+contains no local image reference; no image is sent to the server.
+
+
 ## Agent Focus
 
 Each agent has a durable Focus document for current actionable state. Agents
@@ -25,6 +45,7 @@ narrow/mobile views start closed. Explicit choices survive polling, resizing,
 and navigation. Focus and Conversation scroll independently. Summary and
 attachment panels keep their existing state. See
 [Agent Focus](AGENT_FOCUS.md) for schema, update rules, limits, and verification.
+
 ## Background project deletion
 
 Remote UI project settings offer Delete project with typed key confirmation.

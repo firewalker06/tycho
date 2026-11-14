@@ -10696,6 +10696,67 @@ body:has(.inquiry-form-full-screen) {
 .project-created-dialog code { white-space: normal; overflow-wrap: anywhere; }
 .project-created-dialog > button { width: 100%; }
 
+
+/* Scene artwork never receives input or sits above content. Text surfaces stay opaque. */
+:root:not([data-backdrop="none"])[data-backdrop] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: var(--theme-backdrop-image);
+  background-position: center;
+  background-size: cover;
+  opacity: var(--theme-backdrop-opacity, 0);
+}
+:root:not([data-backdrop="none"])[data-backdrop] body { isolation: isolate; }
+:root[data-backdrop-motion="slow"]:not([data-backdrop="none"]) body::before {
+  animation: theme-scene-drift 28s ease-in-out infinite alternate;
+}
+@keyframes theme-scene-drift {
+  from { transform: scale(1.03) translateY(0); }
+  to { transform: scale(1.08) translateY(-1%); }
+}
+@media (max-width: 600px) {
+  :root[data-backdrop][data-backdrop-motion] body::before { background-position: 85% center; }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-backdrop][data-backdrop-motion] body::before { animation: none; }
+}
+
+.theme-examples { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.theme-example { display: grid; gap: 6px; text-align: left; padding: 8px; white-space: normal; }
+.theme-example-art { display: block; width: 100%; aspect-ratio: 1.6; background-size: cover; border-radius: 4px; pointer-events: none; }
+.theme-example[aria-pressed="true"] { outline: 2px solid var(--ds-focus-ring); outline-offset: 2px; }
+.theme-example small { color: var(--muted); }
+@media (max-width: 600px) { .theme-examples { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+:root:not([data-backdrop="none"])[data-backdrop] :is(.bottom-nav, .sidebar-settings-link, .message-group > summary) {
+  background: var(--panel);
+}
+
+
+/* Raster images are browser-local, still, and independent of the selected palette. */
+:root[data-appearance][data-image-backdrop="ready"] body { isolation: isolate; }
+:root[data-appearance][data-image-backdrop="ready"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: radial-gradient(ellipse at center, color-mix(in srgb, var(--bg) var(--theme-raster-fade), transparent), transparent 80%), var(--theme-raster-image);
+  background-size: cover;
+  background-position: var(--theme-raster-position);
+  opacity: var(--theme-raster-opacity);
+  animation: none;
+}
+:root[data-image-backdrop="ready"] :is(.bottom-nav, .sidebar-settings-link, .message-group > summary) { background: var(--panel); }
+.theme-image-preview { width: min(100%, 600px); aspect-ratio: 1.8; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.theme-image-preview img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.theme-image-settings p { margin: 0; }
+.theme-image-settings input[type="range"] { width: 100%; }
+
+
 /* Focus is a peer content panel; the shell owns its backdrop. */
 body:has(.agent-workspace.has-focus-panel) { overflow: hidden; }
 .content.agent-detail:has(.has-focus-panel) {

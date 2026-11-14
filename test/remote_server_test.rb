@@ -10371,8 +10371,12 @@ module RemoteServerTest
            "expected Agent detail composer to expose a file picker trigger")
     assert(js[:body].include?("data-prompt-attachment-input"),
            "expected Agent detail composer to include a hidden file input")
-    assert(!js[:body].include?("accept="),
+    composer_file_input = js[:body].match(/<input\b[^>]*\bdata-prompt-attachment-input\b[^>]*>/m)&.[](0)
+    assert(composer_file_input && !composer_file_input.match?(/\baccept\s*=/),
            "expected Agent detail composer file input to allow any file type")
+    backdrop_file_input = js[:body].match(/<input\b[^>]*\bdata-theme-image-file\b[^>]*>/m)&.[](0)
+    assert(backdrop_file_input&.include?(%Q(accept="image/png,image/jpeg,image/webp")),
+           "expected backdrop picker to limit raster formats independently of the composer")
     assert(js[:body].include?("content_base64"),
            "expected Remote UI prompt attachments to submit base64 file content")
     assert(js[:body].include?("function renderMessageAttachments"),

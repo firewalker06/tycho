@@ -28,7 +28,8 @@ Dir.mktmpdir("tycho-project-deletion-smoke") do |dir|
   socket.close
   env = TestEnvironment.command_env(dir).merge(
     "TYCHO_CONFIG_PATH" => config, "TYCHO_SYSTEM_PROMPTS_PATH" => prompts,
-    "TYCHO_SCHEDULES_PATH" => File.join(dir, "schedules.yml")
+    "TYCHO_SCHEDULES_PATH" => File.join(dir, "schedules.yml"),
+    "TYCHO_REMOTE_TOKEN" => ""
   )
   log = File.join(dir, "server.log")
   pid = Process.spawn(env, RbConfig.ruby, File.join(root, "bin", "tycho"), "serve", "--host", "127.0.0.1", "--port", port.to_s, out: log, err: log)
