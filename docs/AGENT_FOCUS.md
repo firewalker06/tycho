@@ -7,7 +7,8 @@ and Summary keep the run history. Focus keeps the latest actionable state.
 The Remote UI shows non-empty Focus above Conversation. Each section has a
 title, optional subtitle, icon, and ordered items. Each item has a title,
 optional subtitle, and attachment links. The Focus disclosure works with the
-keyboard and preserves its state during polling. Empty sections show “No items”.
+keyboard and preserves its state during polling. The Focus shortcut beside
+Summary opens it and returns to the current work list in a long conversation. Empty sections show “No items”.
 An empty document hides the card.
 
 ## Read and replace

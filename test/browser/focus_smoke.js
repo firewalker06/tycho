@@ -73,8 +73,15 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     await page.evaluate(() => refresh({ force: true }));
     await focus.getByText("Completed 12 of 23 call sites").waitFor();
     assert.equal(await composer.inputValue(), "Keep this draft");
+    // The dock shortcut must open a collapsed Focus and clear the fixed header.
+    await focus.locator(":scope > summary").click();
+    assert.equal(await focus.evaluate(el => el.open), false);
+    await page.getByRole("button", { name: "Focus", exact: true }).click();
+    assert.equal(await focus.evaluate(el => el.open), true);
+    assert.equal(await focus.locator(":scope > summary").evaluate(el => document.activeElement === el), true);
     const geometry = await page.evaluate(() => ({ viewport: innerWidth, width: document.documentElement.scrollWidth, focus: document.querySelector("[data-agent-focus]").getBoundingClientRect().toJSON() }));
     assert(geometry.width <= geometry.viewport + 1, JSON.stringify(geometry));
+    assert(geometry.focus.y >= 70, "Focus shortcut must clear the header: " + JSON.stringify(geometry));
     assert(geometry.focus.x >= 0 && geometry.focus.right <= geometry.viewport + 1, JSON.stringify(geometry));
     if (captureDir) {
       fs.mkdirSync(captureDir, { recursive: true });
