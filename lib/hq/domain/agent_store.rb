@@ -14,7 +14,9 @@ require_relative "visibility"
 require_relative "../ui/rendering/styles"
 require_relative "request_timing"
 require "securerandom"
+require "digest"
 require "shellwords"
+require "yaml"
 
 module HQ
   class AgentStore
@@ -285,8 +287,28 @@ module HQ
       end
     end
 
+    def assert_project_not_deleting!(project_key)
+      path = File.join(File.dirname(AGENTS_FILE), "project_deletions", "#{Digest::SHA256.hexdigest(project_key.to_s)}.json")
+      return unless File.exist?(path)
+
+      deletion = JSON.parse(File.read(path))
+      project_exists = if deletion["status"] == "completed" && deletion["config_path"]
+                         data = YAML.safe_load_file(deletion["config_path"], permitted_classes: [], aliases: true)
+                         Array(data["projects"]).any? { |project| project["key"] == project_key }
+                       else
+                         true
+                       end
+      if !project_exists || %w[queued running failed].include?(deletion["status"])
+        raise ArgumentError, "Project deletion is pending; new agents are blocked"
+      end
+    end
+
     def save_unlocked(agents, allow_retired_keys: false, allow_large_reduction: false)
       current = File.exist?(AGENTS_FILE) ? Array(FileStore.read_json(AGENTS_FILE, fallback: [])) : []
+      current_keys = current.map { |record| record["key"] }
+      agents.reject { |agent| current_keys.include?(agent.key) }.each do |agent|
+        assert_project_not_deleting!(agent.project_key)
+      end
       records = @recovery.prepare(
         agents.map(&:to_hash),
         current_records: current,
@@ -306,6 +328,7 @@ module HQ
     end
 
     def create_from_template(project, template_key, existing_agents: nil)
+      assert_project_not_deleting!(project.key)
       existing = existing_agents || load
       suffix = next_suffix(project.key, existing)
       now = Time.now
@@ -377,6 +400,7 @@ module HQ
     end
 
     def create_scheduled(project, schedule_key:, name:, system_message: nil, execution_overrides: {}, existing_agents: load)
+      assert_project_not_deleting!(project.key)
       now = Time.now
       key = next_agent_key(project.key, existing_agents, now:)
       prompt = scheduled_system_prompt(schedule_key:, name:, system_message:)
@@ -647,6 +671,7 @@ module HQ
     end
 
     def start_target!(target, agents, run_metadata:, delegation_stamp: :current, delegated_action_origin: nil)
+      assert_project_not_deleting!(target.project_key)
       raise ArgumentError, "Context replacement recovery is pending" if target.context_replacement_recovery
       return if target.running?
 
@@ -1825,10 +1850,13 @@ module HQ
     end
 
     def prompt_queue_dispatchable?(agent, schedule_states)
+      assert_project_not_deleting!(agent.project_key)
       return false unless agent.prompt_queue_dispatchable?
 
       schedule = schedule_states[agent.schedule_key.to_s] if agent.scheduled?
       !schedule || schedule.scheduled?
+    rescue ArgumentError
+      false
     end
 
     def dispatch_prompt_queue!(agent, agents)

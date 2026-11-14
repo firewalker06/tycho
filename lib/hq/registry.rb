@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "yaml"
+require "digest"
 require "uri"
 require_relative "harness_registry"
 require_relative "domain/constants"
@@ -140,6 +141,7 @@ module HQ
         projects = Array(data["projects"])
         key = attrs[:key].to_s.strip
         raise ConfigError, "Missing project key" if key.empty?
+        assert_project_not_deleting!(key)
         if projects.any? { |p| p["key"].to_s == key }
           raise(receipt ? ProjectCreationConflict : ConfigError, "Duplicate project key: #{key}")
         end
@@ -322,6 +324,7 @@ module HQ
 
     def update_project_hidden!(project_key, hidden)
       project = with_config_lock do
+        assert_project_not_deleting!(project_key)
         data = load_yaml(@path)
         projects = Array(data["projects"])
         project = projects.find { |item| item["key"].to_s == project_key.to_s }
@@ -345,6 +348,7 @@ module HQ
 
     def update_project!(project_key, attrs)
       result = with_config_lock do
+        assert_project_not_deleting!(project_key)
         data = load_yaml(@path)
         projects = Array(data["projects"])
         project = projects.find { |p| p["key"].to_s == project_key.to_s }
@@ -501,8 +505,9 @@ module HQ
       )
     end
 
-    def archive_project!(project_key, archived_path: nil)
+    def archive_project!(project_key, archived_path: nil, deletion_request_id: nil)
       project = with_config_lock do
+        assert_project_not_deleting!(project_key, request_id: deletion_request_id)
         data = load_yaml(@path)
         projects = Array(data["projects"])
         project_index = projects.index { |candidate| candidate["key"].to_s == project_key.to_s }
@@ -524,6 +529,17 @@ module HQ
 
       HQ.hooks.publish("project.archived", project_key: project_key.to_s)
       project
+    end
+
+    def assert_project_not_deleting!(key, request_id: nil)
+      path = File.join(File.dirname(AGENTS_FILE), "project_deletions", "#{Digest::SHA256.hexdigest(key.to_s)}.json")
+      return unless File.exist?(path)
+
+      job = JSON.parse(File.read(path))
+      return if request_id && job["request_id"] == request_id
+      return if job["status"] == "completed"
+
+      raise ConfigError, "Project deletion is pending; project changes are blocked"
     end
 
     private
