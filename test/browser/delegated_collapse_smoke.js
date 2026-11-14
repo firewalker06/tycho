@@ -94,6 +94,38 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       const keyboardGroup = keyboardPanel.locator('[data-switcher-group="keyboard-parent"]');
       const focused = selector => page.evaluate(selector => document.activeElement?.matches(selector), selector);
       await page.waitForFunction(() => document.activeElement?.matches("[data-unread-agent-search]"));
+      const searchFocus = () => keyboardSearch.evaluate(input => {
+        const box = input.closest(".search-box");
+        const outer = getComputedStyle(box);
+        const inner = getComputedStyle(input);
+        const bounds = box.getBoundingClientRect();
+        const icon = box.querySelector(".nav-mark").getBoundingClientRect();
+        return { width: parseFloat(outer.outlineWidth), style: outer.outlineStyle,
+          color: outer.outlineColor, innerWidth: parseFloat(inner.outlineWidth),
+          bounds: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
+          includesIcon: icon.left >= bounds.left && icon.right <= bounds.right,
+          overflow: document.documentElement.scrollWidth > innerWidth };
+      });
+      const assertSearchFocus = async () => {
+        const facts = await searchFocus();
+        assert(facts.width >= 2 && facts.style === "solid" && facts.color !== "rgba(0, 0, 0, 0)", "search container needs one visible focus cue");
+        assert.equal(facts.innerWidth, 0, "search input must not have a duplicate outline");
+        assert.equal(facts.includesIcon, true, "outer focus cue must include search icon");
+        assert.equal(facts.overflow, false);
+        return facts;
+      };
+      const keyboardFocus = await assertSearchFocus();
+      if (captureDir) await page.screenshot({ path: path.join(captureDir, `${device}-${theme}-search-focus.png`) });
+      await page.keyboard.press("Shift+Tab");
+      const blurred = await searchFocus();
+      assert(blurred.width === 0 || blurred.style === "none", `container cue must disappear after focus leaves: ${JSON.stringify(blurred)}`);
+      assert.deepEqual(blurred.bounds, keyboardFocus.bounds, "focus must not change layout");
+      await keyboardSearch.click();
+      await assertSearchFocus();
+      await page.mouse.move(0, 0);
+      await page.keyboard.press("Escape");
+      await page.keyboard.press("Control+k");
+      await page.waitForFunction(() => document.activeElement?.matches("[data-unread-agent-search]"));
       assert.equal(await keyboardPanel.locator("[data-open-agent]").count(), 1);
       await page.keyboard.press("Shift+Tab");
       assert.equal(await focused("[data-toggle-switcher-delegation]"), true, "Shift+Tab must reach header from initial search");

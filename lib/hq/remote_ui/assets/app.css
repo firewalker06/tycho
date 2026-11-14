@@ -2808,6 +2808,15 @@ body[data-route-tab="schedules"] .header-more-panel {
   padding: 2px 0;
 }
 
+.search-box:focus-within {
+  outline: var(--ds-focus-width) solid var(--ds-focus-ring);
+  outline-offset: var(--ds-focus-offset);
+}
+
+.search-box input:focus-visible {
+  outline: 0;
+}
+
 .agent-sort-menu {
   position: relative;
   flex: 0 0 auto;
@@ -10214,23 +10223,162 @@ body:has(.inquiry-form-full-screen) {
   }
 }
 
-/* 380 + 440 + 440 px panes, gaps, navigation and page padding fit at 1760 px. */
-@media (min-width: 1760px) {
-  /* Include split state so the preview limit wins over the two-pane rule. */
+/* Content panel fit is measured from the workspace, after navigation and padding. */
+.content-panel-controls,
+.summary-attachment-preview-pane {
+  display: none;
+}
+
+/* These scroll offsets are restored explicitly during panel transitions. */
+.agent-workspace.has-attachment-preview :is(.agent-conversation-scroll, .agent-detail-pane, .summary-attachment-preview-scroll) {
+  overflow-anchor: none;
+}
+
+@media (min-width: 900px) {
+  .app-shell:has(.content.agent-split-active .has-attachment-preview) {
+    max-width: 2200px;
+  }
+
   .app-shell:has(> .bottom-nav:not(.hidden)):has(.content.agent-split-active .has-attachment-preview) {
     max-width: 2200px;
   }
 
-  .agent-workspace.has-detail.has-attachment-preview {
-    grid-template-columns: minmax(380px, 0.9fr) minmax(440px, 1fr) minmax(440px, 1fr);
+  .agent-workspace.has-detail.has-attachment-preview.content-panels-managed {
+    grid-template-columns: var(--content-panel-columns);
+    grid-template-rows: auto minmax(0, 1fr) auto;
     max-width: none;
+  }
+
+  .content-panel-controls {
+    display: contents;
+  }
+
+  .content-panel-heading {
+    display: flex;
+    align-items: stretch;
+    gap: 4px;
+    grid-column: var(--content-panel-column);
+    grid-row: 1;
+    min-width: 0;
+    min-height: 0;
+    padding-block: 4px;
+  }
+
+  .content-panel-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    min-height: 44px;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+
+  .content-panel-toggle[aria-disabled="true"] {
+    color: var(--muted);
+    cursor: default;
+  }
+
+  .content-panel-toggle-icon {
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+
+  .content-panel-label {
+    white-space: nowrap;
+  }
+
+  .content-panel-heading.is-collapsed {
+    flex-direction: column;
+    grid-row: 1 / -1;
+    gap: 0;
+    overflow: hidden;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-top: 0;
+    border-bottom: 0;
+    border-radius: 0;
+    background: var(--ds-background-surface-sunken);
+  }
+
+  .content-panel-heading.is-collapsed .content-panel-toggle {
+    flex-direction: column;
+    justify-content: center;
+    gap: 12px;
+    min-height: 0;
+    padding: 12px 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .content-panel-heading.is-collapsed .content-panel-label {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    transform: rotate(180deg);
+  }
+
+  .content-panel-restore {
+    flex-shrink: 0;
+    align-self: center;
+    max-width: 100%;
+  }
+
+  :root .content-panel-controls :is(.content-panel-toggle, .content-panel-restore):focus-visible {
+    outline-offset: -4px;
+  }
+
+  .content-panel-heading.is-collapsed .content-panel-restore {
+    margin-block: 4px;
+  }
+
+  .content-panels-constrained .message-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .content-panel-status {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .content-panels-managed.has-detail .agent-conversation-pane {
+    grid-column: var(--content-panel-column);
+    grid-row: 2;
+  }
+
+  .content-panels-managed.has-detail .agent-detail-pane,
+  .content-panels-managed .summary-attachment-preview-pane {
+    grid-column: var(--content-panel-column);
+    grid-row: 2 / span 2;
+  }
+
+  .content-panels-managed.has-detail .agent-dock {
+    grid-column: 1;
+    grid-row: 3;
+  }
+
+  .content-panels-managed.has-detail .content-panel-hidden {
+    display: none;
+  }
+
+  .agent-workspace.has-detail.has-attachment-preview.content-panels-managed:has(.inquiry-form-full-height) {
+    grid-template-rows: auto minmax(0, 1fr) 0;
+  }
+
+  .agent-workspace.has-detail.has-attachment-preview.content-panels-managed:has(.inquiry-form-full-height) .agent-dock {
+    grid-row: 2 / span 2;
   }
 
   .summary-attachment-preview-pane {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
-    grid-column: 3;
-    grid-row: 1 / span 2;
     min-width: 0;
     min-height: 0;
     margin-top: 8px;

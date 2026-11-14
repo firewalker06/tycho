@@ -23,6 +23,33 @@ own menu. The first-schedule action, loading state, and connection error state
 keep their existing behavior. Header controls and open menu items retain focus
 across unchanged refreshes.
 
+## Responsive desktop content panels
+
+Opening an attachment from Summary keeps the selected run and attachment in
+place. The desktop workspace measures its usable width after navigation and
+padding. Three panels need 380 + 440 + 440 px plus two 12 px gaps. Smaller
+workspaces show the most recently requested panels, with at most two expanded;
+very small desktop workspaces show one. Every collapsed desktop panel remains
+as a 48 px full-height vertical accordion strip in its fixed Conversation,
+Summary, or Attachment position. Strip widths and all column gaps count toward
+panel fit. Activating a strip expands its panel and collapses an older panel
+when needed. Wide desktop keeps three expanded unless the user collapses one.
+Expanded panels have local Collapse controls; Restore panels is a utility in
+the Attachment heading or strip. There is no horizontal panel-control toolbar.
+Names remain accessible with vertical text and tooltips. Tab, Enter/Space,
+Left/Right, and Home/End work without clearing selection, drafts, or scroll.
+Widening restores panels collapsed only by the width limit. Mobile direct
+attachment navigation remains in use; resizing through mobile retains the
+desktop preview selection for return. The first preview captures scroll from
+the existing workspace. Mobile resize moves focus from a hidden panel control
+to the visible composer, or the Summary region for read-only sessions. Panel
+controls retain focus through changed renders. Native scroll anchoring is
+disabled for these panes because their offsets are restored explicitly.
+The merged desktop icon rail uses 56 px on split routes. Panel fit still uses
+the measured remaining width, so rail contraction can make three readable
+panels fit at a viewport that previously held two. The rail keeps its Light
+selected fill and has no separate left selection border.
+
 ## PWA startup screen
 
 The startup screen selects one of two animations at random once per startup:
