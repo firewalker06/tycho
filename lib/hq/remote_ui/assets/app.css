@@ -2371,18 +2371,6 @@ span.harness-mark {
     min-width: 0;
     width: 100%;
   }
-
-  .header-schedule-menu .schedule-management-actions {
-    gap: 6px;
-  }
-
-  .header-schedule-menu .schedule-daemon-menu {
-    position: static;
-  }
-
-  .header-schedule-menu .schedule-action-popover {
-    right: 12px;
-  }
 }
 
 .schedule-management-actions {
@@ -2395,9 +2383,12 @@ span.harness-mark {
   padding: 2px 0;
 }
 
-.header-schedule-menu .schedule-action-popover {
+body[data-route-tab="schedules"] .header-more-panel {
   width: 280px;
   max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - var(--app-header-height) - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .schedule-management-actions button {

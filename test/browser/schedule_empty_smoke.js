@@ -15,6 +15,14 @@ module.exports = async ({ browser, baseUrl, captureDir, agentKey }) => {
       await page.locator('[data-tab="schedules"]').click();
       await page.locator("#schedule-empty-title").waitFor();
       assert(await page.getByText("Create a schedule to add it to this list.", { exact: false }).isVisible());
+      const assertPageOnlyMenu = async () => {
+        assert.equal(await page.locator('.app-header [aria-haspopup="menu"]:visible').count(), 1);
+        await page.locator("#header-more-button").click();
+        assert(await page.locator("#header-more-panel [data-open-settings]").isVisible(), "page actions stay available");
+        assert.equal(await page.locator("#header-more-panel [data-scheduler-action], #header-more-panel [data-archive-all-schedule-sessions]").count(), 0,
+          "unready or empty schedules do not expose list actions");
+        await page.keyboard.press("Escape");
+      };
       const capture = async name => {
         await page.waitForTimeout(300);
         await page.waitForFunction(() => {
@@ -28,6 +36,7 @@ module.exports = async ({ browser, baseUrl, captureDir, agentKey }) => {
         }
       };
       await capture("empty");
+      await assertPageOnlyMenu();
       assert.equal(await page.locator(".app-header .schedule-management-actions").count(), 0,
         "the first-schedule action keeps its existing empty-state location");
       const settings = page.locator(".sidebar-settings-link");
@@ -108,6 +117,7 @@ module.exports = async ({ browser, baseUrl, captureDir, agentKey }) => {
       assert(await page.getByText("Schedules unavailable", { exact: true }).isVisible());
       assert.equal(await page.locator("#schedule-empty-title").count(), 0);
       await capture("error");
+      await assertPageOnlyMenu();
       assert.equal(await page.locator(".app-header .schedule-management-actions").count(), 0,
         "a failed read does not expose list controls");
       await page.unroute(`${baseUrl}/schedules`);
@@ -121,6 +131,7 @@ module.exports = async ({ browser, baseUrl, captureDir, agentKey }) => {
       assert.equal(await page.locator("#schedule-empty-title").count(), 0);
       assert.equal(await page.locator(".app-header .schedule-management-actions").count(), 0,
         "loading does not expose list controls");
+      await assertPageOnlyMenu();
       release();
       await page.waitForFunction(() => !state.refreshInFlight);
       await page.locator("#schedule-empty-title").waitFor();

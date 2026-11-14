@@ -14,12 +14,14 @@ type: project
 
 ## Schedules page header
 
-The Schedules page puts New schedule and the list action menu in the top page
-header. Narrow screens use a separate header row for these controls. Daemon
-controls keep their existing actions, and each schedule row keeps its own menu.
-The first-schedule action, loading state, and connection error state keep their
-existing behavior. Header controls retain focus and open menus across unchanged
-refreshes.
+The Schedules page keeps New schedule in the top page header. One page menu
+combines daemon and list archive actions with Settings, available updates, and
+server restart. Separators keep the schedule and app actions in distinct groups.
+Narrow screens use a separate header row for New schedule. The combined menu
+stays inside the viewport and scrolls when needed. Each schedule row keeps its
+own menu. The first-schedule action, loading state, and connection error state
+keep their existing behavior. Header controls and open menu items retain focus
+across unchanged refreshes.
 
 ## PWA startup screen
 
