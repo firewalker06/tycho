@@ -10699,6 +10699,8 @@ body:has(.inquiry-form-full-screen) {
 /* Focus is current agent state, separate from the run transcript. */
 .agent-focus {
   scroll-margin-top: calc(var(--app-header-height, 64px) + 12px);
+  height: max-content;
+  align-self: start;
   margin: 0 0 24px;
   border: 1px solid var(--border);
   border-radius: 14px;

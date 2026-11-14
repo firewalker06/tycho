@@ -81,6 +81,8 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     assert.equal(await focus.locator(":scope > summary").evaluate(el => document.activeElement === el), true);
     const geometry = await page.evaluate(() => ({ viewport: innerWidth, width: document.documentElement.scrollWidth, focus: document.querySelector("[data-agent-focus]").getBoundingClientRect().toJSON() }));
     assert(geometry.width <= geometry.viewport + 1, JSON.stringify(geometry));
+    const contentFits = await focus.evaluate(el => ({ height: el.clientHeight, scrollHeight: el.scrollHeight }));
+    assert(contentFits.scrollHeight <= contentFits.height + 1, "Focus must not clip its items: " + JSON.stringify(contentFits));
     assert(geometry.focus.y >= 70, "Focus shortcut must clear the header: " + JSON.stringify(geometry));
     assert(geometry.focus.x >= 0 && geometry.focus.right <= geometry.viewport + 1, JSON.stringify(geometry));
     if (captureDir) {
