@@ -10785,6 +10785,8 @@ body:has(.agent-workspace.has-focus-panel) { overflow: hidden; }
     grid-column: 2;
     grid-row: 3;
   }
+}
+
 /* Keep destructive project controls separate from ordinary settings. */
 .project-danger-zone {
   margin-block-start: 64px;
