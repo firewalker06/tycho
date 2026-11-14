@@ -78,7 +78,6 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     assert(geometry.focus.x >= 0 && geometry.focus.right <= geometry.viewport + 1, JSON.stringify(geometry));
     if (captureDir) {
       fs.mkdirSync(captureDir, { recursive: true });
-      await focus.evaluate(el => el.scrollIntoView());
       await page.screenshot({ path: path.join(captureDir, `focus-${theme}-${width}.png`) });
     }
     await focus.getByRole("link", { name: "Read Focus report" }).click();
