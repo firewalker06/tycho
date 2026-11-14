@@ -58,7 +58,8 @@ module.exports = async function attachmentPreviewSmoke({ browser, baseUrl, agent
     const banner = document.querySelector(".agent-dock .inquiry-banner").getBoundingClientRect();
     return { topInset: button.top - banner.top, rightInset: banner.right - button.right, bottomInset: banner.bottom - button.bottom };
   });
-  await assert(fullHeightControlPosition.topInset >= 10 && fullHeightControlPosition.rightInset >= 10,
+  // Keep the existing 2 px outline, 2 px offset and 2 px extra clearance.
+  await assert(fullHeightControlPosition.topInset >= 6 && fullHeightControlPosition.rightInset >= 6,
     `Full-height control or focus ring is too close to the inquiry card edge: ${JSON.stringify(fullHeightControlPosition)}`);
   await assert(await page.evaluate(() => {
     const button = document.querySelector(".agent-dock [data-toggle-inquiry-full-screen]");
@@ -106,7 +107,7 @@ module.exports = async function attachmentPreviewSmoke({ browser, baseUrl, agent
     const banner = document.querySelector(".agent-dock .inquiry-banner").getBoundingClientRect();
     return { topInset: button.top - banner.top, rightInset: banner.right - button.right, bottomInset: banner.bottom - button.bottom };
   });
-  await assert(fullScreenPosition.topInset >= 10 && fullScreenPosition.rightInset >= 10,
+  await assert(fullScreenPosition.topInset >= 6 && fullScreenPosition.rightInset >= 6,
     `Regular full-screen control or focus ring is too close to the inquiry card edge: ${JSON.stringify(fullScreenPosition)}`);
   await focusBeforeButton(fullScreenButton);
   await assert(await fullScreenButton.evaluate((button) => button === document.activeElement), "Keyboard focus did not reach the regular full-screen control");
@@ -301,16 +302,15 @@ module.exports = async function attachmentPreviewSmoke({ browser, baseUrl, agent
     await page.goto(summaryUrl, { waitUntil: "networkidle" });
     await open("Release review");
     await page.setViewportSize({ width, height: 900 });
-    await page.waitForURL(/\/attachment\//);
-    await page.locator(".agent-attachment-viewer h1").waitFor();
+    await page.waitForFunction(() => document.querySelector(".agent-workspace")?.clientWidth >= 1284 ? document.querySelector(".agent-workspace")?.dataset.visiblePanels === "conversation summary preview" : document.querySelector(".agent-workspace")?.dataset.visiblePanels !== "conversation summary preview");
     const narrow = await measureLayout();
     resizedLayouts.push(narrow);
-    await assert(!narrow.preview && narrow.shellMaxWidth !== "2200px" && !narrow.overflow &&
-      narrow.shell.width <= width && narrow.shell.width <= 1600,
-      `Resize did not restore the detail fallback and shell sizing: ${JSON.stringify(narrow)}`);
+    await assert(!narrow.overflow && narrow.shell.width <= width &&
+      await page.evaluate(() => parseRoute().type === "agentSummary" && Boolean(state.summaryAttachmentPreview)),
+      `Resize lost selection or overflowed: ${JSON.stringify(narrow)}`);
     await page.setViewportSize({ width: 1920, height: 1080 });
-    await assert(await pane.count() === 0 && (await measureLayout()).shellMaxWidth === "1600px",
-      "Resize back to wide reopened the preview or retained its shell limit");
+    await page.waitForFunction(() => document.querySelector(".agent-workspace")?.dataset.visiblePanels === "conversation summary preview");
+    await assert(await pane.isVisible(), "Resize back to wide lost the preview");
   }
 
   for (const [name, width, height] of [["normal", 1440, 900], ["mobile", 390, 844]]) {
@@ -324,9 +324,15 @@ module.exports = async function attachmentPreviewSmoke({ browser, baseUrl, agent
     await assert((await originalOpen.getAttribute("href")).includes(`/attachment/${attachments["Release review"].id}`), "Existing open action changed");
     await assert(await page.locator(`.agent-detail-pane [data-download-attachment="${attachments["Release review"].id}"]`).count() === 1, "Existing download action is absent");
     await previewButton("Release review").click();
-    await page.waitForURL(/\/attachment\//);
-    await page.locator(".agent-attachment-viewer h1").waitFor();
-    await assert(await pane.count() === 0 && !(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)), `${name} detail fallback has layout errors`);
+    if (name === "mobile") {
+      await page.waitForURL(/\/attachment\//);
+      await page.locator(".agent-attachment-viewer h1").waitFor();
+      await assert(await pane.count() === 0, "Mobile detail fallback changed");
+    } else {
+      await page.waitForFunction(() => document.querySelector(".summary-attachment-preview-scroll")?.getAttribute("aria-busy") === "false");
+      await assert(await pane.isVisible() && !(await page.locator(".agent-conversation-pane").isVisible()), "Constrained desktop must show Summary and new attachment");
+    }
+    await assert(!(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)), `${name} detail has layout errors`);
     await capture(`attachment-detail-${name}`);
   }
   await assert(errors.length === 0, `Browser errors: ${errors.join("; ")}`);

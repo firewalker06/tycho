@@ -14,7 +14,7 @@ module RemoteUIAttachmentPreviewTest
         const fs = require("fs");
         const vm = require("vm");
         const source = fs.readFileSync("lib/hq/remote_ui/assets/app.js", "utf8");
-        const start = source.indexOf("function summaryAttachmentPreviewAvailable");
+        const start = source.indexOf("const CONTENT_PANELS");
         const end = source.indexOf("\nfunction renderSummaryAttachmentList", start);
         const agent = { key: "a", run_count: 1, current_run_id: "run-1", attachments: [{ id: "one" }, { id: "two" }] };
         let route = { type: "agentSummary", key: "a", summaryId: "summary-1" };
@@ -42,6 +42,15 @@ module RemoteUIAttachmentPreviewTest
         function assert(value, message) { if (!value) throw new Error(message); }
         function complete(request, value) { context.state.attachmentDetails[request.id] = value; request.resolve(); }
         async function main() {
+          const keys = (width, hidden = [], order = ["conversation", "summary", "preview"]) =>
+            Array.from(context.contentPanelsForWidth(width, new Set(hidden), order), panel => panel.key).join(" ");
+          assert(keys(1284) === "conversation summary preview", "Three panel fit boundary is wrong");
+          assert(keys(1283) === "summary preview", "Constrained width squeezed three panels");
+          assert(keys(892) === "summary preview", "Two detail panels should fit at their minimum width");
+          assert(keys(891) === "preview", "Two detail panels were squeezed below their minimum");
+          assert(keys(832, [], ["summary", "preview", "conversation"]) === "conversation preview", "Newly requested Conversation was lost");
+          assert(keys(831, [], ["summary", "preview", "conversation"]) === "conversation", "Newly requested panel must survive a one-panel limit");
+          assert(keys(2200, ["summary"]) === "conversation preview", "Wide layout ignored a hidden panel");
           const first = context.openSummaryAttachmentPreview("one", "a");
           const second = context.openSummaryAttachmentPreview("two", "a");
           const beforeStale = renders;
@@ -75,8 +84,10 @@ module RemoteUIAttachmentPreviewTest
           pending[4].reject(new Error("Authentication required"));
           await failed;
           assert(context.state.summaryAttachmentPreview.error === "Authentication required", "Authorization error was hidden");
-          context.state.summaryAttachmentPreview = null;
           wide = false;
+          context.reconcileSummaryAttachmentPreview();
+          assert(context.state.summaryAttachmentPreview.id === "two", "Resize cleared the selected preview");
+          context.state.summaryAttachmentPreview = null;
           await context.openSummaryAttachmentPreview("two", "a");
           assert(navigation.type === "agentAttachment" && navigation.attachmentId === "two" && context.state.summaryAttachmentPreview === null, "Narrow screen bypassed existing detail route");
           wide = true;

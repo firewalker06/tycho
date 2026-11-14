@@ -886,7 +886,9 @@ def run_attachment_preview_smoke!(dir:, base_url:, agent_key:, fixture:, browser
   node_dir = File.join(dir, "node")
   install_playwright!(node_dir)
   script = File.join(node_dir, "attachment-preview.js")
-  smoke_file = if ENV["TYCHO_REMOTE_UI_MARKDOWN_IMAGES_ONLY"] == "1"
+  smoke_file = if ENV["TYCHO_REMOTE_UI_CONTENT_PANELS_ONLY"] == "1"
+                 "content_panels_smoke.js"
+               elsif ENV["TYCHO_REMOTE_UI_MARKDOWN_IMAGES_ONLY"] == "1"
                  "markdown_images_smoke.js"
                elsif ENV["TYCHO_REMOTE_UI_JSON_PREVIEW_ONLY"] == "1"
                  "json_preview_smoke.js"
@@ -11284,7 +11286,7 @@ if ENV["TYCHO_REMOTE_UI_CONVERSATION_ANIMATION_ONLY"] == "1"
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "conversation_animation_smoke")
       exit 0
     end
-    if ENV["TYCHO_REMOTE_UI_MARKDOWN_IMAGES_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_ATTACHMENT_PREVIEW_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_ATTACHMENT_FILTER_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_ATTACHMENT_LOAD_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_JSON_PREVIEW_ONLY"] == "1"
+    if ENV["TYCHO_REMOTE_UI_CONTENT_PANELS_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_MARKDOWN_IMAGES_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_ATTACHMENT_PREVIEW_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_ATTACHMENT_FILTER_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_ATTACHMENT_LOAD_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_JSON_PREVIEW_ONLY"] == "1"
       run_attachment_preview_smoke!(dir:, base_url:, agent_key:, fixture:, browser:)
       exit 0
     end

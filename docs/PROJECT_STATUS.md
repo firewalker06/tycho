@@ -10,7 +10,19 @@ type: project
 
 ## Last Updated
 
-2026-11-13
+2026-11-14
+
+## Responsive desktop content panels
+
+Opening an attachment from Summary keeps the selected run and attachment in
+place. The desktop workspace measures its usable width after navigation and
+padding. Three panels need 380 + 440 + 440 px plus two 12 px gaps. Smaller
+workspaces show the most recently requested panels, with at most two visible;
+very small desktop workspaces show one. Panel buttons hide or restore each
+panel without clearing its selection, draft, or scroll position. Widening the
+workspace restores panels hidden only by the width limit. Mobile direct
+attachment navigation remains in use; resizing through mobile retains the
+desktop preview selection for return. Navigation rail changes are separate.
 
 ## DeepSeek Harness
 

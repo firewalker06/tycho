@@ -10150,23 +10150,89 @@ body:has(.inquiry-form-full-screen) {
   }
 }
 
-/* 380 + 440 + 440 px panes, gaps, navigation and page padding fit at 1760 px. */
-@media (min-width: 1760px) {
-  /* Include split state so the preview limit wins over the two-pane rule. */
+/* Content panel fit is measured from the workspace, after navigation and padding. */
+.content-panel-controls,
+.summary-attachment-preview-pane {
+  display: none;
+}
+
+@media (min-width: 900px) {
+  .app-shell:has(.content.agent-split-active .has-attachment-preview) {
+    max-width: 2200px;
+  }
+
   .app-shell:has(> .bottom-nav:not(.hidden)):has(.content.agent-split-active .has-attachment-preview) {
     max-width: 2200px;
   }
 
-  .agent-workspace.has-detail.has-attachment-preview {
-    grid-template-columns: minmax(380px, 0.9fr) minmax(440px, 1fr) minmax(440px, 1fr);
+  .agent-workspace.has-detail.has-attachment-preview.content-panels-managed {
+    grid-template-columns: var(--content-panel-columns);
+    grid-template-rows: auto minmax(0, 1fr) auto;
     max-width: none;
+  }
+
+  .content-panel-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    grid-column: 1 / -1;
+    grid-row: 1;
+    padding-block: 8px;
+    min-width: 0;
+  }
+
+  .content-panel-controls .ui-button {
+    padding: 6px 10px;
+    min-height: 36px;
+    border: 1px solid var(--border);
+  }
+
+  .content-panel-controls [aria-pressed="true"] {
+    background: var(--ds-background-surface-sunken);
+    color: var(--accent);
+  }
+
+  .content-panels-constrained .message-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .content-panel-status {
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .content-panels-managed.has-detail .agent-conversation-pane {
+    grid-column: var(--content-panel-column);
+    grid-row: 2;
+  }
+
+  .content-panels-managed.has-detail .agent-detail-pane,
+  .content-panels-managed .summary-attachment-preview-pane {
+    grid-column: var(--content-panel-column);
+    grid-row: 2 / span 2;
+  }
+
+  .content-panels-managed.has-detail .agent-dock {
+    grid-column: 1;
+    grid-row: 3;
+  }
+
+  .content-panels-managed.has-detail .content-panel-hidden {
+    display: none;
+  }
+
+  .agent-workspace.has-detail.has-attachment-preview.content-panels-managed:has(.inquiry-form-full-height) {
+    grid-template-rows: auto minmax(0, 1fr) 0;
+  }
+
+  .agent-workspace.has-detail.has-attachment-preview.content-panels-managed:has(.inquiry-form-full-height) .agent-dock {
+    grid-row: 2 / span 2;
   }
 
   .summary-attachment-preview-pane {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
-    grid-column: 3;
-    grid-row: 1 / span 2;
     min-width: 0;
     min-height: 0;
     margin-top: 8px;
