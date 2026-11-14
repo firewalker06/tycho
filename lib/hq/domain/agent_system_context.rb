@@ -14,6 +14,7 @@ module HQ
                else
                  "- Your delegating parent agent key: #{parent_key}"
                end
+      lines << "- Focus is your durable current-state artifact. Read with `tycho agent focus #{agent_key} --json`; replace sections with `tycho agent focus #{agent_key} --file PATH --revision N`. Read first, preserve unrelated items, and use the returned revision. Focus persists across runs; update it when actionable state changes."
       if tycho_skill_installed
         lines << "- The Tycho skill is installed and usable; use it for Tycho-specific managed-agent operations."
       end

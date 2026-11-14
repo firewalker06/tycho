@@ -20,6 +20,7 @@ module RemoteServerTest
   module_function
 
   def run!
+    assert_remote_agent_focus
     assert_remote_manual_project_creation
     assert_remote_agent_lifecycle
     assert_remote_creation_retries
@@ -2748,6 +2749,62 @@ module RemoteServerTest
       assert(server.send(:queue_processor_active?), "expected a recent poll to prove the processor is active")
       server.instance_variable_set(:@queue_processor_last_success, Process.clock_gettime(Process::CLOCK_MONOTONIC) - 16)
       assert(!server.send(:queue_processor_active?), "expected stale polls not to promise automatic processing")
+    end
+  end
+
+  def assert_remote_agent_focus
+    require_relative "../lib/hq/cli_command"
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      FileUtils.mkdir_p(workspace)
+      registry = registry_for(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      agent = service.create_agent("project_key" => "web", "template_key" => "custom", "name" => "Focus fixture", "prompt" => "Synthetic only")
+      key = agent[:key]
+      assert(agent[:focus]["revision"] == 0, "new agent Focus must be empty")
+      sections = [{ "title" => "Ready for Review", "icon" => "todo_done", "items" => [
+        { "title" => "Review changes", "subtitle" => "PR is ready", "attachments" => [{ "type" => "link", "title" => "PR", "url" => "https://github.com/example/web/pull/12" }] }
+      ] }]
+      managed = HQ::AgentStore.new(registry.projects).load.find { |entry| entry.key == key }
+      File.write(File.join(workspace, "report.md"), "# Focus report\n")
+      HQ::AgentMemory.new(managed).append_attachment!({ "type" => "file", "title" => "Report", "path" => "report.md" })
+      sections[0]["items"][0]["attachments"] << { "type" => "file", "title" => "Read report", "path" => managed.attachments.first.fetch("path") }
+      saved = service.update_agent_focus(key, "sections" => sections, "revision" => 0)
+      assert(saved["revision"] == 1, "Focus revision must advance")
+      assert(service.update_agent_focus(key, "sections" => sections, "revision" => 0) == saved, "exact retries must be safe")
+      fresh = HQ::RemoteService.new(registry: registry)
+      projected = fresh.agent(key)[:focus]
+      assert(projected["sections"][0]["items"][0]["title"] == "Review changes", "Focus must survive service reload")
+      file = projected["sections"][0]["items"][0]["attachments"].last
+      assert(file["blob_path"].to_s.start_with?("/attachments/"), "Focus files must use the existing attachment endpoint")
+      assert(file["title"] == "Read report", "Focus attachment title must be retained")
+      begin
+        service.update_agent_focus(key, "sections" => [], "revision" => 0)
+        raise "stale Focus replacement accepted"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409, "stale Focus writes must conflict")
+      end
+      server = HQ::RemoteServer.new(host: "127.0.0.1", port: 0, token: "", registry: registry)
+      response = server.send(:route, fresh, "GET", "/agents/#{key}/focus", {})
+      assert(response[:body][:focus] == saved, "Focus GET route must return the saved document")
+      with_env_values("TYCHO_CONFIG_PATH" => File.join(dir, "hq.yml"), "TYCHO_SYSTEM_PROMPTS_PATH" => File.join(dir, "system_prompts.yml")) do
+        output = StringIO.new
+        assert(HQ::CLICommand.agent_focus(key, { json: true }, out: output) == 0, "Focus CLI read must succeed")
+        assert(JSON.parse(output.string) == saved, "CLI and API must share Focus")
+        path = File.join(dir, "focus-input.json")
+        File.write(path, "[]")
+        assert(HQ::CLICommand.agent_focus(key, { file: path, revision: 1 }, out: StringIO.new) == 0, "Focus CLI replacement must succeed")
+        assert(service.agent_focus(key)["sections"].empty?, "empty sections must clear Focus")
+      end
+      service.archive_agent(key)
+      archived = HQ::RemoteService.new(registry: registry)
+      assert(archived.agent_focus(key)["revision"] == 2, "Focus must remain readable in archive history")
+      begin
+        archived.update_agent_focus(key, "sections" => sections, "revision" => 2)
+        raise "archived Focus changed"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409, "archived Focus must be read-only")
+      end
     end
   end
 

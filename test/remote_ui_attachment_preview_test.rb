@@ -51,6 +51,20 @@ module RemoteUIAttachmentPreviewTest
           assert(keys(892, [], ["summary", "preview", "conversation"]) === "conversation preview", "Newly requested Conversation was lost");
           assert(keys(891, [], ["summary", "preview", "conversation"]) === "conversation", "Newly requested panel must survive a one-panel limit");
           assert(keys(2200, ["summary"]) === "conversation preview", "Wide layout ignored a hidden panel");
+          const focusPanels = vm.runInContext("FOCUS_CONTENT_PANELS", context);
+          const focusKeys = (width, hidden = [], order = ["focus", "conversation"]) =>
+            Array.from(context.contentPanelsForWidth(width, new Set(hidden), order, focusPanels), panel => panel.key).join(" ");
+          assert(focusKeys(832) === "conversation focus", "Focus must use the shared two-panel fit boundary");
+          assert(focusKeys(831) === "conversation", "Default Focus must not displace a narrow Conversation");
+          assert(focusKeys(831, [], ["conversation", "focus"]) === "focus", "An explicit Focus request must survive width limits");
+          assert(focusKeys(2200, ["focus"]) === "conversation", "A manually closed Focus must stay closed on wide views");
+          context.state.agentFocusPanels = new Map();
+          context.reconcileAgentFocusPanel({ key: "focus-agent", focus: { sections: [] } }, true);
+          context.reconcileAgentFocusPanel({ key: "focus-agent", focus: { sections: [{ items: [] }] } }, true);
+          assert(context.state.agentFocusPanels.get("focus-agent").hiddenPanels.has("focus"), "Late Focus must not auto-open after an empty detail read");
+          context.reconcileAgentFocusPanel({ key: "other-agent", focus: { sections: [{ items: [] }] } }, true);
+          assert(!context.state.agentFocusPanels.get("other-agent").hiddenPanels.has("focus"), "Existing Focus must be eligible for its wide entry default");
+
           const first = context.openSummaryAttachmentPreview("one", "a");
           const second = context.openSummaryAttachmentPreview("two", "a");
           const beforeStale = renders;
