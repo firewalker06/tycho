@@ -21,6 +21,7 @@ require_relative "domain/tycho_updater"
 require_relative "domain/project"
 require_relative "domain/project_git_metadata_cache"
 require_relative "domain/project_workspace"
+require_relative "domain/project_deletion"
 require_relative "domain/attachment_normalizer"
 require_relative "domain/constants"
 require_relative "domain/agent_attachment_store"
@@ -708,6 +709,8 @@ module HQ
       if parts.length >= 2 && parts.first == "projects"
         key = parts[1]
         tail = parts.drop(2)
+        return ok(deletion: service.project_deletion(key)) if method == "GET" && tail == ["deletion"]
+        return accepted({ deletion: service.delete_project(key, body) }) if method == "POST" && tail == ["deletion"]
         return ok(project: service.project(key)) if method == "GET" && tail.empty?
         return ok(project: service.update_project(key, body)) if %w[PATCH PUT].include?(method) && tail.empty?
         if method == "GET" && tail == ["workspace"]
@@ -2019,6 +2022,7 @@ module HQ
       @project_metadata_demand = project_metadata_demand
       @projects = registry.projects.map { |config| @project_metadata_cache.apply(Project.new(config)) }
       @agent_store = AgentStore.new(@projects)
+      @project_deletion = ProjectDeletion.new(registry:)
       @agent_archive_store = AgentArchiveStore.new
       state_root = File.dirname(AGENTS_FILE)
       @push_subscription_store = push_subscription_store || PushSubscriptionStore.new(
@@ -2960,6 +2964,26 @@ module HQ
       )
     rescue ProjectWorkspace::Error => e
       raise Error.new(e.message, status: e.status, details: { code: e.code })
+    end
+
+    def project_deletion(key)
+      job = @project_deletion.status(key)
+      if job && %w[completed failed].include?(job["status"])
+        @registry.load!
+        reload_projects_from_registry!
+      end
+      return nil if job && job["status"] == "completed" && @projects.any? { |project| project.key == key }
+
+      job
+    end
+
+    def delete_project(key, attrs)
+      job = @project_deletion.status(key)
+      find_project!(key) unless job
+      @project_deletion.start(key, remove_data: attrs.fetch("remove_data", false), confirmation: attrs["confirmation"],
+                              request_id: attrs.fetch("request_id", ""))
+    rescue ArgumentError, ConfigError, ScheduleRegistry::Error => e
+      raise Error.new(e.message, status: 409)
     end
 
     def update_project(key, attrs)

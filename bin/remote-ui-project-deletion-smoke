@@ -1,0 +1,66 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "tmpdir"
+require "fileutils"
+require "socket"
+require "net/http"
+require "json"
+require "rbconfig"
+require_relative "../test/support/test_environment"
+
+root = File.expand_path("..", __dir__)
+capture = ENV["TYCHO_REMOTE_UI_CAPTURE_DIR"].to_s
+unless capture.empty?
+  capture = File.expand_path(capture)
+  raise "Capture directory must be outside the repository" if capture == root || capture.start_with?("#{root}/")
+end
+Dir.mktmpdir("tycho-project-deletion-smoke") do |dir|
+  FileUtils.mkdir_p(File.join(dir, "workspace"))
+  File.write(File.join(dir, "workspace", "keep.txt"), "keep")
+  config = File.join(dir, "hq.yml")
+  File.write(config, "projects:\n  - key: demo\n    name: Deletion fixture\n    path: #{File.join(dir, "workspace").inspect}\n    agent: codex\n  - key: purge\n    name: Permanent removal fixture\n    path: #{File.join(dir, "workspace").inspect}\n    agent: codex\n")
+  prompts = File.join(dir, "system_prompts.yml")
+  File.write(prompts, "custom: Synthetic test prompt\n")
+  File.write(File.join(dir, "schedules.yml"), "schedules: []\n")
+  socket = TCPServer.new("127.0.0.1", 0)
+  port = socket.addr[1]
+  socket.close
+  env = TestEnvironment.command_env(dir).merge(
+    "TYCHO_CONFIG_PATH" => config, "TYCHO_SYSTEM_PROMPTS_PATH" => prompts,
+    "TYCHO_SCHEDULES_PATH" => File.join(dir, "schedules.yml")
+  )
+  log = File.join(dir, "server.log")
+  pid = Process.spawn(env, RbConfig.ruby, File.join(root, "bin", "tycho"), "serve", "--host", "127.0.0.1", "--port", port.to_s, out: log, err: log)
+  begin
+    url = "http://127.0.0.1:#{port}"
+    ready = false
+    200.times do
+      begin
+        ready = Net::HTTP.get_response(URI("#{url}/projects")).is_a?(Net::HTTPSuccess)
+      rescue Errno::ECONNREFUSED
+        nil
+      end
+      break if ready
+      sleep 0.05
+    end
+    raise "Fixture server failed: #{File.read(log)}" unless ready
+    node_dir = File.join(dir, "node")
+    FileUtils.mkdir_p(node_dir)
+    playwright = ENV["TYCHO_PLAYWRIGHT_PATH"].to_s
+    if playwright.empty?
+      raise "Playwright install failed" unless system("npm", "install", "--prefix", node_dir, "--no-audit", "--fund=false", "--ignore-scripts", "playwright")
+      playwright = File.join(node_dir, "node_modules", "playwright")
+    end
+    script_env = {
+      "TYCHO_REMOTE_UI_URL" => url, "TYCHO_PLAYWRIGHT_PATH" => playwright,
+      "TYCHO_REMOTE_UI_CAPTURE_DIR" => capture, "TYCHO_DELETION_FIXTURE_ROOT" => dir,
+      "CHROME_PATH" => ENV.fetch("CHROME_PATH", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+    }
+    raise "Browser deletion smoke failed" unless system(script_env, "node", File.join(root, "test", "browser", "project_deletion_smoke.js"))
+    raise "Workspace directory changed" unless File.read(File.join(dir, "workspace", "keep.txt")) == "keep"
+  ensure
+    Process.kill("TERM", pid) rescue nil
+    Process.wait(pid) rescue nil
+  end
+end

@@ -10785,4 +10785,19 @@ body:has(.agent-workspace.has-focus-panel) { overflow: hidden; }
     grid-column: 2;
     grid-row: 3;
   }
+/* Keep destructive project controls separate from ordinary settings. */
+.project-danger-zone {
+  margin-block-start: 64px;
+}
+
+.project-danger-zone > .detail-card {
+  border-color: color-mix(in srgb, var(--danger) 60%, var(--border));
+}
+
+.project-danger-zone h2 {
+  color: var(--danger);
+}
+
+body:has(#confirmation-dialog[open]) [data-project-deletion-status] {
+  visibility: hidden;
 }

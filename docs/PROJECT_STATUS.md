@@ -25,6 +25,22 @@ narrow/mobile views start closed. Explicit choices survive polling, resizing,
 and navigation. Focus and Conversation scroll independently. Summary and
 attachment panels keep their existing state. See
 [Agent Focus](AGENT_FOCUS.md) for schema, update rules, limits, and verification.
+## Background project deletion
+
+Remote UI project settings offer Delete project with typed key confirmation.
+The default stops and archives all project agents and keeps their logs. An
+explicit permanent-removal option also removes archived agents and identified
+project logs. The workspace directory always remains on disk. Old project-log
+archives without identity metadata remain; new archives record their project key.
+
+Deletion uses persisted request IDs, atomic progress receipts, and process locks.
+The HTTP request returns acceptance before archive/removal runs. A server exit
+marks unfinished work as interrupted when its status is next read. An explicit
+retry keeps the same options and resumes removal after a committed archive phase.
+A stale request cannot delete a project re-created under the same key. New agents,
+dispatch, project edits, and new schedule references are blocked during deletion.
+Existing schedule references must be removed first, so deletion cannot leave the
+scheduler with a missing project. See [project deletion](PROJECT_DELETION.md).
 
 ## Schedules page header
 
