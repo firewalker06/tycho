@@ -10,7 +10,18 @@ type: project
 
 ## Last Updated
 
-2026-11-13
+2026-11-14
+
+## PWA startup screen
+
+The startup screen uses a fixed Tycho mark with a slow orbit and signal pulse.
+Reduced motion shows a static mark. Appearance Settings has one plain-text
+Startup message field, with a 240-character limit and a useful empty fallback.
+The preference belongs to this browser and server origin, as with appearance;
+it is read inline before app scripts. It does not change project or account
+settings. Inline recovery offers Retry if the app script cannot load. App
+readiness and its existing timeout, offline, authentication, and retry paths
+control the shell. See [Remote UI appearance](REMOTE_UI_APPEARANCE.md).
 
 ## DeepSeek Harness
 

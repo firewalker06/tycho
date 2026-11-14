@@ -8217,15 +8217,13 @@ module RemoteServerTest
            response[:body].include?('role="status" aria-live="polite" aria-atomic="true"'),
            "expected root shell to provide an accessible server-rendered loading surface")
     assert(response[:body].include?('class="tycho-boot-mark"') &&
-           response[:body].include?('id="tycho-boot-particles"') &&
-           response[:body].include?('@keyframes tycho-boot-particle') &&
-           response[:body].include?('inset: -160px') &&
-           response[:body].include?('rotate(360deg)') &&
-           response[:body].include?('animation: tycho-boot-orbit 2s ease-in-out infinite') &&
-           response[:body].include?('0%, 25% { transform: rotate(0deg); }') &&
-           !response[:body].include?('id="tycho-boot-message"') &&
-           !response[:body].include?('id="tycho-boot-retry"'),
-           "expected root shell to expose a text-free branded loading animation before application JavaScript")
+           response[:body].include?('class="tycho-boot-orbit"') &&
+           response[:body].include?('@keyframes tycho-boot-pulse') &&
+           response[:body].include?('id="tycho-boot-message"') &&
+           response[:body].include?('id="tycho-boot-retry"') &&
+           response[:body].include?('hq.remote.startup-message') &&
+           response[:body].index('window.TychoStartup =') < response[:body].index('src="/ui.js'),
+           "expected inline startup message, restrained motion, and recovery before application JavaScript")
     assert(response[:body].include?('@media (prefers-reduced-motion: reduce)') &&
            response[:body].include?('animation: none;'),
            "expected root shell to provide a static reduced-motion loading state")

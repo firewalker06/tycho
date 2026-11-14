@@ -109,3 +109,28 @@ checks rendered Design System logo pixels with saved Light, System/Light, Dark,
 and System/Dark at desktop and mobile sizes. Set
 `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the repository to retain before/after
 screenshots.
+
+
+## Startup message and motion
+
+Settings > Appearance > Startup message saves one message as plain text, up to
+240 characters. It saves as you type. Empty or unavailable storage uses
+“Loading Tycho…”. Examples: “The factory must grow…” and “Your agent can do what?”.
+This preference uses browser local storage for the current origin (scheme,
+host, and port). Other browsers, devices, and server addresses have separate
+values. It is not an account or project setting. Storage failure is shown in
+Settings; that choice cannot persist for the next startup.
+
+The inline shell reads the message before app scripts run. The Tycho mark stays
+fixed while an orange orbit and three signal cells animate with CSS. Reduced
+motion stops both animations. No external animation assets or timed progress
+are used. The shell leaves when the selected route is ready. The existing
+15-second app timeout and offline/error retry paths remain available. An inline
+15-second fallback also offers page reload if the main app script never starts.
+This fallback does not delay readiness. The operating system's installed PWA
+launch image is outside the page's control; this screen begins when HTML loads.
+
+Run `TYCHO_REMOTE_UI_STARTUP_ONLY=1 bin/remote-ui-smoke` for real Chrome startup,
+Settings persistence, literal text, reduced motion, route readiness, missing
+script, and offline retry checks in desktop/mobile Dark/Light. Set
+`TYCHO_REMOTE_UI_CAPTURE_DIR` outside the repository to retain screenshots.
