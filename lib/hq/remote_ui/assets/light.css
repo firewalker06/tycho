@@ -84,6 +84,10 @@
   outline-offset: 3px;
 }
 
+:root[data-appearance="light"] .search-box input:focus-visible {
+  outline: 0;
+}
+
 :root[data-appearance="light"] :is(button.primary, .button.primary, .ui-button[data-variant="brand"], .quick-agent-fab) {
   background: var(--ds-action-brand);
   color: var(--nord0);
