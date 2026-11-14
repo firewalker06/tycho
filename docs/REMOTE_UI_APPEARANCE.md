@@ -115,7 +115,8 @@ screenshots.
 
 Settings > Configuration > Appearance > Startup text saves plain text as you type.
 Use one candidate per line, up to 8,000 characters for the list and 240 characters
-per displayed candidate. Blank lines are ignored. One candidate is selected at
+per displayed candidate. The empty textarea shows both default phrases as a
+two-line placeholder; the placeholder is not saved input. Blank lines are ignored. One candidate is selected at
 random once per startup. Absent, all-blank, or unavailable storage uses
 “The factory must grow” and “Orchestrating the orchestrator”. Existing saved
 single messages remain one candidate. The text uses responsive 21–35 pixel bold

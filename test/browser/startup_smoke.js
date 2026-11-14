@@ -77,12 +77,26 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
         await input.waitFor();
         assert.equal(await input.inputValue(), "The factory must grow…");
         assert.equal(await input.evaluate(el => el.tagName), "TEXTAREA");
+        assert.equal(await input.evaluate(el => el.labels[0].textContent), "Startup text");
+        assert.equal(await input.getAttribute("placeholder"), "The factory must grow\nOrchestrating the orchestrator");
+        assert.equal(await page.locator("#startup-message-help, #appearance-help").count(), 0);
+        await input.fill("");
+        await page.evaluate(() => refresh({ force: true }));
+        assert.equal(await input.inputValue(), "", "placeholder is not input content");
+        assert.equal(await page.evaluate(() => localStorage.getItem("hq.remote.startup-message")), "", "placeholder is never saved");
+        await page.reload();
+        await input.waitFor();
+        assert.equal(await input.inputValue(), "", "empty value remains empty after reload");
+        assert.equal(await input.getAttribute("placeholder"), "The factory must grow\nOrchestrating the orchestrator");
+        assert.equal(await page.evaluate(() => localStorage.getItem("hq.remote.startup-message")), "");
+        await input.scrollIntoViewIfNeeded();
+        await capture(page, `startup-settings-${variant}-${device}-${mode}`);
         await input.fill("Your agent can do what?\n\nSecond candidate");
         await page.evaluate(() => refresh({ force: true }));
         assert.equal(await input.inputValue(), "Your agent can do what?\n\nSecond candidate");
         await input.scrollIntoViewIfNeeded();
         await page.waitForTimeout(250);
-        await capture(page, `startup-settings-${variant}-${device}-${mode}`);
+        await capture(page, `startup-settings-filled-${variant}-${device}-${mode}`);
         // Hold actual route data: readiness must keep the shell until the data arrives.
         let releaseData, signalData;
         const dataHeld = new Promise(resolve => { signalData = resolve; });
