@@ -92,3 +92,22 @@ Internal Settings/QR/notification metadata is not rewritten for the gateway.
 The required `bin/test` attestation belongs to the exact published PR head.
 The draft PR remains for parent independent review before ready; no merge or
 deployment is part of this work.
+
+## Authorized cache follow-up
+
+The operator approved keeping Cargo build artifacts between native test runs.
+The original runner built inside a deleted temporary target directory; a
+subprocess regression reproduced the lost cache. The updated runner uses
+`ext/iroh_gateway/target` unless `CARGO_TARGET_DIR` is explicitly set. Both
+locked Cargo validation commands still run before the proof. Temporary
+fixture credentials, config, and logs stay isolated, and evidence survives
+only when an explicit capture directory is selected.
+
+Runner regressions cover repeated default cache use, explicit relative and
+absolute targets with spaces, invocation from another working directory,
+retained evidence, cleanup after success/failure, and prevention of proof
+execution after a build failure with a stale binary still present. Normal
+`bin/test` uses fake Cargo/Python executables for these runner checks and
+does not need Rust. Real cold/warm measurements are retained with the PR/card
+evidence for the changed head. The original independent approval does not
+approve this follow-up; a fresh review is required.

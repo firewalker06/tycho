@@ -20,6 +20,8 @@ Unix Rust helper provides gateway HTTPS and a real Iroh hop to a fixed-loopback
 host bridge. Existing Tycho HTTP/Tailscale defaults and bearer authorization
 stay in place. Explicit enrollment, private files, bounded connections and
 bodies, and closed transport failures apply. No deployment is included.
+The native test runner keeps Cargo artifacts between runs while still running
+both locked source checks; fixture secrets and config remain temporary.
 See [Iroh gateway](IROH_GATEWAY.md) for build, isolated real-transport tests,
 configuration, resource limits, and unverified relay/mobile/platform paths.
 

@@ -33,11 +33,42 @@ build pins Iroh 1.4.1. The Ruby gem includes helper source but never compiles or
 installs Rust dependencies automatically. Cargo fetches dependencies on the
 first build; normal `bin/test` does not require Rust or contact crates.io.
 
-`bin/test-iroh-gateway` runs native policy tests, builds the program, then runs
-a real HTTPS/Iroh/Tycho proof with temporary HOME, config, logs, keys, and
-synthetic tokens. All listeners use loopback. Discovery, relays, multicast,
-and router mapping are off. It stops the processes and removes temporary
-credentials. Set `TYCHO_REMOTE_UI_CAPTURE_DIR` to retain redacted result JSON.
+`bin/test-iroh-gateway` always runs `cargo test --locked` and
+`cargo build --locked` against the checked-out source before it starts the
+real transport proof. It never selects an installed helper from PATH or
+continues after a Cargo failure.
+
+The default persistent build cache is `ext/iroh_gateway/target`, shared with
+the normal manifest build. An explicit nonempty `CARGO_TARGET_DIR` overrides
+it. Relative target and capture paths resolve from the repository root,
+including when the runner is started from another working directory.
+Cargo validates source freshness on every run and reuses unchanged artifacts.
+The runner does not delete the build cache after success or failure.
+
+```sh
+# Default cache: first run compiles; subsequent runs reuse unchanged artifacts.
+bin/test-iroh-gateway
+bin/test-iroh-gateway
+
+# Explicit persistent cache, including a path with spaces.
+CARGO_TARGET_DIR="path/to/cargo cache" bin/test-iroh-gateway
+
+# Retain redacted evidence; credentials and fixture config still stay temporary.
+TYCHO_REMOTE_UI_CAPTURE_DIR=path/to/evidence bin/test-iroh-gateway
+```
+
+The runner builds the debug profile. A separate `cargo build --release`
+uses the release profile and can still need a first release compilation.
+Changing compiler, source, flags, or target can also cause a valid rebuild.
+Do not delete the target directory unless you intend a cold build.
+
+The proof uses temporary HOME, config, logs, keys, and synthetic tokens.
+All listeners use loopback. Discovery, relays, multicast, and router mapping
+are off. It stops the processes and removes temporary credentials. Without
+`TYCHO_REMOTE_UI_CAPTURE_DIR`, its temporary evidence directory is also
+removed, including after proof failure. An explicit capture directory retains
+redacted result JSON and any requested screenshots. No fixture secrets or
+logs are retained in that directory.
 Set `TYCHO_PLAYWRIGHT_PATH` to an existing Playwright package to add actual
 Chrome checks of the current UI at desktop and phone-sized viewports. This
 browser check uses a fixture certificate exception; Python independently
@@ -79,6 +110,85 @@ Same-user processes and root remain trusted. The helper rejects symlinks,
 permissive files, empty/short tokens, unknown config fields, and disabled
 configs. It never prints parsed configuration or dependency error details.
 Startup failures report a generic configuration/credential/transport error.
+
+## Practical start commands
+
+These commands describe operator setup; they were not run against a live
+service. Run from the repository root. First build the debug helper used by
+the examples:
+
+```sh
+cargo build --locked --manifest-path ext/iroh_gateway/Cargo.toml
+```
+
+Create each identity on its own computer. Replace the private directory
+placeholders with an existing directory owned by that process user, mode
+0700. Do not store private keys or tokens in the checkout.
+
+```sh
+# On the Tycho host: prints only HOST_PUBLIC_ENDPOINT_ID.
+ext/iroh_gateway/target/debug/tycho-iroh-gateway init-key path/to/private/host.key
+
+# On the gateway computer: prints only GATEWAY_PUBLIC_ENDPOINT_ID.
+ext/iroh_gateway/target/debug/tycho-iroh-gateway init-key path/to/private/gateway.key
+```
+
+If an explicit `CARGO_TARGET_DIR` is used, replace the binary prefix with
+that target directory's `debug` directory. Prepare the two JSON configs below
+with verified public IDs and correct private file paths. All config, token,
+key, and PEM certificate files must be mode 0600. The same bearer value goes
+in the host token file, gateway token file, and Tycho server environment.
+Supply it with a secure editor or credential tool; do not paste it into a
+command, URL, or bundle.
+
+Start Tycho itself on loopback. This command reads the private token into
+the server process environment without putting its value in arguments or
+shell history. It removes only final CR/LF characters, as the helper does:
+
+```sh
+bundle exec ruby -e '
+  ENV["TYCHO_REMOTE_TOKEN"] = File.read(ARGV.fetch(0)).sub(/[\r\n]+\z/, "")
+  abort "Empty remote token" if ENV["TYCHO_REMOTE_TOKEN"].empty?
+  exec "./bin/tycho", "serve", "--host", "127.0.0.1", "--port", "7373"
+' path/to/private/token
+```
+
+The actual serve flags are `--host` and `--port`. There is no serve
+`--token`, `--token-file`, or HTTPS flag. Bearer authentication comes from
+`TYCHO_REMOTE_TOKEN`. An explicit host bypasses automatic Tailscale bind
+selection. This command runs in the foreground and does not install a
+service. The helper supplies HTTPS on the gateway; Tycho remains loopback
+HTTP.
+
+In separate terminals, start the two helper roles:
+
+```sh
+# On the Tycho host, with host.json targeting 127.0.0.1:7373.
+ext/iroh_gateway/target/debug/tycho-iroh-gateway host path/to/private/host.json
+
+# On the gateway computer, with its trusted certificate and enrolled host ID.
+ext/iroh_gateway/target/debug/tycho-iroh-gateway gateway path/to/private/gateway.json
+```
+
+For two computers with an already routable direct UDP path, the minimal
+configuration changes from the loopback examples are:
+
+- Host: set `allow_network` to `true` and `udp_bind` to the chosen local
+  interface IP and UDP port, or `0.0.0.0:7375`. Keep `target` loopback.
+- Gateway: set `allow_network` to `true`, use its chosen local UDP bind
+  (for example `0.0.0.0:7376`), and set `peer_addr` to the host's already
+  reachable IP and UDP port. The gateway must not use the host's loopback IP.
+- For phone access, set gateway `https_bind` to its chosen reachable
+  interface, for example `0.0.0.0:8443`, and `public_origin` to its exact
+  trusted HTTPS origin, including port 8443. Supply a matching browser-trusted
+  PEM certificate and key. Then open that origin on the phone.
+
+This is explicit direct-IP configuration, not a verified NAT or relay
+recipe. It assumes routing, firewall permissions, DNS, and certificate
+provisioning already exist. No commands here create them. Leave `relay_url`
+absent for this direct path; do not claim that a public address or wildcard
+bind alone makes NAT traversal work. Stop these foreground processes with
+Ctrl-C. Neither a deployment nor a real remote-network test is included.
 
 ## Host configuration
 

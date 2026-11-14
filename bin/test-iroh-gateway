@@ -2,19 +2,28 @@
 # frozen_string_literal: true
 
 require "tmpdir"
-require "fileutils"
 
 root = File.expand_path("..", __dir__)
-Dir.mktmpdir("tycho-iroh-tests-") do |dir|
-  env = { "CARGO_TARGET_DIR" => File.join(dir, "target") }
-  manifest = File.join(root, "ext/iroh_gateway/Cargo.toml")
-  ["test", "build"].each do |action|
-    abort "Iroh #{action} failed" unless system(env, "cargo", action, "--locked", "--manifest-path", manifest)
-  end
-  capture = ENV["TYCHO_REMOTE_UI_CAPTURE_DIR"].to_s
-  capture = File.join(dir, "evidence") if capture.empty?
+configured_target = ENV["CARGO_TARGET_DIR"].to_s
+target = if configured_target.empty?
+           File.join(root, "ext/iroh_gateway/target")
+         else
+           File.expand_path(configured_target, root)
+         end
+env = { "CARGO_TARGET_DIR" => target }
+manifest = File.join(root, "ext/iroh_gateway/Cargo.toml")
+["test", "build"].each do |action|
+  abort "Iroh #{action} failed" unless system(env, "cargo", action, "--locked", "--manifest-path", manifest, chdir: root)
+end
+run_proof = lambda do |capture|
   command = ["python3", File.join(root, "test/iroh/gateway_proof.py"),
-             "--binary", File.join(dir, "target/debug/tycho-iroh-gateway"), "--output", capture]
+             "--binary", File.join(target, "debug/tycho-iroh-gateway"), "--output", capture]
   abort "Real Iroh gateway proof failed" unless system(*command, chdir: root)
+end
+capture = ENV["TYCHO_REMOTE_UI_CAPTURE_DIR"].to_s
+if capture.empty?
+  Dir.mktmpdir("tycho-iroh-evidence-") { |dir| run_proof.call(dir) }
+else
+  run_proof.call(File.expand_path(capture, root))
 end
 puts "Iroh gateway: ok"
