@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "digest"
+
 require "time"
 require "yaml"
 
@@ -185,6 +187,7 @@ module HQ
         data = load_yaml
         entries = schedule_entries(data)
         entry = schedule_entry_from_attrs(attrs)
+        assert_project_not_deleting!(entry)
         entries << entry
         validated = validate_entries!(entries)
         data["schedules"] = entries
@@ -207,6 +210,7 @@ module HQ
         end
 
         entries[index] = schedule_entry_from_attrs(values, existing: entries[index], key: key)
+        assert_project_not_deleting!(entries[index])
         validated = validate_entries!(entries)
         data["schedules"] = entries
         write_yaml(data)
@@ -409,6 +413,15 @@ module HQ
       return value if value == true || value == false
 
       !%w[false 0 no off].include?(value.to_s.strip.downcase)
+    end
+
+    def assert_project_not_deleting!(entry)
+      key = entry.dig("target", "project_key").to_s
+      path = File.join(File.dirname(AGENTS_FILE), "project_deletions", "#{Digest::SHA256.hexdigest(key)}.json")
+      return unless File.exist?(path)
+
+      job = JSON.parse(File.read(path))
+      raise Error, "Project deletion is pending; schedule changes are blocked" unless job["status"] == "completed"
     end
 
     def build_schedule(entry, index:)

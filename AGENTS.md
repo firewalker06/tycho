@@ -199,3 +199,5 @@ Also call out changes to Bubbletea input handling, bracketed paste behavior, or 
 - Set `TYCHO_REMOTE_UI_SIDEBAR_RAIL_ONLY=1` with `bin/remote-ui-smoke` to check desktop split navigation contraction, destination labels, focus, refresh, reload, preference preservation, and Dark/Light desktop/tablet/mobile layouts. Set `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the repository to retain screenshots.
 
 - Set `TYCHO_REMOTE_UI_STARTUP_ONLY=1` with `bin/remote-ui-smoke` to check inline startup text, Settings persistence, animation and reduced motion, readiness, missing-script recovery, and offline retry on desktop/mobile Dark/Light. Set `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the repository to retain screenshots.
+
+- `bin/remote-ui-project-deletion-smoke`: verify project deletion confirmation, archive, permanent removal, failure/retry, reload, and desktop/mobile layout with an isolated server and Chrome. Set `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the repository to retain evidence; see [project deletion](docs/PROJECT_DELETION.md).

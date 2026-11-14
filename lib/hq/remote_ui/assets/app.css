@@ -10695,3 +10695,20 @@ body:has(.inquiry-form-full-screen) {
 .project-created-dialog dd { margin: 0 0 10px; overflow-wrap: anywhere; }
 .project-created-dialog code { white-space: normal; overflow-wrap: anywhere; }
 .project-created-dialog > button { width: 100%; }
+
+/* Keep destructive project controls separate from ordinary settings. */
+.project-danger-zone {
+  margin-block-start: 64px;
+}
+
+.project-danger-zone > .detail-card {
+  border-color: color-mix(in srgb, var(--danger) 60%, var(--border));
+}
+
+.project-danger-zone h2 {
+  color: var(--danger);
+}
+
+body:has(#confirmation-dialog[open]) [data-project-deletion-status] {
+  visibility: hidden;
+}
