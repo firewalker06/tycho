@@ -11255,6 +11255,10 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "session_id_copy_smoke")
       next
     end
+    if ENV["TYCHO_REMOTE_UI_STARTUP_ONLY"] == "1"
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "startup_smoke")
+      next
+    end
     if ENV["TYCHO_REMOTE_UI_LOGO_ONLY"] == "1"
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "logo_smoke")
       next

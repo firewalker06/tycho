@@ -18,38 +18,65 @@
       :root { background: #282a36; color-scheme: dark; --boot-bg: #282a36; --boot-text: #f8f8f2; }
       :root[data-appearance="light"] { background: #e5e9f0; color-scheme: light; --boot-bg: #e5e9f0; --boot-text: #2e3440; }
       body { margin: 0; min-height: 100vh; background: var(--boot-bg); color: var(--boot-text); font-family: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-      .tycho-boot-shell { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; min-height: 100vh; min-height: 100dvh; padding: max(24px, env(safe-area-inset-top, 0px)) 24px max(24px, env(safe-area-inset-bottom, 0px)); background: var(--boot-bg); text-align: center; transition: opacity 160ms ease, visibility 160ms ease; }
+      .tycho-boot-shell { box-sizing: border-box; overflow: auto; overflow-x: hidden; position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; min-height: 100vh; min-height: 100dvh; padding: max(24px, env(safe-area-inset-top, 0px)) 24px max(24px, env(safe-area-inset-bottom, 0px)); background: var(--boot-bg); text-align: center; transition: opacity 160ms ease, visibility 160ms ease; }
       .tycho-boot-shell[hidden] { display: none; }
       .tycho-boot-shell.is-leaving { opacity: 0; visibility: hidden; pointer-events: none; }
-      .tycho-boot-card { position: relative; display: grid; place-items: center; }
-      .tycho-boot-particles { position: absolute; z-index: 0; inset: -160px; overflow: visible; pointer-events: none; -webkit-mask-image: radial-gradient(circle, transparent 0 34px, #000 36px); mask-image: radial-gradient(circle, transparent 0 34px, #000 36px); }
-      .tycho-boot-particle { position: absolute; top: 50%; left: 50%; width: var(--tycho-particle-size); height: var(--tycho-particle-size); border-radius: 50%; background: #fff; box-shadow: 0 0 5px rgba(255, 255, 255, .55); opacity: 0; animation: tycho-boot-particle var(--tycho-particle-duration) ease-out forwards; }
-      .tycho-boot-mark { position: relative; z-index: 1; width: 72px; height: 72px; color: #ff8a00; filter: drop-shadow(0 0 15px rgba(255, 138, 0, .3)); animation: tycho-boot-orbit 2s ease-in-out infinite; }
+      .tycho-boot-card { display: grid; justify-items: center; gap: 32px; width: min(100%, 720px); }
+      .tycho-boot-emblem { position: relative; display: grid; place-items: center; width: 128px; height: 128px; }
+      .tycho-boot-orbit { position: absolute; inset: 0; width: 128px; height: 128px; color: #ff8a00; }
+      .tycho-boot-orbit circle { fill: none; stroke: currentColor; stroke-width: 1; opacity: .18; }
+      .tycho-boot-orbit .tycho-boot-signal { stroke-width: 2; stroke-dasharray: 52 312.43; opacity: .9; transform-origin: 64px 64px; animation: tycho-boot-orbit 1.2s cubic-bezier(.4, 0, .2, 1) infinite; }
+      .tycho-boot-signal:nth-of-type(3) { animation-delay: -.4s; opacity: .55; }
+      .tycho-boot-signal:nth-of-type(4) { animation-delay: -.8s; opacity: .3; }
+      .tycho-boot-mark { width: 64px; height: 64px; color: #ff8a00; }
       .tycho-boot-mark path { fill: none; stroke: currentColor; stroke-width: 5; stroke-linecap: butt; }
       .tycho-boot-mark .tycho-boot-light { stroke: #f3f1ea; }
       .tycho-boot-mark .tycho-boot-muted { stroke: #9c9c9c; }
       .tycho-boot-mark rect { fill: #f3f1ea; }
+      .tycho-boot-message { margin: 0; max-width: 100%; font-size: clamp(21px, calc(3.5vw - 5px), 35px); font-weight: 700; position: relative; z-index: 1; background: var(--boot-bg); line-height: 1.35; text-wrap: balance; overflow-wrap: anywhere; white-space: pre-wrap; }
+      .tycho-boot-retry { padding: 10px 20px; border: 1px solid currentColor; border-radius: 8px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+      .tycho-boot-shell:not([data-state="loading"]) .tycho-boot-signal, .tycho-boot-shell:not([data-state="loading"]) rect { animation-play-state: paused; }
+      :root[data-appearance="light"] .tycho-boot-orbit { color: #a64f00; }
       :root[data-appearance="light"] .tycho-boot-mark .tycho-boot-light { stroke: #2e3440; }
       :root[data-appearance="light"] .tycho-boot-mark .tycho-boot-muted { stroke: #4c566a; }
       :root[data-appearance="light"] .tycho-boot-mark rect { fill: #2e3440; }
-      @keyframes tycho-boot-orbit { 0%, 25% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+      .tycho-boot-particles { position: absolute; z-index: 0; inset: -160px; overflow: visible; pointer-events: none; -webkit-mask-image: radial-gradient(circle, transparent 0 34px, #000 36px); mask-image: radial-gradient(circle, transparent 0 34px, #000 36px); }
+      .tycho-boot-particle { position: absolute; top: 50%; left: 50%; width: var(--tycho-particle-size); height: var(--tycho-particle-size); border-radius: 50%; background: #fff; box-shadow: 0 0 5px rgba(255, 255, 255, .55); opacity: 0; animation: tycho-boot-particle var(--tycho-particle-duration) ease-out forwards; }
+      :root[data-appearance="light"] .tycho-boot-particle { background: #4c566a; box-shadow: 0 0 5px rgba(76, 86, 106, .3); }
+      .tycho-boot-shell[data-animation="legacy"] .tycho-boot-orbit { display: none; }
+      .tycho-boot-shell[data-animation="legacy"] .tycho-boot-mark { position: relative; z-index: 1; width: 72px; height: 72px; filter: drop-shadow(0 0 15px rgba(255, 138, 0, .3)); animation: tycho-boot-legacy-orbit 2s ease-in-out infinite; }
+      .tycho-boot-shell:not([data-state="loading"]) .tycho-boot-mark { animation-play-state: paused; }
+      @keyframes tycho-boot-legacy-orbit { 0%, 25% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
       @keyframes tycho-boot-particle { from { opacity: .95; transform: translate(-50%, -50%) scale(.7); } 55% { opacity: .95; } to { opacity: 0; transform: translate(calc(-50% + var(--tycho-particle-x)), calc(-50% + var(--tycho-particle-y))) scale(.2); } }
-      @media (prefers-reduced-motion: reduce) { .tycho-boot-shell { transition: none; } .tycho-boot-mark { animation: none; } .tycho-boot-particles { display: none; } }
+      @keyframes tycho-boot-orbit { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) { .tycho-boot-shell { transition: none; } .tycho-boot-orbit .tycho-boot-signal, .tycho-boot-shell[data-animation="legacy"] .tycho-boot-mark { animation: none; } .tycho-boot-particles { display: none; } }
     </style>
   </head>
   <body>
-    <section id="tycho-boot-shell" class="tycho-boot-shell" data-state="loading" role="status" aria-live="polite" aria-atomic="true" aria-label="Tycho is loading">
+    <section id="tycho-boot-shell" class="tycho-boot-shell" data-state="loading" role="status" aria-live="polite" aria-atomic="true">
       <div class="tycho-boot-card">
-        <div id="tycho-boot-particles" class="tycho-boot-particles" aria-hidden="true"></div>
-        <svg class="tycho-boot-mark" aria-hidden="true" viewBox="0 0 64 64">
-          <path d="M7 27a25 25 0 0 1 20-20"></path>
-          <path class="tycho-boot-light" d="M37 7a25 25 0 0 1 20 20"></path>
-          <path class="tycho-boot-light" d="M57 37a25 25 0 0 1-20 20"></path>
-          <path class="tycho-boot-muted" d="M27 57A25 25 0 0 1 7 37"></path>
-          <rect x="30" y="24" width="4" height="4"></rect><rect x="30" y="30" width="4" height="4"></rect><rect x="30" y="38" width="4" height="4"></rect>
-        </svg>
+        <div class="tycho-boot-emblem">
+          <div id="tycho-boot-particles" class="tycho-boot-particles" aria-hidden="true"></div>
+          <svg class="tycho-boot-orbit" aria-hidden="true" viewBox="0 0 128 128">
+            <circle cx="64" cy="64" r="58"></circle>
+            <circle class="tycho-boot-signal" cx="64" cy="64" r="58"></circle>
+            <circle class="tycho-boot-signal" cx="64" cy="64" r="58"></circle>
+            <circle class="tycho-boot-signal" cx="64" cy="64" r="58"></circle>
+          </svg>
+          <svg class="tycho-boot-mark" aria-hidden="true" viewBox="0 0 64 64">
+            <path d="M7 27a25 25 0 0 1 20-20"></path>
+            <path class="tycho-boot-light" d="M37 7a25 25 0 0 1 20 20"></path>
+            <path class="tycho-boot-light" d="M57 37a25 25 0 0 1-20 20"></path>
+            <path class="tycho-boot-muted" d="M27 57A25 25 0 0 1 7 37"></path>
+            <rect x="30" y="24" width="4" height="4"></rect><rect x="30" y="30" width="4" height="4"></rect><rect x="30" y="36" width="4" height="4"></rect>
+          </svg>
+        </div>
+        <p id="tycho-boot-message" class="tycho-boot-message">Loading Tycho&#8230;</p>
+        <button id="tycho-boot-retry" class="tycho-boot-retry" type="button" hidden>Retry</button>
+        <noscript>JavaScript is required to open Tycho. Enable it, then reload this page.</noscript>
       </div>
     </section>
+    <script><%= HQ::RemoteUI.startup_js %></script>
     <div id="pull-refresh" class="pull-refresh" aria-hidden="true">
       <svg class="pull-refresh-spinner ui-icon" aria-hidden="true" viewBox="0 0 24 24">
         <path d="M5 22h14"></path>
