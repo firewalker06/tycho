@@ -12,6 +12,17 @@ type: project
 
 2026-11-14
 
+## Agent Focus
+
+Each agent has a durable Focus document for current actionable state. Agents
+read and replace ordered sections through `tycho agent focus`, locally or with
+`--server`. Revision checks reject stale writes; exact latest-write retries are
+safe. Focus stays separate from run results and transcripts, persists across
+runs, and moves into read-only archive history. New clones start empty. The
+Remote UI shows grouped items and attachment links above Conversation, with a
+keyboard disclosure that retains its state through polling. See
+[Agent Focus](AGENT_FOCUS.md) for schema, update rules, limits, and verification.
+
 ## Schedules page header
 
 The Schedules page keeps New schedule in the top page header. One page menu

@@ -28,6 +28,7 @@ require_relative "domain/agent_activity_snapshot"
 require_relative "domain/agent_list_cache"
 require_relative "domain/agent_chat_log"
 require_relative "domain/agent_store"
+require_relative "domain/agent_focus"
 require_relative "domain/context_handoff"
 require_relative "domain/conversation_blocks_cache"
 require_relative "domain/delegation_actor"
@@ -626,6 +627,8 @@ module HQ
         if method == "GET" && tail.length == 3 && tail.first(2) == %w[conversation blocks]
           return ok(service.conversation_block(key, tail.last))
         end
+        return ok(focus: service.agent_focus(key)) if method == "GET" && tail == ["focus"]
+        return ok(focus: service.update_agent_focus(key, body)) if method == "PUT" && tail == ["focus"]
         return ok(debug: service.agent_debug(key)) if method == "GET" && tail == ["debug"]
         return ok(log: service.agent_log(key, request&.query_params || {})) if method == "GET" && tail == ["logs"]
         if method == "POST" && tail == ["memory", "capture", "dry-run"]
@@ -2356,6 +2359,46 @@ module HQ
         memory_path: agent.memory_path,
         event_count: written
       }
+    end
+
+    def agent_focus(key)
+      AgentFocus.new(find_agent_reference!(key)).read
+    rescue AgentFocus::Error => e
+      raise Error.new(e.message, status: 422)
+    end
+
+    def update_agent_focus(key, attrs)
+      find_agent!(key)
+      result = nil
+      @agent_store.update_agent!(key) do |agent|
+        result = AgentFocus.new(agent).replace(attrs["sections"], expected_revision: attrs["revision"])
+      end
+      result
+    rescue AgentFocus::Conflict => e
+      raise Error.new(e.message, status: 409)
+    rescue AgentFocus::Error => e
+      raise Error.new(e.message, status: 422)
+    end
+
+    def focus_payload(agent)
+      document = AgentFocus.new(agent).read
+      attachments = agent.attachments
+      document.merge("sections" => document["sections"].map do |section|
+        section.merge("items" => section["items"].map do |item|
+          item.merge("attachments" => item["attachments"].map { |entry| focus_attachment_payload(agent, entry, attachments) })
+        end)
+      end)
+    rescue AgentFocus::Error => e
+      { "revision" => nil, "sections" => [], "error" => e.message }
+    end
+
+    def focus_attachment_payload(agent, entry, attachments)
+      return entry unless entry["type"] == "file"
+
+      source = attachments.find { |attachment| attachment["path"] == entry["path"] }
+      return entry.merge("unavailable" => true) unless source
+
+      attachment_payload(agent, source).merge("title" => entry["title"])
     end
 
     def agent_pull_requests(key)
@@ -5599,6 +5642,7 @@ module HQ
         prompt_queue: prompt_queue_payload(agent),
         prompt_acceptances: prompt_acceptance_proofs(agent),
         attachments: RequestTiming.measure("detail_attachments") { attachment_payloads(agent) },
+        focus: focus_payload(agent),
         skills: agent.skills,
         skill_trigger: SkillDiscovery.trigger_for(agent.agent),
         session_id: agent.session_id.to_s.empty? ? nil : agent.session_id,
@@ -6058,7 +6102,7 @@ module HQ
     end
 
     def agent_revision(agent)
-      paths = [agent.raw_log_path, agent.memory_path, agent.attachments_path, agent.pull_request_catalog_path]
+      paths = [agent.raw_log_path, agent.memory_path, agent.attachments_path, agent.pull_request_catalog_path, agent.focus_path]
       paths << HQ::AGENTS_FILE unless agent.archived?
       paths.filter_map do |path|
         File.mtime(path).to_f if path && File.exist?(path)

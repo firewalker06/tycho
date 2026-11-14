@@ -199,3 +199,6 @@ Also call out changes to Bubbletea input handling, bracketed paste behavior, or 
 - Set `TYCHO_REMOTE_UI_SIDEBAR_RAIL_ONLY=1` with `bin/remote-ui-smoke` to check desktop split navigation contraction, destination labels, focus, refresh, reload, preference preservation, and Dark/Light desktop/tablet/mobile layouts. Set `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the repository to retain screenshots.
 
 - Set `TYCHO_REMOTE_UI_STARTUP_ONLY=1` with `bin/remote-ui-smoke` to check inline startup text, Settings persistence, animation and reduced motion, readiness, missing-script recovery, and offline retry on desktop/mobile Dark/Light. Set `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the repository to retain screenshots.
+
+- `bin/tycho agent focus AGENT_KEY [--file path/to/focus.json --revision N] [--server KEY] [--json]`: read or replace an agent's durable current-state Focus document. Read the revision before replacing all sections. See [Agent Focus](docs/AGENT_FOCUS.md).
+- Set `TYCHO_REMOTE_UI_FOCUS_ONLY=1` with `bin/remote-ui-smoke` for Focus section/item rendering, links, keyboard disclosure, polling, update/reload persistence, draft preservation, conflicts, clearing, and desktop/mobile Dark/Light layout. Use `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the repository for evidence.

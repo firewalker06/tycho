@@ -10695,3 +10695,44 @@ body:has(.inquiry-form-full-screen) {
 .project-created-dialog dd { margin: 0 0 10px; overflow-wrap: anywhere; }
 .project-created-dialog code { white-space: normal; overflow-wrap: anywhere; }
 .project-created-dialog > button { width: 100%; }
+
+/* Focus is current agent state, separate from the run transcript. */
+.agent-focus {
+  margin: 0 0 24px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.agent-focus > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  cursor: pointer;
+  list-style: none;
+}
+.agent-focus > summary::-webkit-details-marker { display: none; }
+.agent-focus > summary > span { margin-left: auto; color: var(--muted); font-size: 12px; }
+.agent-focus > summary > svg { width: 16px; height: 16px; }
+.agent-focus:not([open]) > summary > svg { transform: rotate(-90deg); }
+.agent-focus > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+.agent-focus-sections { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); }
+.agent-focus-section { min-width: 0; padding: 16px; border-top: 1px solid var(--border); }
+.agent-focus-heading { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 16px; }
+.agent-focus-heading h3 { margin: 0; font-size: 14px; }
+.agent-focus p { margin: 4px 0 0; color: var(--muted); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-focus strong, .agent-focus h3 { overflow-wrap: anywhere; }
+.agent-focus-icon { color: var(--accent); flex: 0 0 18px; }
+.agent-focus-icon svg { width: 18px; height: 18px; }
+.agent-focus-icon[data-focus-icon="todo_done"] { color: var(--success, var(--accent)); }
+.agent-focus-icon[data-focus-icon="blocked"] { color: var(--danger); }
+.agent-focus-count { margin-left: auto; color: var(--muted); font-size: 12px; }
+.agent-focus ul { list-style: none; margin: 0; padding: 0; }
+.agent-focus-section > ul > li { margin: 0 0 16px 8px; padding-left: 18px; border-left: 1px solid var(--border); font-size: 14px; }
+.agent-focus-section > ul > li:last-child { margin-bottom: 0; }
+.agent-focus-attachments li { margin-top: 8px; font-size: 12px; overflow-wrap: anywhere; }
+.agent-focus-attachments a { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
+.agent-focus-attachments svg { width: 14px; height: 14px; flex-shrink: 0; }
+.agent-focus-empty { color: var(--muted); }
+.agent-focus > p { padding: 0 16px 16px; }
