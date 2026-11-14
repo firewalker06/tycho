@@ -375,6 +375,7 @@ module.exports = async function appearanceSmoke({ browser, baseUrl, agentKey, ca
       await capture(`light-${device}-markdown`);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, "Markdown tables and charts stay within the page");
     }
+    await require("./backdrop_images_smoke")({ browser, baseUrl, agentKey, captureDir });
     console.log("appearance_smoke: ok");
   } finally {
     await context.close();

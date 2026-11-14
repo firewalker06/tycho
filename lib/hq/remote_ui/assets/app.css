@@ -10734,3 +10734,24 @@ body:has(.inquiry-form-full-screen) {
 :root:not([data-backdrop="none"])[data-backdrop] :is(.bottom-nav, .sidebar-settings-link, .message-group > summary) {
   background: var(--panel);
 }
+
+
+/* Raster images are browser-local, still, and independent of the selected palette. */
+:root[data-appearance][data-image-backdrop="ready"] body { isolation: isolate; }
+:root[data-appearance][data-image-backdrop="ready"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: radial-gradient(ellipse at center, color-mix(in srgb, var(--bg) var(--theme-raster-fade), transparent), transparent 80%), var(--theme-raster-image);
+  background-size: cover;
+  background-position: var(--theme-raster-position);
+  opacity: var(--theme-raster-opacity);
+  animation: none;
+}
+:root[data-image-backdrop="ready"] :is(.bottom-nav, .sidebar-settings-link, .message-group > summary) { background: var(--panel); }
+.theme-image-preview { width: min(100%, 600px); aspect-ratio: 1.8; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.theme-image-preview img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.theme-image-settings p { margin: 0; }
+.theme-image-settings input[type="range"] { width: 100%; }

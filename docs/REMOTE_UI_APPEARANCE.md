@@ -305,3 +305,81 @@ Check scene strength on desktop and mobile, especially text outside cards,
 focus, and disabled controls. The importer checks the field format, not visual
 contrast. Use the existing appearance smoke command to verify all four scenes,
 preview tiles, scene copying, reduced motion, and old palette-only themes.
+
+## Local raster-image backdrops
+
+Settings → Configuration → Appearance → **Local image backdrop** lets you choose
+or replace an image for the current Dark or Light mode. Each mode has one image.
+The image replaces that mode's vector scene but does not change its selected
+palette. Switching palettes keeps the image. **Remove image** restores the
+selected theme's scene or flat canvas. The preview shows the saved image and
+its crop. **Image strength** controls its opacity; **Soft center fade** adds a
+palette-colored fade over the center. This is a fade, not a blur. Horizontal
+and vertical focal-position controls choose the crop with percentages from
+0 to 100. Images use cover sizing, so narrow screens can crop more of the sides.
+Text panels and navigation retain solid semantic surfaces, including peer panels.
+
+Images stay in this browser profile on this device, at this exact origin
+(scheme, host, and port). They are not uploaded to Tycho and are not synced to
+other devices or server addresses. IndexedDB database `tycho-backdrop-images`,
+store `backdrops`, contains one normalized Blob and its settings per mode.
+No image bytes, base64 payloads, or object URLs are written to localStorage or
+portable theme JSON. Existing theme choices and old palette-only themes are
+not migrated or overwritten.
+
+| Input limit | Value |
+| --- | --- |
+| Formats | PNG, JPEG, WebP |
+| Encoded bytes | At most 5 MiB |
+| Dimensions before decode | At most 4096 pixels per side and 12,000,000 pixels total |
+| Saved longest edge | At most 2560 pixels, with aspect ratio retained |
+| Saved bytes | At most 5 MiB per mode |
+
+The controller checks MIME type, file signature, header dimensions, and a real
+browser decode. SVG, GIF, file paths, and network URLs are not accepted. It
+renders the decoded first frame into a canvas and saves a still WebP copy
+(quality 0.9); browsers without canvas WebP encoding can return PNG. This strips
+source metadata and animation. Oversized input, corrupt files, decode failures,
+and failed saves show an error and keep the previous image. The saved copy can
+have different bytes, dimensions, and quality from the original. Keep the
+original file if you need it later.
+
+The small localStorage change marker and BroadcastChannel notify other tabs
+at this origin. Focus and visibility changes also refresh image state. Reload
+reads the saved Blob asynchronously; the existing palette/vector scene is the
+fallback while it loads. No image decoding or encoding runs on scroll, and
+settings changes reuse the same object URL. Replacement, removal, stale loads,
+and page disposal release unused object URLs. Browser data deletion or a
+missing image restores the palette/vector fallback. A damaged stored image
+shows a recovery message and can be replaced or removed. **Retry image storage**
+retries after storage becomes available. A blocked/full store does not silently
+replace the previous saved image. Site data can be cleared or evicted by the
+browser; keep a downloaded copy of images you want to retain.
+
+### Transfer and theme JSON
+
+**Download saved image** exports the normalized raster copy for the active mode,
+with its real file extension. To transfer a complete look, copy the palette or
+vector theme JSON separately, download the image, then choose that downloaded
+file in the other browser. Image strength, center fade, and focal position are
+local mode settings; set them again in the receiving browser. Theme JSON never
+contains a local image id, temporary URL, or missing file reference. Importing
+JSON does not transfer or remove a mode's existing local image. Remove that
+image to see an imported vector scene.
+
+The Settings agent prompt guide keeps this boundary explicit: agents can
+prepare portable palette/vector JSON, while the user chooses a raster file
+through **Local image backdrop**. Do not ask an agent to put image bytes or
+URLs into theme JSON.
+
+### Verification
+
+The existing appearance smoke command also exercises image selection,
+replacement/removal, real PNG/JPEG/WebP decode, dimension and byte limits,
+normalization, reload, two-tab updates, separate modes, storage failures,
+missing records, stale decode cancellation, object URL cleanup, and download
+transfer. All browser state belongs to throwaway fixtures. The synthetic
+landscape is an owned canvas-generated PNG, selected through the actual file
+input. The smoke prints image-load time and measured Settings-scroll frame
+gaps for its fixture and Chrome version; those measurements are not a general
+performance guarantee.

@@ -26,6 +26,10 @@ visible SVG backdrops: Synthwave Sunset, Aurora Night, Paper Garden, and Coastal
 Morning. Settings has preview tiles and editable example copies. Custom JSON
 can choose a scene, three colors, intensity, and still/slow motion. Reduced
 motion stops drift; old palette-only themes keep their existing appearance.
+Optional raster backdrops are stored per color mode as browser-local IndexedDB
+Blobs. Settings provides preview, replacement/removal, strength, center fade,
+focal position, recovery, and a separate image download. Portable theme JSON
+contains no local image reference; no image is sent to the server.
 
 ## Schedules page header
 
