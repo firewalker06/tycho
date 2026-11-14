@@ -100,6 +100,69 @@ module.exports = async function appearanceSmoke({ browser, baseUrl, agentKey, ca
         await page.locator('[data-scroll-settings-section="settings-configuration"]').click();
       }
     }
+    // Four built-in scenes must be usable without an import and visible on both screen sizes.
+    const examples = await page.evaluate(() => window.TychoAppearance.getThemeState().examples);
+    assert.equal(examples.length, 4);
+    assert.equal(examples.filter(theme => theme.mode === "dark").length, 2);
+    assert.equal(examples.filter(theme => theme.mode === "light").length, 2);
+    for (const [device, viewport] of Object.entries({ desktop: { width: 1440, height: 1000 }, mobile: { width: 390, height: 844 } })) {
+      await page.setViewportSize(viewport);
+      for (const theme of examples) {
+        await page.locator(`[data-theme-example="${theme.id}"]`).click();
+        assert.equal(await page.locator(`[data-theme-mode=${theme.mode}]`).inputValue(), theme.id);
+        assert.equal(await page.locator("[data-appearance-preference]").inputValue(), theme.mode);
+        assert.equal(await page.locator(`[data-theme-example="${theme.id}"]`).getAttribute("aria-pressed"), "true");
+        assert(await page.locator(`[data-theme-remove=${theme.mode}]`).isDisabled(), "built-in scenes cannot be removed");
+        await page.goto(route);
+        await page.locator("#prompt-input").fill(`${theme.name}: scene example.`);
+        const scene = await page.evaluate(async () => {
+          const style = getComputedStyle(document.body, "::before");
+          const source = style.backgroundImage.slice(5, -2);
+          const image = new Image(); image.src = source; await image.decode();
+          return { image: image.width > 0, opacity: Number(style.opacity), input: style.pointerEvents, animation: style.animationName, style: document.documentElement.dataset.backdrop, position: style.backgroundPositionX };
+        });
+        assert(scene.image && scene.opacity > 0.5, "the backdrop artwork must decode and be visible");
+        assert.equal(scene.style, theme.backdrop.style);
+        if (device === "mobile") assert.equal(scene.position, "85%", "mobile crops toward the sun and scene features");
+        assert.equal(scene.input, "none");
+        assert.equal(scene.animation, "none", "reduced motion disables scene motion");
+        await readable(page.locator(".message.assistant"));
+        await readable(page.locator("#prompt-input"));
+        await readable(page.locator(".bottom-nav button.active"));
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+        await capture(`scene-${theme.backdrop.style}-${device}`);
+        await page.goto(`${baseUrl}/ui#settings`);
+        await page.locator("[data-theme-mode=dark]").waitFor();
+        assert.equal(await page.locator(`[data-theme-mode=${theme.mode}]`).inputValue(), theme.id, "scene choice survives navigation");
+        await page.locator('[data-scroll-settings-section="settings-configuration"]').click();
+      }
+    }
+    for (const [device, viewport] of Object.entries({ desktop: { width: 1440, height: 1000 }, mobile: { width: 390, height: 844 } })) {
+      await page.setViewportSize(viewport);
+      await page.locator(".theme-examples").evaluate(element => element.scrollIntoView({ block: "center", behavior: "instant" }));
+      await capture(`scene-examples-${device}-settings`);
+    }
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    assert.equal(await page.evaluate(() => getComputedStyle(document.body, "::before").animationName), "theme-scene-drift");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    // Loading an example gives an editable custom copy, and keeps legacy palette-only themes.
+    await page.locator("#custom-theme-editor").evaluate(element => { element.open = true; });
+    await page.locator("[data-theme-load=light]").click();
+    const copy = JSON.parse(await page.locator("[data-custom-theme-json]").inputValue());
+    assert.equal(copy.id, "coast-copy");
+    copy.backdrop.intensity = 0.6;
+    copy.backdrop.motion = "none";
+    await page.locator("[data-custom-theme-json]").fill(JSON.stringify(copy));
+    await page.locator("[data-theme-save]").click();
+    await page.reload();
+    await page.locator("[data-theme-mode=light]").waitFor();
+    assert.equal(await page.locator("html").getAttribute("data-backdrop"), "coast");
+    assert.equal(await page.evaluate(() => getComputedStyle(document.body, "::before").opacity), "0.6");
+    await page.locator('[data-scroll-settings-section="settings-configuration"]').click();
+    await page.locator("[data-theme-remove=light]").click();
+    await page.locator("[data-theme-mode=dark]").selectOption("midnight");
+    await page.locator("[data-theme-mode=light]").selectOption("sandstone");
+    assert.equal(await page.locator("html").getAttribute("data-backdrop"), "none", "legacy custom themes keep their flat appearance");
     // System resolves the independent custom choices as the OS changes.
     await page.locator("[data-appearance-preference]").selectOption("system");
     await page.emulateMedia({ colorScheme: "dark" });
@@ -134,7 +197,7 @@ module.exports = async function appearanceSmoke({ browser, baseUrl, agentKey, ca
     await page.locator("[data-theme-remove=dark]").click();
     assert.equal(await page.locator("[data-theme-mode=light]").inputValue(), "nord");
     assert.equal(await page.locator("[data-theme-mode=dark]").inputValue(), "dracula");
-    assert.equal(await page.locator("[data-theme-mode=dark] option").count(), 1);
+    assert.equal(await page.locator("[data-theme-mode=dark] option").count(), 3);
     await page.locator("[data-appearance-preference]").selectOption("dark");
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto(`${baseUrl}/ui#settings`);

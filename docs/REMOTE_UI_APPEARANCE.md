@@ -234,3 +234,74 @@ to server configuration or sent to agents. Invalid saved data falls back to
 the defaults. If storage is full or blocked, changes apply for this tab and
 Settings reports the limit. Clearing browser storage removes custom themes.
 The head bootstrap applies the selected palette before CSS and app startup.
+
+## Scene backdrops and four example themes
+
+The reference in [Card 877](https://fizzy.startkit.tech/1/cards/877) and the
+[ClaudeDevs video](https://x.com/ClaudeDevs/status/2121392666244186327) shows
+scene artwork behind the conversation, including a striped sunset and neon
+grid. Tycho's examples use original, code-drawn vector scenes. No reference
+images or video are bundled or fetched by the UI.
+
+| Example | Mode | Backdrop |
+| --- | --- | --- |
+| Synthwave Sunset | Dark | Striped gold/pink sun, stars, outlined mountains, perspective grid |
+| Aurora Night | Dark | Green/teal ribbons, stars, distant mountain silhouettes |
+| Paper Garden | Light | Sage leaves, curved stems, warm sun, paper-colored ground |
+| Coastal Morning | Light | Blue wave layers, gold sun, distant birds |
+
+All four are available without import. In Settings → Configuration → Appearance,
+select a theme from the Dark/Light selector, or use a **Scene examples** tile.
+A tile selects its theme and its Color mode so you can try it immediately.
+The other mode's choice is retained. Dracula and Nord remain the defaults and
+have no scene. Existing palette-only custom themes retain their selected ids
+and appearance. The examples are separate from the 30-theme custom limit and
+cannot be removed. Their reserved ids start with `builtin:`.
+
+Select an example, then open the prompt guide and use **Load dark JSON** or
+**Load light JSON**. This loads an editable copy with a new custom id, such as
+`synthwave-copy`. Change the id again if you want to keep an existing copy.
+Change its colors or backdrop values and select **Save theme**. The built-in
+example stays available. Copying and importing this JSON transfers the scene
+settings as well as the palette.
+
+Add this optional top-level field beside `colors` in any custom theme JSON:
+
+```json
+"backdrop": {
+  "style": "synthwave",
+  "colors": ["#f6c66e", "#ed4fbd", "#9a9cff"],
+  "intensity": 0.8,
+  "motion": "slow"
+}
+```
+
+- `style`: `synthwave`, `aurora`, `garden`, or `coast`.
+- `colors`: exactly three six-digit hex colors. For synthwave they are sun
+  start, sun end/grid, and glow/mountain lines. For aurora they are ribbon
+  start/mountains, ribbon end, and glow/stars. For garden they are leaves,
+  stems/alternate leaves, and sun. For coast they are waves/birds, deeper
+  waves, and sun/shore.
+- `intensity`: a number from 0 to 1. Zero hides the artwork; 1 shows its full
+  strength. The palette's canvas remains underneath.
+- `motion`: `none` for a still scene, or `slow` for a 28-second eased drift.
+  The device's reduced-motion setting stops this movement.
+
+Remove the `backdrop` field to return a custom theme to a flat canvas. Updating
+an existing custom id can add or remove a backdrop. The same browser storage,
+cold-load, System-mode, cross-tab, and draft-preservation rules apply. Scene
+art stays behind controls and text panels and cannot receive clicks. Mobile
+uses a crop that keeps the right-hand scene visible. All scenes are local SVG
+backgrounds; JSON cannot supply CSS, SVG markup, asset paths, or network URLs.
+
+Example agent prompt for a backdrop:
+
+> Load the Synthwave Sunset example as a custom copy. Keep its twelve palette
+> roles readable. Change the backdrop to aurora, with teal, blue, and pale green
+> hex colors, intensity 0.65, and motion slow. Use a new id and name. Return
+> valid theme JSON only. Do not change application code.
+
+Check scene strength on desktop and mobile, especially text outside cards,
+focus, and disabled controls. The importer checks the field format, not visual
+contrast. Use the existing appearance smoke command to verify all four scenes,
+preview tiles, scene copying, reduced motion, and old palette-only themes.

@@ -105,6 +105,30 @@ module RemoteUIAppearanceTest
         assert.equal(reloaded.window.document.documentElement.dataset.theme, "dracula");
         denied.appearance.importTheme(JSON.stringify(theme));
         assert.equal(denied.appearance.getState().persistent, false);
+        const scenes = fixture("dark");
+        const examples = scenes.appearance.getThemeState().examples;
+        assert.equal(examples.length, 4);
+        assert.equal(examples.filter(theme => theme.mode === "dark").length, 2);
+        assert.equal(examples.filter(theme => theme.mode === "light").length, 2);
+        for (const example of examples) {
+          assert(scenes.appearance.setTheme(example.mode, example.id));
+          scenes.appearance.setPreference(example.mode);
+          assert.equal(scenes.window.document.documentElement.dataset.backdrop, example.backdrop.style);
+          assert.match(scenes.window.document.documentElement.style["--theme-backdrop-image"], /^url/);
+          assert.equal(scenes.appearance.removeTheme(example.mode), false, "example scenes cannot be removed");
+          const restored = fixture(example.mode, { savedThemes: scenes.values.get("hq.remote.themes.v1") });
+          assert.equal(restored.window.document.documentElement.dataset.theme, example.id, "built-in scene choices survive a cold load");
+        }
+        const backdrop = { ...examples[0].backdrop };
+        for (const invalid of [{ ...backdrop, colors: ["url(https://example.com)", "#ffffff", "#ffffff"] }, { ...backdrop, style: "unknown" }, { ...backdrop, intensity: 2 }, { ...backdrop, motion: "fast" }, { ...backdrop, extra: "#ffffff" }]) {
+          assert.throws(() => scenes.appearance.importTheme(JSON.stringify({ ...theme, backdrop: invalid })), /Backdrop/);
+        }
+        scenes.appearance.importTheme(JSON.stringify({ ...theme, backdrop }));
+        scenes.appearance.setPreference("dark");
+        assert.equal(scenes.window.document.documentElement.dataset.backdrop, "synthwave");
+        scenes.appearance.importTheme(JSON.stringify(theme));
+        assert.equal(scenes.window.document.documentElement.dataset.backdrop, "none", "old palette-only JSON stays valid and removes scene overrides");
+        assert.equal(scenes.window.document.documentElement.style["--theme-backdrop-image"], undefined);
         assert(light.changes.length > 1, "the UI is notified without rebuilding forms");
       JS
       script.flush

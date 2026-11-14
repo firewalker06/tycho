@@ -21,7 +21,11 @@ validated color roles map to semantic and legacy UI tokens. Settings includes
 an agent prompt guide; [theme documentation](REMOTE_UI_APPEARANCE.md) defines
 the format, storage scope, and contrast checks. Custom palettes apply in the
 head bootstrap before CSS, follow System mode, and sync across same-origin
-tabs without replacing drafts.
+tabs without replacing drafts. Four scene examples (two Dark, two Light) add
+visible SVG backdrops: Synthwave Sunset, Aurora Night, Paper Garden, and Coastal
+Morning. Settings has preview tiles and editable example copies. Custom JSON
+can choose a scene, three colors, intensity, and still/slow motion. Reduced
+motion stops drift; old palette-only themes keep their existing appearance.
 
 ## Schedules page header
 
