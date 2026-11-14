@@ -17,7 +17,8 @@ workspace can fit Conversation (380 px), Focus (440 px), and the 12 px gap.
 The existing desktop content-panel controls manage fit from 900 px upward.
 At a narrower desktop width, Focus starts as a collapsed vertical strip. Use
 that strip or the Focus shortcut beside Summary to open it. Panel fit preserves
-the most recently requested panel. Closing Focus restores Conversation.
+the most recently requested panel. The composer remains below a Focus-only
+view, including narrow desktops. Closing Focus restores Conversation.
 
 Below 900 px, Focus starts closed. The Focus shortcut explicitly opens it as
 the visible panel, with the composer retained below it. Close Focus returns to

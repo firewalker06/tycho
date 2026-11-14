@@ -121,7 +121,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     const geometry = await page.evaluate(() => ({ viewport: innerWidth, width: document.documentElement.scrollWidth, focus: document.querySelector("[data-agent-focus]").getBoundingClientRect().toJSON(), dock: document.querySelector(".agent-dock").getBoundingClientRect().toJSON() }));
     assert(geometry.width <= geometry.viewport + 1, JSON.stringify(geometry));
     assert(geometry.focus.right <= geometry.viewport + 1 && geometry.focus.y >= 60 && geometry.focus.bottom <= 901, JSON.stringify(geometry));
-    if (width !== 1024) assert(geometry.dock.height > 0 && geometry.dock.bottom <= 901 && geometry.dock.x >= 0 && geometry.dock.right <= geometry.viewport + 1, JSON.stringify(geometry));
+    assert(geometry.dock.height > 0 && geometry.dock.bottom <= 901 && geometry.dock.x >= 0 && geometry.dock.right <= geometry.viewport + 1, JSON.stringify(geometry));
     // Existing Summary/attachment panels remain separate from Focus state.
     await page.goto(`${baseUrl}/ui#agent/${agentKey}/summary`, { waitUntil: "networkidle" });
     assert.equal(await page.locator("[data-agent-focus]").count(), 0);
