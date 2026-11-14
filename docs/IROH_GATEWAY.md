@@ -28,7 +28,8 @@ cargo build --release --locked --manifest-path ext/iroh_gateway/Cargo.toml
 bin/test-iroh-gateway
 ```
 
-The binary is `ext/iroh_gateway/target/release/tycho-iroh-gateway`. The locked
+Without a selected build target or custom target directory, the release binary
+is `ext/iroh_gateway/target/release/tycho-iroh-gateway`. The locked
 build pins Iroh 1.4.1. The Ruby gem includes helper source but never compiles or
 installs Rust dependencies automatically. Cargo fetches dependencies on the
 first build; normal `bin/test` does not require Rust or contact crates.io.
@@ -36,7 +37,14 @@ first build; normal `bin/test` does not require Rust or contact crates.io.
 `bin/test-iroh-gateway` always runs `cargo test --locked` and
 `cargo build --locked` against the checked-out source before it starts the
 real transport proof. It never selects an installed helper from PATH or
-continues after a Cargo failure.
+continues after a Cargo failure. The build uses
+`--message-format=json-render-diagnostics`. The proof executable comes only
+from the matching non-test binary artifact for this package manifest in that
+current build output, including a fresh cached artifact. The runner requires
+successful Cargo exit and build-finished messages, exactly one matching
+executable, and an available executable file. It does not guess a debug path
+or fall back to an old default-path file. Missing, malformed, foreign-only,
+test-only, or ambiguous artifacts stop the runner before the proof.
 
 The default persistent build cache is `ext/iroh_gateway/target`, shared with
 the normal manifest build. An explicit nonempty `CARGO_TARGET_DIR` overrides
@@ -56,6 +64,24 @@ CARGO_TARGET_DIR="path/to/cargo cache" bin/test-iroh-gateway
 # Retain redacted evidence; credentials and fixture config still stay temporary.
 TYCHO_REMOTE_UI_CAPTURE_DIR=path/to/evidence bin/test-iroh-gateway
 ```
+
+`CARGO_BUILD_TARGET` and Cargo `build.target` configuration can place the
+binary in a target-specific subdirectory. The runner prints `Cargo executable:`
+with the path reported by Cargo and uses that exact path. A target must be
+runnable on this computer for native tests and the proof; this is not a
+cross-platform execution layer. Multiple reported helper executables are
+rejected rather than guessed.
+
+An additional offline reproduction with actual Cargo checks environment and
+config target selection while an older default-path binary remains present:
+
+```sh
+ruby test/iroh/artifact_selection_proof.rb path/to/result.json
+```
+
+It uses a tiny dependency-free fixture and removes its temporary files.
+Normal `bin/test` also covers these selection cases with a deterministic
+Cargo-output fixture, without requiring a Rust installation.
 
 The runner builds the debug profile. A separate `cargo build --release`
 uses the release profile and can still need a first release compilation.
@@ -133,8 +159,11 @@ ext/iroh_gateway/target/debug/tycho-iroh-gateway init-key path/to/private/host.k
 ext/iroh_gateway/target/debug/tycho-iroh-gateway init-key path/to/private/gateway.key
 ```
 
-If an explicit `CARGO_TARGET_DIR` is used, replace the binary prefix with
-that target directory's `debug` directory. Prepare the two JSON configs below
+The binary paths above assume no build target is selected. With an explicit
+`CARGO_TARGET_DIR`, `CARGO_BUILD_TARGET`, or Cargo `build.target`, use the
+executable path reported by the current Cargo build. Do not assume the
+binary is directly inside `target/debug`. The test runner prints the selected
+path after validating the current build. Prepare the two JSON configs below
 with verified public IDs and correct private file paths. All config, token,
 key, and PEM certificate files must be mode 0600. The same bearer value goes
 in the host token file, gateway token file, and Tycho server environment.

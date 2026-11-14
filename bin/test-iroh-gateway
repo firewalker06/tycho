@@ -2,6 +2,8 @@
 # frozen_string_literal: true
 
 require "tmpdir"
+require "json"
+require "open3"
 
 root = File.expand_path("..", __dir__)
 configured_target = ENV["CARGO_TARGET_DIR"].to_s
@@ -12,12 +14,50 @@ target = if configured_target.empty?
          end
 env = { "CARGO_TARGET_DIR" => target }
 manifest = File.join(root, "ext/iroh_gateway/Cargo.toml")
-["test", "build"].each do |action|
-  abort "Iroh #{action} failed" unless system(env, "cargo", action, "--locked", "--manifest-path", manifest, chdir: root)
+abort "Iroh test failed" unless system(env, "cargo", "test", "--locked", "--manifest-path", manifest, chdir: root)
+artifacts = []
+invalid_output = false
+finished = false
+status = nil
+manifest = File.realpath(manifest)
+Open3.popen2(env, "cargo", "build", "--locked", "--message-format=json-render-diagnostics",
+             "--manifest-path", manifest, chdir: root) do |input, output, process|
+  input.close
+  output.each_line do |line|
+    unless line.start_with?("{")
+      $stderr.write(line)
+      next
+    end
+    begin
+      message = JSON.parse(line)
+      unless message.is_a?(Hash)
+        invalid_output = true
+        next
+      end
+      $stderr.write(message.dig("message", "rendered").to_s) if message["reason"] == "compiler-message"
+      finished = message["success"] == true if message["reason"] == "build-finished"
+      next unless message["reason"] == "compiler-artifact" &&
+                  message.dig("target", "name") == "tycho-iroh-gateway" &&
+                  message.dig("target", "kind") == ["bin"] && message.dig("profile", "test") == false &&
+                  message["executable"].is_a?(String) && message["manifest_path"].is_a?(String)
+      next unless File.realpath(message["manifest_path"]) == manifest
+
+      artifacts << File.expand_path(message["executable"], root)
+    rescue JSON::ParserError, Errno::ENOENT
+      invalid_output = true
+    end
+  end
+  status = process.value
 end
+abort "Iroh build failed" unless status.success? && finished && !invalid_output
+artifacts.uniq!
+abort "Cargo did not report exactly one current helper executable" unless artifacts.length == 1
+binary = artifacts.first
+abort "Cargo executable is unavailable" unless File.file?(binary) && File.executable?(binary)
+puts "Cargo executable: #{binary}"
 run_proof = lambda do |capture|
   command = ["python3", File.join(root, "test/iroh/gateway_proof.py"),
-             "--binary", File.join(target, "debug/tycho-iroh-gateway"), "--output", capture]
+             "--binary", binary, "--output", capture]
   abort "Real Iroh gateway proof failed" unless system(*command, chdir: root)
 end
 capture = ENV["TYCHO_REMOTE_UI_CAPTURE_DIR"].to_s

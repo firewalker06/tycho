@@ -111,3 +111,27 @@ execution after a build failure with a stale binary still present. Normal
 does not need Rust. Real cold/warm measurements are retained with the PR/card
 evidence for the changed head. The original independent approval does not
 approve this follow-up; a fresh review is required.
+
+## Current Cargo artifact selection correction
+
+Independent review rejected 6608a2a because successful target-specific builds
+could leave an older default-path executable for the proof. The old fake
+Cargo fixture assumed the default layout and missed this case. Green default
+checks did not establish target-selection correctness.
+
+The runner now reads compiler-artifact JSON from its current locked build,
+filters by the exact package manifest, helper binary name/kind, and non-test
+profile, and requires successful build completion plus one executable. It
+rejects missing, malformed, foreign, test-only, or ambiguous artifact output.
+No default-path or installed-binary fallback remains. Persistent caches and
+temporary credential/config/log cleanup stay in place.
+
+The updated regression first reproduced stale default selection. Tests cover
+environment/config targets, fresh cached messages, path spaces, invalid
+artifacts, failed builds, evidence cleanup, and explicit cache paths. An
+offline dependency-free fixture additionally uses real Cargo to leave a
+prior-source binary in the default path, compile current-source under a
+selected native target, and verify current-source execution for both
+CARGO_BUILD_TARGET and Cargo config. Current-head real Iroh measurements are
+retained separately; the prior 64.403/10.266-second default-layout sample is
+historical evidence, not validation of the rejected selection logic.
