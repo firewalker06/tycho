@@ -2376,7 +2376,7 @@ span.harness-mark {
     gap: 6px;
   }
 
-  .schedule-management-actions [data-scheduler-action] {
+  .schedule-management-actions > [data-scheduler-action] {
     order: 1;
   }
 
