@@ -10280,7 +10280,7 @@ body:has(.inquiry-form-full-screen) {
     max-width: 100%;
   }
 
-  .content-panel-heading.is-collapsed :is(.content-panel-toggle, .content-panel-restore):focus-visible {
+  .content-panel-controls :is(.content-panel-toggle, .content-panel-restore):focus-visible {
     outline-offset: -4px;
   }
 
