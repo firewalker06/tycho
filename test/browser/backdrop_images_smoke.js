@@ -66,6 +66,9 @@ module.exports = async function backdropImagesSmoke({ browser, baseUrl, agentKey
     await peer.waitForFunction(() => document.documentElement.dataset.imageBackdrop === "ready");
     await peer.locator("#prompt-input").fill("Raster tab sync preserves this draft.");
     const urlCount = await page.evaluate(() => imageUrlAudit.created);
+    await page.locator("[data-theme-image-setting=x]").focus();
+    await page.locator("[data-theme-image-setting=x]").press("ArrowRight");
+    await page.waitForFunction(() => !window.TychoBackdropImages.getState().busy && window.TychoBackdropImages.getState().image.x === 51 && document.activeElement?.dataset.themeImageSetting === "x");
     await set("x", 75); await set("y", 35); await set("intensity", .85); await set("fade", .55);
     await peer.waitForFunction(() => window.TychoBackdropImages.getState().image?.x === 75);
     assert.match(await page.evaluate(() => getComputedStyle(document.body, "::before").backgroundPosition), /75% 35%/);
