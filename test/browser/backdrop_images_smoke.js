@@ -24,6 +24,7 @@ module.exports = async function backdropImagesSmoke({ browser, baseUrl, agentKey
     await page.locator('[data-scroll-settings-section="settings-configuration"]').click();
   };
   const capture = async name => {
+    await page.evaluate(() => { if (document.querySelector(".content.agent-detail")) window.scrollTo(0, 0); });
     await page.locator(".app-header").evaluate(async element => {
       await Promise.all(element.getAnimations().filter(animation => Number.isFinite(animation.effect.getComputedTiming().endTime)).map(animation => animation.finished.catch(() => {})));
       await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
