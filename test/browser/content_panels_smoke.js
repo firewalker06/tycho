@@ -4,9 +4,11 @@ const path = require("node:path");
 
 module.exports = async function contentPanelsSmoke({ browser, baseUrl, agentKey, captureDir }) {
   const results = [];
+  const stateResults = [];
   for (const theme of ["dark", "light"]) {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     const errors = [];
+    const frames = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     page.on("pageerror", error => errors.push(error.message));
     await page.addInitScript(theme => localStorage.setItem("hq.remote.appearance", theme), theme);
     const url = `${baseUrl}/ui#agent/${agentKey}/summary/preview-prior`;
@@ -42,12 +44,25 @@ module.exports = async function contentPanelsSmoke({ browser, baseUrl, agentKey,
     const capture = async name => { if (captureDir) await page.screenshot({ path: path.join(captureDir, `content-panels-${name}-${theme}.png`) }); };
     const composer = page.locator("#composer textarea");
     await composer.fill("Keep this unsent panel draft.");
+    await page.evaluate(() => { document.querySelector(".agent-conversation-scroll").scrollTop = 180; });
     await open.click();
     await page.waitForFunction(() => document.querySelector(".summary-attachment-preview-scroll")?.getAttribute("aria-busy") === "false");
     await check(2);
     assert(await panel("preview").isVisible());
     assert(await panel("summary").isVisible());
     assert.equal(await page.evaluate(() => parseRoute().summaryId), "preview-prior");
+    await toggle("conversation").click();
+    assert.equal(await panel("conversation").locator(".agent-conversation-scroll").evaluate(element => element.scrollTop), 180, "First preview must preserve Conversation position before any poll");
+    assert.equal(await composer.inputValue(), "Keep this unsent panel draft.");
+    stateResults.push({ theme, case: "first-preview-before-poll", conversationScroll: 180 });
+    await page.locator("[data-restore-content-panels]").click();
+    await check(2);
+    await page.locator("[data-close-summary-attachment-preview]").click();
+    assert.equal(await panel("conversation").locator(".agent-conversation-scroll").evaluate(element => element.scrollTop), 180, "Closing the preview must also restore the hidden Conversation position");
+    assert.equal(await composer.inputValue(), "Keep this unsent panel draft.");
+    await open.click();
+    await page.waitForFunction(() => document.querySelector(".summary-attachment-preview-scroll")?.getAttribute("aria-busy") === "false");
+    await check(2);
     await capture("constrained");
     await page.evaluate(() => { document.querySelector(".agent-detail-pane").scrollTop = 120; });
     await toggle("conversation").focus();
@@ -62,6 +77,25 @@ module.exports = async function contentPanelsSmoke({ browser, baseUrl, agentKey,
     });
     const saved = await page.evaluate(() => [document.querySelector(".agent-conversation-scroll").scrollTop, document.querySelector(".summary-attachment-preview-scroll").scrollTop]);
     assert(saved[0] > 0 && saved[1] > 0, `Fixture must scroll: ${saved}`);
+    // Native scroll anchoring can add one line (17 px) after an asynchronous reflow.
+    // Prove that control case, then check the application's default scrolling behavior.
+    for (const mode of ["auto", "default"]) {
+      const scroll = page.locator(".summary-attachment-preview-scroll");
+      await scroll.evaluate((element, mode) => {
+        if (mode === "auto") element.style.overflowAnchor = "auto";
+        else element.style.removeProperty("overflow-anchor");
+        element.querySelector("h1").style.paddingBottom = "0px";
+        element.scrollTop = 380;
+      }, mode);
+      await page.waitForTimeout(250);
+      await scroll.locator("h1").evaluate(element => { element.style.paddingBottom = "17px"; });
+      await page.waitForTimeout(250);
+      const actual = await scroll.evaluate(element => element.scrollTop);
+      assert.equal(actual, mode === "auto" ? 397 : 380, `${mode} scroll anchoring after a real layout change`);
+      stateResults.push({ theme, case: "native-scroll-anchor", mode, before: 380, after: actual });
+    }
+    await page.locator(".summary-attachment-preview-scroll h1").evaluate(element => { element.style.removeProperty("padding-bottom"); });
+    await frames();
     const selection = await page.evaluate(() => state.summaryAttachmentPreview.id);
     for (let cycle = 0; cycle < 12; cycle++) {
       await toggle("summary").click();
@@ -77,6 +111,19 @@ module.exports = async function contentPanelsSmoke({ browser, baseUrl, agentKey,
       assert.equal(await composer.inputValue(), "Keep this unsent panel draft.");
       assert.equal(await page.evaluate(() => document.querySelector(".agent-conversation-scroll").scrollTop), saved[0], `Conversation scroll after poll cycle ${cycle}`);
     }
+    for (let cycle = 0; cycle < 20; cycle++) {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await frames();
+      assert(!(await panel("preview").isVisible()));
+      await page.setViewportSize({ width: cycle % 2 ? 2200 : 1440, height: 900 });
+      await frames();
+      await check(cycle % 2 ? 3 : 2);
+      assert.equal(await panel("preview").locator(".summary-attachment-preview-scroll").evaluate(element => element.scrollTop), saved[1], `Attachment scroll after settled resize ${cycle}`);
+      assert.equal(await panel("conversation").locator(".agent-conversation-scroll").evaluate(element => element.scrollTop), saved[0], `Conversation scroll after settled resize ${cycle}`);
+      stateResults.push({ theme, case: "settled-mobile-desktop-resize", cycle, attachmentScroll: saved[1], conversationScroll: saved[0] });
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await frames();
     await capture("constrained-conversation");
     await page.setViewportSize({ width: 2200, height: 900 });
     await page.waitForFunction(() => document.querySelector(".agent-workspace")?.dataset.visiblePanels?.split(" ").length === 3);
@@ -128,6 +175,38 @@ module.exports = async function contentPanelsSmoke({ browser, baseUrl, agentKey,
     assert.equal(await page.evaluate(() => state.summaryAttachmentPreview.id), selection);
     assert.equal(await page.evaluate(() => parseRoute().summaryId), "preview-prior");
     assert.equal(await composer.inputValue(), "Keep this unsent panel draft.");
+    const visibleFocus = () => page.evaluate(() => {
+      const element = document.activeElement;
+      const rect = element.getBoundingClientRect();
+      return element !== document.body && element.getClientRects().length > 0 && rect.bottom > 0 && rect.top < innerHeight && rect.right > 0 && rect.left < innerWidth;
+    });
+    for (const selector of ["[data-close-summary-attachment-preview]", '[data-toggle-content-panel="summary"]', "[data-restore-content-panels]"]) {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await frames();
+      await page.locator(selector).focus();
+      await page.setViewportSize({ width: 390, height: 844 });
+      await frames();
+      assert(await composer.evaluate(element => element === document.activeElement), `${selector}: mobile must focus the visible composer`);
+      assert(await visibleFocus(), `${selector}: mobile focus must be in the viewport`);
+      await page.keyboard.press("Tab");
+      assert(await visibleFocus(), `${selector}: keyboard must continue from a visible mobile control`);
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await frames();
+      assert(await visibleFocus(), `${selector}: desktop return must keep visible focus`);
+      stateResults.push({ theme, case: "mobile-focus-handoff", selector, mobileTarget: "composer", keyboard: "passed", desktopReturn: "visible" });
+    }
+    for (const changedPoll of [false, true]) {
+      await page.locator("[data-restore-content-panels]").focus();
+      await page.evaluate(async changedPoll => {
+        window.previousRestorePanelButton = document.querySelector("[data-restore-content-panels]");
+        state.conversations[parseRoute().key].blocks.push({ kind: "message", role: "user", content: `Changed panel focus fixture ${changedPoll}` });
+        if (changedPoll) await refresh({ force: true, preserveFocusedWorkspace: true });
+        render();
+      }, changedPoll);
+      await frames();
+      assert(await page.locator("[data-restore-content-panels]").evaluate(button => button === document.activeElement && button !== window.previousRestorePanelButton), "Restore panels must keep actual focus after changed DOM replacement");
+      stateResults.push({ theme, case: changedPoll ? "restore-focus-changed-poll" : "restore-focus-changed-render", replacedNode: true, retainedFocus: true });
+    }
     await page.locator("[data-close-summary-attachment-preview]").click();
     assert.equal(await panel("preview").count(), 0);
     assert(await panel("conversation").isVisible());
@@ -142,5 +221,6 @@ module.exports = async function contentPanelsSmoke({ browser, baseUrl, agentKey,
     await page.close();
   }
   if (captureDir) fs.writeFileSync(path.join(captureDir, "content-panels-results.json"), JSON.stringify(results, null, 2));
+  if (captureDir) fs.writeFileSync(path.join(captureDir, "content-panels-state-results.json"), JSON.stringify(stateResults, null, 2));
   console.log(`content-panels-smoke: ok (${results.length} layouts; Dark/Light, keyboard, polling, drafts, scroll, selection, mobile)`);
 };

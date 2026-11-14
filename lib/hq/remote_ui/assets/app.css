@@ -10156,6 +10156,11 @@ body:has(.inquiry-form-full-screen) {
   display: none;
 }
 
+/* These scroll offsets are restored explicitly during panel transitions. */
+.agent-workspace.has-attachment-preview :is(.agent-conversation-scroll, .agent-detail-pane, .summary-attachment-preview-scroll) {
+  overflow-anchor: none;
+}
+
 @media (min-width: 900px) {
   .app-shell:has(.content.agent-split-active .has-attachment-preview) {
     max-width: 2200px;

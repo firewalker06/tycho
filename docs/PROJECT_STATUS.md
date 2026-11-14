@@ -22,7 +22,12 @@ very small desktop workspaces show one. Panel buttons hide or restore each
 panel without clearing its selection, draft, or scroll position. Widening the
 workspace restores panels hidden only by the width limit. Mobile direct
 attachment navigation remains in use; resizing through mobile retains the
-desktop preview selection for return. Navigation rail changes are separate.
+desktop preview selection for return. The first preview captures scroll from
+the existing workspace. Mobile resize moves focus from a hidden panel control
+to the visible composer, or the Summary region for read-only sessions. Panel
+controls retain focus through changed renders. Native scroll anchoring is
+disabled for these panes because their offsets are restored explicitly.
+Navigation rail changes are separate.
 
 ## DeepSeek Harness
 
