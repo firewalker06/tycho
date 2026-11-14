@@ -129,6 +129,41 @@ const { chromium } = require(process.env.TYCHO_PLAYWRIGHT_PATH || "playwright");
       await name.fill(`${label} revised`);
       assert.equal(await key.inputValue(), label, "manual key ownership must survive a rejected Enter submission");
       await name.fill(`${label} project`);
+
+      for (const scenario of ["options-focus", "leave-return"]) {
+        await openOptions();
+        let releaseRejection;
+        let markRequestStarted;
+        const rejectionGate = new Promise(resolve => { releaseRejection = resolve; });
+        const requestStarted = new Promise(resolve => { markRequestStarted = resolve; });
+        await page.route("**/projects", async route => {
+          if (route.request().method() !== "POST") return route.continue();
+          markRequestStarted();
+          await rejectionGate;
+          await route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ error: `Held ${scenario}`, details: { creation_rejected: true } }) });
+        }, { times: 1 });
+        await name.focus();
+        await name.press("Enter");
+        await requestStarted;
+        if (scenario === "leave-return") {
+          await page.evaluate(() => navigate({ type: "tab", tab: "agents" }));
+          await page.waitForURL(/#agents$/);
+          await page.getByRole("button", { name: "New project", exact: true }).click();
+          await ready();
+        }
+        const optionsSummary = options.locator("summary");
+        const focusGenerationBeforeChoice = await page.evaluate(() => projectCreationFocusGeneration);
+        await optionsSummary.focus();
+        assert.equal(await optionsSummary.evaluate(element => document.activeElement === element), true);
+        const focusGenerationAfterChoice = await page.evaluate(() => projectCreationFocusGeneration);
+        releaseRejection();
+        await page.getByRole("alert").filter({ hasText: `Held ${scenario}` }).waitFor();
+        await page.waitForFunction(() => !projectCreationSubmitting && !document.querySelector("#new-project-name").disabled);
+        assert.equal(await optionsSummary.evaluate(element => document.activeElement === element), true,
+          `a late ${scenario} rejection must preserve the user's newer focus choice (${focusGenerationBeforeChoice} -> ${focusGenerationAfterChoice})`);
+        await page.screenshot({ path: path.join(capture, `${label}-${scenario}-focus.png`) });
+      }
+
       const pendingFocus = page.locator("#agent-filter");
       let rejectPending;
       const rejectionDone = new Promise(resolve => { rejectPending = resolve; });
@@ -213,7 +248,10 @@ const { chromium } = require(process.env.TYCHO_PLAYWRIGHT_PATH || "playwright");
         assert.equal(catalog.projects.filter(project => project.key === expectedKey).length, 1, "retry must register once");
       }
       assert.deepEqual(errors, []);
-      results.push({ label, width, height, minimalFields: true, manualKey: true, oneActionModal: true, confirmedOnly: true, pollStable: true, focusTrap: true, reloadRecovery: true, lostReplyReplay: true, malformedReplyReplay: true });
+      results.push({ label, width, height, minimalFields: true, manualKey: true, definiteRejectionFocus: true,
+        optionsFocusAfterHeldRejection: true, optionsFocusAfterRouteReturn: true, oneActionModal: true,
+        confirmedOnly: true, pollStable: true, focusTrap: true, reloadRecovery: true,
+        lostReplyReplay: true, malformedReplyReplay: true });
       await context.close();
     }
     fs.writeFileSync(path.join(capture, "results.json"), JSON.stringify(results, null, 2));
