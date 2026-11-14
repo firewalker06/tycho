@@ -85,6 +85,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
         assert.equal(await input.inputValue(), "", "placeholder is not input content");
         assert.equal(await page.evaluate(() => localStorage.getItem("hq.remote.startup-message")), "", "placeholder is never saved");
         await page.reload();
+        await page.locator("#tycho-boot-shell").waitFor({ state: "hidden" });
         await input.waitFor();
         assert.equal(await input.inputValue(), "", "empty value remains empty after reload");
         assert.equal(await input.getAttribute("placeholder"), "The factory must grow\nOrchestrating the orchestrator");
