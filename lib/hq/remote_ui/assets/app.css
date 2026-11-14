@@ -10210,25 +10210,82 @@ body:has(.inquiry-form-full-screen) {
   }
 
   .content-panel-controls {
+    display: contents;
+  }
+
+  .content-panel-heading {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 6px;
-    grid-column: 1 / -1;
+    align-items: stretch;
+    gap: 4px;
+    grid-column: var(--content-panel-column);
     grid-row: 1;
-    padding-block: 8px;
     min-width: 0;
+    min-height: 0;
+    padding-block: 4px;
   }
 
-  .content-panel-controls .ui-button {
+  .content-panel-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    min-height: 44px;
     padding: 6px 10px;
-    min-height: 36px;
     border: 1px solid var(--border);
+    color: var(--text);
   }
 
-  .content-panel-controls [aria-pressed="true"] {
+  .content-panel-toggle-icon {
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+
+  .content-panel-label {
+    white-space: nowrap;
+  }
+
+  .content-panel-heading.is-collapsed {
+    flex-direction: column;
+    grid-row: 1 / -1;
+    gap: 0;
+    overflow: hidden;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
     background: var(--ds-background-surface-sunken);
-    color: var(--accent);
+  }
+
+  .content-panel-heading.is-collapsed .content-panel-toggle {
+    flex-direction: column;
+    justify-content: center;
+    gap: 12px;
+    min-height: 0;
+    padding: 12px 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+  }
+
+  .content-panel-heading.is-collapsed .content-panel-label {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    transform: rotate(180deg);
+  }
+
+  .content-panel-restore {
+    flex-shrink: 0;
+    align-self: center;
+    max-width: 100%;
+  }
+
+  .content-panel-heading.is-collapsed :is(.content-panel-toggle, .content-panel-restore):focus-visible {
+    outline-offset: -4px;
+  }
+
+  .content-panel-heading.is-collapsed .content-panel-restore {
+    margin-block: 4px;
   }
 
   .content-panels-constrained .message-list {
@@ -10236,8 +10293,12 @@ body:has(.inquiry-form-full-screen) {
   }
 
   .content-panel-status {
-    color: var(--muted);
-    font-size: 12px;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
   .content-panels-managed.has-detail .agent-conversation-pane {

@@ -17,10 +17,17 @@ type: project
 Opening an attachment from Summary keeps the selected run and attachment in
 place. The desktop workspace measures its usable width after navigation and
 padding. Three panels need 380 + 440 + 440 px plus two 12 px gaps. Smaller
-workspaces show the most recently requested panels, with at most two visible;
-very small desktop workspaces show one. Panel buttons hide or restore each
-panel without clearing its selection, draft, or scroll position. Widening the
-workspace restores panels hidden only by the width limit. Mobile direct
+workspaces show the most recently requested panels, with at most two expanded;
+very small desktop workspaces show one. Every collapsed desktop panel remains
+as a 48 px full-height vertical accordion strip in its fixed Conversation,
+Summary, or Attachment position. Strip widths and all column gaps count toward
+panel fit. Activating a strip expands its panel and collapses an older panel
+when needed. Wide desktop keeps three expanded unless the user collapses one.
+Expanded panels have local Collapse controls; Restore panels is a utility in
+the Attachment heading or strip. There is no horizontal panel-control toolbar.
+Names remain accessible with vertical text and tooltips. Tab, Enter/Space,
+Left/Right, and Home/End work without clearing selection, drafts, or scroll.
+Widening restores panels collapsed only by the width limit. Mobile direct
 attachment navigation remains in use; resizing through mobile retains the
 desktop preview selection for return. The first preview captures scroll from
 the existing workspace. Mobile resize moves focus from a hidden panel control

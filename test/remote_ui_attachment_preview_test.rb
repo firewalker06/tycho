@@ -46,10 +46,10 @@ module RemoteUIAttachmentPreviewTest
             Array.from(context.contentPanelsForWidth(width, new Set(hidden), order), panel => panel.key).join(" ");
           assert(keys(1284) === "conversation summary preview", "Three panel fit boundary is wrong");
           assert(keys(1283) === "summary preview", "Constrained width squeezed three panels");
-          assert(keys(892) === "summary preview", "Two detail panels should fit at their minimum width");
-          assert(keys(891) === "preview", "Two detail panels were squeezed below their minimum");
-          assert(keys(832, [], ["summary", "preview", "conversation"]) === "conversation preview", "Newly requested Conversation was lost");
-          assert(keys(831, [], ["summary", "preview", "conversation"]) === "conversation", "Newly requested panel must survive a one-panel limit");
+          assert(keys(952) === "summary preview", "Two detail panels and the vertical strip should fit at their boundary");
+          assert(keys(951) === "preview", "Two detail panels and the vertical strip were squeezed below their minimum");
+          assert(keys(892, [], ["summary", "preview", "conversation"]) === "conversation preview", "Newly requested Conversation was lost");
+          assert(keys(891, [], ["summary", "preview", "conversation"]) === "conversation", "Newly requested panel must survive a one-panel limit");
           assert(keys(2200, ["summary"]) === "conversation preview", "Wide layout ignored a hidden panel");
           const first = context.openSummaryAttachmentPreview("one", "a");
           const second = context.openSummaryAttachmentPreview("two", "a");

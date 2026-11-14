@@ -48,7 +48,20 @@ module.exports = async function contentPanelsSmoke({ browser, baseUrl, agentKey,
         fillContrast: contrast(style.backgroundColor, palette.getPropertyValue("--ds-background-canvas")),
         textContrast: contrast(style.color, style.backgroundColor),
         focusContrast: contrast(palette.getPropertyValue("--ds-focus-ring"), style.backgroundColor) };
-      return { sidebar, width: innerWidth, usable: root.clientWidth, visible: root.dataset.visiblePanels?.split(" "), overflow: document.documentElement.scrollWidth > innerWidth,
+      const workspace = root.getBoundingClientRect();
+      const headings = [...root.querySelectorAll("[data-content-panel-heading]")].map(heading => {
+        const button = heading.querySelector("[data-toggle-content-panel]");
+        const label = heading.querySelector(".content-panel-label");
+        const rect = heading.getBoundingClientRect();
+        const labelRect = label.getBoundingClientRect();
+        const target = document.getElementById(button.getAttribute("aria-controls"));
+        return { key: heading.dataset.contentPanelHeading, collapsed: heading.classList.contains("is-collapsed"),
+          expanded: button.getAttribute("aria-expanded"), name: button.getAttribute("aria-label"), tooltip: button.title,
+          targetVisible: target?.getClientRects().length > 0, targetExists: Boolean(target),
+          x: rect.x, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height,
+          labelWidth: labelRect.width, labelHeight: labelRect.height };
+      });
+      return { sidebar, headings, workspace: { top: workspace.top, bottom: workspace.bottom, height: workspace.height }, width: innerWidth, usable: root.clientWidth, visible: root.dataset.visiblePanels?.split(" "), overflow: document.documentElement.scrollWidth > innerWidth,
         panels: [...root.querySelectorAll(":scope > .agent-conversation-pane, :scope > .agent-detail-pane, :scope > .summary-attachment-preview-pane")].filter(el => el.getClientRects().length).map(el => { const r = el.getBoundingClientRect(); return { x: r.x, right: r.right, width: r.width, bottom: r.bottom }; }) };
     });
     const check = async count => {
@@ -61,6 +74,21 @@ module.exports = async function contentPanelsSmoke({ browser, baseUrl, agentKey,
         assert(layout.panels[i].right <= layout.width + 1, JSON.stringify(layout));
         assert(layout.panels[i].bottom <= 901, JSON.stringify(layout));
         if (i) assert(layout.panels[i - 1].right <= layout.panels[i].x, JSON.stringify(layout));
+      }
+      assert.deepEqual(layout.headings.map(heading => heading.key), ["conversation", "summary", "preview"], "Accordion slots must keep their panel order");
+      for (const [index, heading] of layout.headings.entries()) {
+        const expanded = layout.visible.includes(heading.key);
+        assert.equal(heading.expanded, String(expanded));
+        assert.equal(heading.collapsed, !expanded);
+        assert.equal(heading.targetVisible, expanded);
+        assert(heading.targetExists && heading.name.includes(expanded ? "Collapse" : "Expand"));
+        assert.equal(heading.tooltip, heading.name);
+        if (index) assert(layout.headings[index - 1].right <= heading.x, "Panel headers and strips must remain at distinct panel positions");
+        if (!expanded) {
+          assert(Math.abs(heading.width - 48) <= 1, `Collapsed strip width: ${JSON.stringify(heading)}`);
+          assert(Math.abs(heading.top - layout.workspace.top) <= 1 && Math.abs(heading.bottom - layout.workspace.bottom) <= 1, `Collapsed strip must fill workspace height: ${JSON.stringify(heading)}`);
+          assert(heading.labelHeight > heading.labelWidth * 2, "Collapsed panel name must have a vertical presentation");
+        }
       }
       if (layout.width >= 1100) {
         assert.equal(Math.round(layout.sidebar.width), 56, "Combined split must retain the icon rail");
@@ -88,7 +116,16 @@ module.exports = async function contentPanelsSmoke({ browser, baseUrl, agentKey,
     assert(await panel("preview").isVisible());
     assert(await panel("summary").isVisible());
     assert.equal(await page.evaluate(() => parseRoute().summaryId), "preview-prior");
-    await toggle("conversation").click();
+    await toggle("conversation").focus();
+    await page.keyboard.press("ArrowRight");
+    assert(await toggle("summary").evaluate(button => button === document.activeElement), "Right arrow must focus the next panel control");
+    await page.keyboard.press("ArrowLeft");
+    assert(await toggle("conversation").evaluate(button => button === document.activeElement), "Left arrow must focus the previous panel control");
+    await page.keyboard.press("End");
+    assert(await toggle("preview").evaluate(button => button === document.activeElement), "End must focus the last panel control");
+    await page.keyboard.press("Home");
+    assert(await toggle("conversation").evaluate(button => button === document.activeElement), "Home must focus the first panel control");
+    await page.keyboard.press("Space");
     assert.equal(await panel("conversation").locator(".agent-conversation-scroll").evaluate(element => element.scrollTop), 180, "First preview must preserve Conversation position before any poll");
     assert.equal(await composer.inputValue(), "Keep this unsent panel draft.");
     stateResults.push({ theme, case: "first-preview-before-poll", conversationScroll: 180 });
@@ -170,6 +207,20 @@ module.exports = async function contentPanelsSmoke({ browser, baseUrl, agentKey,
       await toggle(key).click();
       await check(2);
       assert(!(await panel(key).isVisible()));
+      if (key === "preview") {
+        await page.setViewportSize({ width: 1320, height: 900 });
+        await frames();
+        assert(!(await panel("preview").isVisible()), "Manual collapse must remain through constrained resize");
+        await page.setViewportSize({ width: 390, height: 844 });
+        await frames();
+        await page.setViewportSize({ width: 2200, height: 900 });
+        await frames();
+        assert(!(await panel("preview").isVisible()) && await toggle("preview").getAttribute("aria-expanded") === "false", "Wide return must retain the user's vertical collapsed strip");
+        assert.equal(await page.evaluate(() => state.summaryAttachmentPreview.id), selection);
+        assert.equal(await composer.inputValue(), "Keep this unsent panel draft.");
+        stateResults.push({ theme, case: "wide-user-collapse-through-mobile", collapsedPanel: "preview", selection: "preserved", draft: "preserved" });
+        await capture("wide-collapsed");
+      }
       await page.evaluate(() => render());
       assert(!(await panel(key).isVisible()));
       await toggle(key).click();
@@ -199,6 +250,7 @@ module.exports = async function contentPanelsSmoke({ browser, baseUrl, agentKey,
     await page.evaluate(() => { document.querySelector(".agent-workspace").style.removeProperty("width"); });
     await page.setViewportSize({ width: 390, height: 844 });
     assert(!(await page.locator(".content-panel-controls").isVisible()));
+    assert.equal(await page.locator("[data-content-panel-heading]:visible").count(), 0, "Mobile must not introduce a stacked accordion");
     assert(await panel("summary").isVisible());
     assert(!(await panel("preview").isVisible()));
     assert(!(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)));
@@ -232,6 +284,25 @@ module.exports = async function contentPanelsSmoke({ browser, baseUrl, agentKey,
       assert(await visibleFocus(), `${selector}: desktop return must keep visible focus`);
       stateResults.push({ theme, case: "mobile-focus-handoff", selector, mobileTarget: "composer", keyboard: "passed", desktopReturn: "visible" });
     }
+    await toggle("summary").focus();
+    await page.evaluate(async () => {
+      window.previousAccordionStrip = document.querySelector('[data-toggle-content-panel="summary"]');
+      state.conversations[parseRoute().key].blocks.push({ kind: "message", role: "user", content: "Changed content while the vertical Summary strip has focus." });
+      await refresh({ force: true, preserveFocusedWorkspace: true });
+      render();
+    });
+    await frames();
+    assert(await toggle("summary").evaluate(button => button === document.activeElement && button !== window.previousAccordionStrip && button.getAttribute("aria-expanded") === "false"), "Collapsed strip must retain actual focus through a changed poll render");
+    await page.keyboard.press("Space");
+    assert(await panel("summary").isVisible() && !(await panel("preview").isVisible()), "Expanding the middle strip must replace another expanded panel");
+    assert.equal(await panel("summary").evaluate(element => element.scrollTop), 120);
+    assert.equal(await composer.inputValue(), "Keep this unsent panel draft.");
+    await toggle("preview").focus();
+    await page.keyboard.press("Enter");
+    assert.equal(await panel("preview").locator(".summary-attachment-preview-scroll").evaluate(element => element.scrollTop), saved[1]);
+    await toggle("conversation").click();
+    assert.equal(await panel("conversation").locator(".agent-conversation-scroll").evaluate(element => element.scrollTop), saved[0]);
+    stateResults.push({ theme, case: "vertical-strip-changed-poll-and-keyboard", retainedFocus: true, scroll: "preserved", draft: "preserved" });
     for (const changedPoll of [false, true]) {
       await page.locator("[data-restore-content-panels]").focus();
       await page.evaluate(async changedPoll => {
