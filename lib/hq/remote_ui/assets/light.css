@@ -72,6 +72,13 @@
   --harness-mark-color: var(--nord3);
 }
 
+/* Desktop navigation needs a selected fill distinct from the Light canvas. */
+@media (min-width: 1100px) {
+  :root[data-appearance="light"] .bottom-nav {
+    --accent-soft: color-mix(in srgb, var(--ds-action-brand) 35%, var(--ds-background-surface-sunken));
+  }
+}
+
 :root[data-appearance="light"] :is(button, input, select, textarea, summary, a):focus-visible {
   outline: 3px solid var(--ds-focus-ring);
   outline-offset: 3px;
