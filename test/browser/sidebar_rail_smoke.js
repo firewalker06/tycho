@@ -1,6 +1,15 @@
 const assert = require("node:assert/strict");
 const path = require("node:path");
 
+function contrast(first, second) {
+  const luminance = rgb => rgb.map(value => value / 255)
+    .map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4)
+    .reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
+  const a = luminance(first);
+  const b = luminance(second);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}
+
 module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
   for (const width of [1440, 1180, 1100, 1099, 390]) for (const theme of ["dark", "light"]) {
     const desktop = width >= 1100;
@@ -55,9 +64,21 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           probe.style.cssText = "background: var(--accent-soft); color: var(--accent)";
           node.append(probe);
           const expected = getComputedStyle(probe);
+          const rgb = color => {
+            const canvas = document.createElement("canvas");
+            canvas.width = canvas.height = 1;
+            const context = canvas.getContext("2d");
+            context.fillStyle = color;
+            context.fillRect(0, 0, 1, 1);
+            return [...context.getImageData(0, 0, 1, 1).data].slice(0, 3);
+          };
+          const root = getComputedStyle(document.documentElement);
           const result = { shadow: style.boxShadow, border: style.borderLeftWidth,
             otherBorder: style.borderRightWidth, borderColor: style.borderLeftColor, otherBorderColor: style.borderRightColor,
             background: style.backgroundColor, color: style.color,
+            backgroundRgb: rgb(style.backgroundColor), colorRgb: rgb(style.color),
+            canvasRgb: rgb(root.getPropertyValue("--ds-background-canvas")),
+            focusRgb: rgb(root.getPropertyValue("--ds-focus-ring")),
             expectedBackground: expected.backgroundColor, expectedColor: expected.color };
           probe.remove();
           return result;
@@ -67,6 +88,11 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         assert.equal(selection.borderColor, selection.otherBorderColor, "selected icon has no separate left border color");
         assert.equal(selection.background, selection.expectedBackground, "selected background is preserved");
         assert.equal(selection.color, selection.expectedColor, "selected color is preserved");
+        if (theme === "light") {
+          assert(contrast(selection.backgroundRgb, selection.canvasRgb) >= 1.15, "Light selected fill is visibly distinct from canvas");
+          assert(contrast(selection.colorRgb, selection.backgroundRgb) >= 4.5, "selected foreground stays readable");
+          assert(contrast(selection.focusRgb, selection.backgroundRgb) >= 3, "focus ring contrasts with selected fill");
+        }
         const settings = page.getByRole("link", { name: "Settings", exact: true });
         assert(await settings.isVisible());
         assert.equal(await settings.getAttribute("title"), "Settings");
@@ -94,6 +120,28 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     await page.reload({ waitUntil: "networkidle" });
     await page.locator(".agent-workspace.has-detail").waitFor();
     await assertSplit();
+    if (desktop && theme === "light") {
+      const selected = nav.getByRole("button", { name: "Agents", exact: true });
+      const other = nav.getByRole("button", { name: "Now", exact: true });
+      const fill = await selected.evaluate(node => getComputedStyle(node).backgroundColor);
+      await selected.hover();
+      assert.equal(await selected.evaluate(node => getComputedStyle(node).backgroundColor), fill, "selected hover keeps its fill");
+      if (captureDir) await page.screenshot({ path: path.join(captureDir, `sidebar-${width}-light-selected-hover.png`) });
+      await other.hover();
+      assert.notEqual(await other.evaluate(node => getComputedStyle(node).backgroundColor), fill, "unselected hover stays distinct from selection");
+      if (captureDir) await page.screenshot({ path: path.join(captureDir, `sidebar-${width}-light-unselected-hover.png`) });
+      await page.keyboard.press("Tab");
+      await selected.focus();
+      const focus = await selected.evaluate(node => ({ visible: node.matches(":focus-visible"),
+        width: getComputedStyle(node).outlineWidth, style: getComputedStyle(node).outlineStyle,
+        background: getComputedStyle(node).backgroundColor, current: node.getAttribute("aria-current") }));
+      assert(focus.visible && parseFloat(focus.width) >= 2 && focus.style === "solid");
+      assert.equal(focus.background, fill, "keyboard focus keeps selected fill");
+      assert.equal(focus.current, "page");
+      if (captureDir) await page.screenshot({ path: path.join(captureDir, `sidebar-${width}-light-selected-focus.png`) });
+      await page.mouse.move(0, 0);
+      console.log(`Light selection hover/focus: ${width}px passed`);
+    }
     if (captureDir && [1440, 1180, 390].includes(width)) {
       await page.locator("#prompt-input").focus();
       await page.screenshot({ path: path.join(captureDir, `sidebar-${width}-${theme}.png`) });
