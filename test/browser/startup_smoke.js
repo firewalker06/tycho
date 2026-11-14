@@ -77,7 +77,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
         await input.waitFor();
         assert.equal(await input.inputValue(), "The factory must grow…");
         assert.equal(await input.evaluate(el => el.tagName), "TEXTAREA");
-        assert.equal(await input.evaluate(el => el.labels[0].textContent), "Startup text");
+        assert.equal(await page.getByLabel("Startup text", { exact: true }).getAttribute("id"), "startup-message");
         assert.equal(await input.getAttribute("placeholder"), "The factory must grow\nOrchestrating the orchestrator");
         assert.equal(await page.locator("#startup-message-help, #appearance-help").count(), 0);
         await input.fill("");
