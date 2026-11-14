@@ -1641,6 +1641,10 @@ module HQ
       derived_log_path("attachments.json")
     end
 
+    def focus_path
+      derived_log_path("focus.json")
+    end
+
     def pull_request_catalog_path
       derived_log_path("pull_request_catalog.json")
     end
@@ -1658,6 +1662,9 @@ module HQ
         system_log_path,
         memory_path,
         attachments_path,
+        focus_path,
+        "#{focus_path}.bak",
+        "#{focus_path}.lock",
         pull_request_catalog_path,
         "#{pull_request_catalog_path}.bak",
         "#{pull_request_catalog_path}.lock",

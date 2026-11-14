@@ -19,6 +19,7 @@ require_relative "domain/github_api_client"
 require_relative "domain/pull_request_diff"
 require_relative "domain/scheduler"
 require_relative "domain/agent_store"
+require_relative "domain/agent_focus"
 require_relative "domain/context_handoff"
 require_relative "domain/delegation_actor"
 require_relative "domain/agent_archive_store"
@@ -254,6 +255,21 @@ module HQ
         end
       end
 
+      class AgentFocus < Dry::CLI::Command
+        extend CommandMetadata
+
+        desc "Read or replace an agent's durable Focus document"
+        argument :agent_key, required: true, desc: "Agent key"
+        option :file, desc: "Replace sections from a JSON file (use - for stdin)"
+        option :revision, type: :integer, desc: "Required current revision for replacement"
+        remote_options
+        usage_template "agent focus %{agent_key} [--file PATH --revision N] [--server KEY] [--json]"
+
+        def call(agent_key:, **opts)
+          exit CLICommand.agent_focus(agent_key, opts, out: out, err: err)
+        end
+      end
+
       class AgentRun < Dry::CLI::Command
         extend CommandMetadata
 
@@ -420,6 +436,7 @@ module HQ
         prefix.register "create", AgentCreate
         prefix.register "list", AgentList
         prefix.register "status", AgentStatus
+        prefix.register "focus", AgentFocus
         prefix.register "run", AgentRun
         prefix.register "stop", AgentStop
         prefix.register "logs", AgentLogs
@@ -1897,6 +1914,45 @@ module HQ
       0
     rescue StandardError => e
       failure("Failed to get agent status: #{e.message}", err: err)
+    end
+
+    def agent_focus(agent_key, opts = {}, out: $stdout, err: $stderr)
+      revision = opts[:revision].nil? ? nil : Integer(opts[:revision].to_s, 10)
+      sections = if opts[:file]
+                   source = opts[:file] == "-" ? $stdin.read(AgentFocus::MAX_BYTES + 1) : File.read(opts[:file], AgentFocus::MAX_BYTES + 1)
+                   raise AgentFocus::Error, "Focus input is too large" if source.bytesize > AgentFocus::MAX_BYTES
+                   JSON.parse(source)
+                 end
+      raise AgentFocus::Error, "--revision is required with --file" if opts[:file] && opts[:revision].nil?
+      raise AgentFocus::Error, "--revision requires --file" if !opts[:file] && opts[:revision]
+
+      document = if remote_requested?(opts)
+                   client = remote_client(opts[:server])
+                   path = "#{remote_resource_path("agents", agent_key)}/focus"
+                   response = if opts[:file]
+                                client.request("PUT", path, body: { "sections" => sections, "revision" => revision })
+                              else
+                                client.request("GET", path)
+                              end
+                   response.fetch("focus")
+                 else
+                   agent = load_all_agents.find { |entry| entry.key == agent_key.to_s } || AgentArchiveStore.new.find(agent_key)&.agent
+                   raise AgentFocus::Error, "Unknown agent: #{agent_key}" unless agent
+                   focus = AgentFocus.new(agent)
+                   if opts[:file]
+                     result = nil
+                     agent_store_for_all.update_agent!(agent_key) do |current|
+                       result = AgentFocus.new(current).replace(sections, expected_revision: revision)
+                     end
+                     result
+                   else
+                     focus.read
+                   end
+                 end
+      out.puts JSON.pretty_generate(document)
+      0
+    rescue StandardError => e
+      command_failure("Focus: #{e.message}", opts, out:, err:)
     end
 
     def add_agent_pr_diff(agent_key, url, opts = {}, out: $stdout, err: $stderr)
