@@ -10243,7 +10243,7 @@ body:has(.inquiry-form-full-screen) {
     max-width: 2200px;
   }
 
-  .agent-workspace.has-detail.has-attachment-preview.content-panels-managed {
+  .agent-workspace.has-detail:is(.has-attachment-preview, .has-focus-panel).content-panels-managed {
     grid-template-columns: var(--content-panel-columns);
     grid-template-rows: auto minmax(0, 1fr) auto;
     max-width: none;
@@ -10696,46 +10696,83 @@ body:has(.inquiry-form-full-screen) {
 .project-created-dialog code { white-space: normal; overflow-wrap: anywhere; }
 .project-created-dialog > button { width: 100%; }
 
-/* Focus is current agent state, separate from the run transcript. */
-.agent-focus {
-  scroll-margin-top: calc(var(--app-header-height, 64px) + 12px);
-  height: max-content;
-  align-self: start;
-  margin: 0 0 24px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--panel);
+/* Focus is a peer content panel; the shell owns its backdrop. */
+body:has(.agent-workspace.has-focus-panel) { overflow: hidden; }
+.content.agent-detail:has(.has-focus-panel) {
+  min-height: 0;
+  overflow: hidden;
+  padding-bottom: 0;
+}
+.agent-workspace.has-focus-panel:not(.content-panels-managed) {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  row-gap: 0;
+  min-height: 0;
+}
+.agent-workspace.has-focus-panel :is(.agent-conversation-pane, .agent-detail-pane) {
+  min-height: 0;
   overflow: hidden;
 }
-.agent-focus > summary {
+.agent-workspace.has-focus-panel .agent-detail-pane { align-content: stretch; padding-right: 0; }
+.agent-workspace.has-focus-panel:not(.content-panels-managed) :is(.agent-conversation-pane, .agent-detail-pane) {
+  display: grid;
+  grid-column: 1;
+  grid-row: 1;
+}
+.agent-workspace.has-focus-panel .agent-conversation-scroll {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+}
+.agent-workspace.has-focus-panel:not(.content-panels-managed) .agent-dock {
+  position: relative;
+  inset: auto;
+  transform: none;
+  grid-column: 1;
+  grid-row: 2;
+  width: 100%;
+  max-width: none;
+}
+.agent-workspace.has-focus-panel :is(.agent-conversation-pane, .agent-detail-pane, .agent-dock).content-panel-hidden { display: none; }
+.agent-focus-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--ds-background-surface);
+}
+.agent-focus-panel-heading {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 14px 16px;
-  cursor: pointer;
-  list-style: none;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
 }
-.agent-focus > summary::-webkit-details-marker { display: none; }
-.agent-focus > summary > span { margin-left: auto; color: var(--muted); font-size: 12px; }
-.agent-focus > summary > svg { width: 16px; height: 16px; }
-.agent-focus:not([open]) > summary > svg { transform: rotate(-90deg); }
-.agent-focus > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
-.agent-focus-sections { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); }
+.agent-focus-panel-heading > div { display: flex; align-items: baseline; gap: 12px; }
+.agent-focus-panel-heading h2 { margin: 0; font-size: 16px; }
+.agent-focus-panel-heading span { color: var(--muted); font-size: 12px; }
+.agent-focus-scroll { min-height: 0; overflow: auto; overscroll-behavior: contain; overflow-anchor: none; }
+.agent-focus-sections { display: grid; grid-template-columns: minmax(0, 1fr); }
 .agent-focus-section { min-width: 0; padding: 16px; border-top: 1px solid var(--border); }
 .agent-focus-heading { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 16px; }
 .agent-focus-heading h3 { margin: 0; font-size: 14px; }
-.agent-focus p { margin: 4px 0 0; color: var(--muted); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.agent-focus strong, .agent-focus h3 { overflow-wrap: anywhere; }
+.agent-focus-panel p { margin: 4px 0 0; color: var(--muted); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-focus-panel strong, .agent-focus-panel h3 { overflow-wrap: anywhere; }
 .agent-focus-icon { color: var(--accent); flex: 0 0 18px; }
 .agent-focus-icon svg { width: 18px; height: 18px; }
 .agent-focus-icon[data-focus-icon="todo_done"] { color: var(--success, var(--accent)); }
 .agent-focus-icon[data-focus-icon="blocked"] { color: var(--danger); }
 .agent-focus-count { margin-left: auto; color: var(--muted); font-size: 12px; }
-.agent-focus ul { list-style: none; margin: 0; padding: 0; }
+.agent-focus-panel ul { list-style: none; margin: 0; padding: 0; }
 .agent-focus-section > ul > li { margin: 0 0 16px 8px; padding-left: 18px; border-left: 1px solid var(--border); font-size: 14px; }
 .agent-focus-section > ul > li:last-child { margin-bottom: 0; }
 .agent-focus-attachments li { margin-top: 8px; font-size: 12px; overflow-wrap: anywhere; }
 .agent-focus-attachments a { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
 .agent-focus-attachments svg { width: 14px; height: 14px; flex-shrink: 0; }
 .agent-focus-empty { color: var(--muted); }
-.agent-focus > p { padding: 0 16px 16px; }
+.agent-focus-scroll > p { padding: 0 16px 16px; }

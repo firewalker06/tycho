@@ -19,8 +19,11 @@ read and replace ordered sections through `tycho agent focus`, locally or with
 `--server`. Revision checks reject stale writes; exact latest-write retries are
 safe. Focus stays separate from run results and transcripts, persists across
 runs, and moves into read-only archive history. New clones start empty. The
-Remote UI shows grouped items and attachment links above Conversation, with a
-keyboard disclosure that retains its state through polling. See
+Remote UI gives Focus its own peer content panel, outside the Conversation
+message list. Existing Focus opens by default when the desktop panels fit;
+narrow/mobile views start closed. Explicit choices survive polling, resizing,
+and navigation. Focus and Conversation scroll independently. Summary and
+attachment panels keep their existing state. See
 [Agent Focus](AGENT_FOCUS.md) for schema, update rules, limits, and verification.
 
 ## Schedules page header

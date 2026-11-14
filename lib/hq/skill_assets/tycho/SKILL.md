@@ -136,9 +136,11 @@ Output columns: Key, Project, Name, Parent, Harness, State, Status, Runs.
 
 Focus is one durable current-state artifact per agent. Use it for actionable
 items, blockers, review requests, or an orchestrator's work list. It persists
-across runs, separately from Summary and Conversation, and appears above the
-Remote UI Conversation. Archive retains read-only Focus history. Clones start
-with empty Focus.
+across runs, separately from Summary and Conversation, and has its own peer
+panel in the Remote UI. Existing Focus opens by default when the desktop panels
+fit; narrow/mobile views start closed. Operator choices survive polling and
+navigation. A document first created by polling stays closed until opened.
+Archive retains read-only Focus history. Clones start with empty Focus.
 
 ```bash
 tycho agent focus AGENT_KEY --json

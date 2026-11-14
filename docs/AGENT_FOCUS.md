@@ -4,12 +4,37 @@ Focus is one saved current-state document for each agent. Use it for review
 requests, next actions, blockers, or an orchestrator's work list. Conversation
 and Summary keep the run history. Focus keeps the latest actionable state.
 
-The Remote UI shows non-empty Focus above Conversation. Each section has a
-title, optional subtitle, icon, and ordered items. Each item has a title,
-optional subtitle, and attachment links. The Focus disclosure works with the
-keyboard and preserves its state during polling. The Focus shortcut beside
-Summary opens it and returns to the current work list in a long conversation. Empty sections show “No items”.
-An empty document hides the card.
+The Remote UI shows non-empty Focus in its own peer panel on Conversation.
+Focus is outside the message list and has its own scroll area. Each section has
+a title, optional subtitle, icon, and ordered items. Each item has a title,
+optional subtitle, and attachment links. Empty sections show “No items”. There
+is no Focus panel or shortcut when the document is absent or empty.
+
+## Panel behavior
+
+On entry to Conversation, an existing Focus opens by default if the measured
+workspace can fit Conversation (380 px), Focus (440 px), and the 12 px gap.
+The existing desktop content-panel controls manage fit from 900 px upward.
+At a narrower desktop width, Focus starts as a collapsed vertical strip. Use
+that strip or the Focus shortcut beside Summary to open it. Panel fit preserves
+the most recently requested panel. Closing Focus restores Conversation.
+
+Below 900 px, Focus starts closed. The Focus shortcut explicitly opens it as
+the visible panel, with the composer retained below it. Close Focus returns to
+Conversation and its saved scroll position. Wide opening does not
+request the mobile panel. A manual mobile open remains open through
+polling and viewport changes until the operator closes it.
+
+A manual close stays closed through polling, resizing, and navigation away and
+back to the same agent. A width-limited automatic collapse can expand again
+when space returns. Choices are kept per agent for the current browser page;
+a reload starts with the viewport defaults. A Focus document created after an
+empty agent detail read stays closed until explicitly opened. Polling never
+requests a new panel. Summary and attachment views keep their own panel state.
+
+Focus links use the standard attachment view. Their source files may also
+appear in a user message or run Summary because Focus references an existing
+attachment; that does not attach the Focus artifact to a message.
 
 ## Read and replace
 
@@ -116,6 +141,8 @@ TYCHO_REMOTE_UI_FOCUS_ONLY=1 bin/remote-ui-smoke
 ```
 
 Set `TYCHO_REMOTE_UI_CAPTURE_DIR` to a directory outside the checkout to retain
-screenshots and geometry evidence. The fixture checks desktop/mobile Dark and
-Light views, keyboard disclosure, polling, reload, updates, draft preservation,
-attachment links, invalid URLs, conflicts, clearing, and viewport overflow.
+screenshots and geometry evidence. The fixture checks long conversations near
+the bottom, desktop fit defaults, narrow/mobile defaults and explicit opening,
+independent scrolling, keyboard controls, polling, updates, resize/navigation
+choices, drafts, Summary/attachment compatibility, empty/late Focus, invalid
+URLs, conflicts, and viewport overflow in Dark and Light.
