@@ -15,3 +15,7 @@ the separate application code remains under its own license.
   fallback or unrelated stock image was used. Exact model revision is not
   exposed by the built-in tool. Original PNGs remain at the tool's default
   generated-image destination; production uses the bundled WebP copies.
+
+The UI softens backdrop display with CSS-only blur, color/contrast adjustment,
+and a light palette tint. Bundled files and their hashes are unchanged; previews
+and downloads remain unfiltered.

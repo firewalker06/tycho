@@ -10807,19 +10807,47 @@ body:has(.inquiry-form-full-screen) {
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  background-image: radial-gradient(ellipse at center, color-mix(in srgb, var(--bg) var(--theme-raster-fade), transparent) 0% 55%, transparent 100%), var(--theme-raster-image);
+  background-image: var(--theme-raster-image);
   background-size: cover;
   background-position: var(--theme-raster-position);
   opacity: var(--theme-raster-opacity);
   animation: none;
 }
-/* Protect actual reading regions, including split Summary/Focus columns.
-   Fade controls still tune the artwork; saved adjustments never lower this floor. */
+/* Filter only the fixed image layer. Text and controls keep their own sharp surfaces. */
 :root[data-backdrop="photo"]:not([data-image-backdrop="ready"]) body::before {
-  background-image: radial-gradient(ellipse at center, color-mix(in srgb, var(--bg) 90%, transparent) 0% 55%, transparent 100%), var(--theme-backdrop-image);
+  background-image: var(--theme-backdrop-image);
 }
-:root:is([data-backdrop="photo"], [data-image-backdrop="ready"]) .content {
-  background-image: linear-gradient(to right, transparent, color-mix(in srgb, var(--bg) 98%, transparent) 12px, color-mix(in srgb, var(--bg) 98%, transparent) calc(100% - 12px), transparent);
+:root:is([data-backdrop="photo"], [data-image-backdrop="ready"]) body::before {
+  inset: -12px;
+  filter: blur(3px) saturate(0.78) contrast(0.9) brightness(1.02);
+}
+:root[data-appearance="dark"]:is([data-backdrop="photo"], [data-image-backdrop="ready"]) body::before {
+  filter: blur(3px) saturate(0.78) contrast(0.9) brightness(0.88);
+}
+:root:is([data-backdrop="photo"], [data-image-backdrop="ready"]) body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--bg) 10%, transparent);
+}
+:root[data-image-backdrop="ready"] body::after {
+  background: color-mix(in srgb, var(--bg) var(--theme-raster-tint, 10%), transparent);
+}
+:root:is([data-backdrop="photo"], [data-image-backdrop="ready"]) .message.run_summary {
+  background: var(--panel);
+}
+:root:is([data-backdrop="photo"], [data-image-backdrop="ready"]) .agent-summary-viewer {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+}
+:root:is([data-backdrop="photo"], [data-image-backdrop="ready"]) .settings-section-heading {
+  background: var(--panel);
+  border-radius: 8px;
+  padding: 8px;
 }
 :root:is([data-backdrop="photo"], [data-image-backdrop="ready"]) .content :is(.message-group > summary, .message-group > summary > span:last-child, .message:not(.user) .message-time) {
   color: var(--muted);

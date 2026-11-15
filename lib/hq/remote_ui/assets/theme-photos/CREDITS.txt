@@ -41,3 +41,5 @@ Changes: Inspected generated PNG, stripped metadata, encoded as optimized WebP. 
 SHA-256: f5b218588fdd409539d1ab943e74a178da9e936436c49ed8431b5b014603a611
 
 The Depok photo adaptation is CC BY-SA 4.0; the Senggigi photo is CC BY 3.0. These photo licenses are separate from the application code license. Attribution is retained in the app Photo credits link and this packaged file. No creator endorsement is implied. Full external license texts are bundled beside this file.
+
+UI display: backdrop images use CSS-only blur, color/contrast adjustment, and a light uniform palette tint. This does not change the bundled image files. Previews and downloads stay unfiltered.
