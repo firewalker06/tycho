@@ -40,7 +40,7 @@ images remain private until the user selects **Upload local image**. Appearance
 has a visible copyable agent guide, with JSON and image details in disclosures.
 Portable palette JSON contains no image references. See the
 [appearance guide](REMOTE_UI_APPEARANCE.md) for authentication, limits, caching,
-and transfer semantics. Release v0.16 remains on hold for operator review.
+and transfer semantics. Release v0.16.0 preparation is ready for verification and operator review.
 
 
 ## Agent Focus
@@ -526,6 +526,16 @@ Key references:
 | Pull-request test attestation | Enforced GitHub `signoff` ruleset requiring `signoff/tycho-bin-test`, posted locally with pinned `basecamp/gh-signoff` v0.4.1 after `bin/test` passes on the pushed head | Keep test execution local while retaining a branch-protected, commit-specific merge gate; document repeatable success, failure, and cross-clone attestation workflows |
 
 ## Current Focus
+
+**v0.16.0 release preparation**: prepare the minor release for durable Focus,
+central queue storage, native DeepSeek Harness, project creation/deletion,
+schedule controls, custom themes and server images, and Remote UI refinements
+through merged PR #369. Queue migration requires all writers to stop together
+and a complete logs backup before first load. Version, changelog, release notes,
+and upgrade guidance are prepared; exact-head local CI gates review readiness.
+Operator merge and publication remain pending. GitHub, Homebrew, website, and
+social delivery have separate results. Website work belongs to `tycho-site`
+after merge and tag. See [v0.16.0 notes](releases/v0.16.0.md).
 
 **v0.15.0 release preparation**: a minor release for native stdin prompt
 transport, custom transport contracts, experimental agy support, message and

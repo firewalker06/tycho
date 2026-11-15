@@ -4,6 +4,56 @@ All notable changes to Tycho will be documented in this file.
 
 ## Unreleased
 
+## 0.16.0 - 2026-11-15
+
+### Agent state and queue storage
+
+- Add durable agent Focus sections, revision checks, CLI/remote access, and a
+  dedicated Remote UI panel. Preserve Focus in archives; clones start empty.
+- Centralize queues, claims, batches, dispositions, and staged delivery with
+  transaction recovery and automatic legacy migration. Handle legacy empty
+  placeholders without hiding missing queue data.
+- Add bounded, explicit cleanup of obsolete empty migration audit receipts.
+  Keep queue records and completion proof. Fix creation-receipt lookup beside
+  unrelated damaged archived queues.
+
+### Projects, schedules, and harnesses
+
+- Add manual Remote UI project creation under server home with exact retries,
+  directory safety checks, and preserved rejected form input and focus.
+- Add confirmed background project deletion with archive by default, optional
+  permanent removal of identified logs, saved progress, and explicit retry.
+  Keep workspace files; reject all remaining schedule references.
+- Move Schedules to its own page with combined header actions, mobile creation,
+  and an empty state. Add schedule archive/list support, preserve stopped intent
+  at scheduler startup, and allow one-time queue processing while inactive.
+- Add native DeepSeek Harness stdin/events/resume and structured results,
+  offline catalog, custom adapter support, and official DeepSeek/agy marks.
+  dsh is a developer preview with documented capability and sandbox limits.
+
+### Appearance and Remote UI
+
+- Add custom Dark/Light palettes, a Themes gallery, bundled photo and vector
+  backdrops, reduced-motion behavior, and packaged image provenance.
+- Add a shared server image library and `appearance images` CLI. Keep browser
+  selection private and require explicit upload for old browser-only images.
+- Load PR diffs incrementally, preserve Mermaid previews across refreshes,
+  show Summary links as attachment rows, and fix authenticated local images.
+- Improve split-panel widths, compact sidebar, mobile composer/navigation,
+  search focus, and startup loading. Remove redundant page backgrounds and
+  rotate expressive mascot images in the Now empty state.
+
+### Upgrade and verification
+
+- Keep Ruby 4.0.9; add explicit `chunky_png` and `fiddle` dependencies.
+- Back up the complete logs directory and stop all writers together before
+  automatic queue migration. Older writers must not use migrated state.
+- Strengthen synthetic fixture isolation from operator configuration and tools.
+- Keep Apple Silicon macOS/Linux bottles and the Intel source-install path.
+
+See [v0.16.0 release notes](docs/releases/v0.16.0.md) and the
+[upgrade guide](docs/UPGRADING.md#0160) for limits and deployment checks.
+
 ## 0.15.0 - 2026-11-06
 
 ### Prompt transport and harnesses
