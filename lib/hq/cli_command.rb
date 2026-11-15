@@ -2431,6 +2431,8 @@ module HQ
     end
 
     def backdrop_images(action, id, file, opts, out:, err:)
+      return command_failure("Unexpected arguments: #{Array(opts[:args]).join(" ")}", opts, out: out, err: err) unless Array(opts[:args]).empty?
+
       require_relative "domain/backdrop_image_store"
       store = BackdropImageStore.new
       body = nil

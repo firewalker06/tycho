@@ -94,8 +94,26 @@ async function main() {
     // Normal file input upload and separate light-mode choice.
     await page.locator("[data-appearance-preference]").selectOption("light");
     assert.equal(await page.locator("html").getAttribute("data-image-backdrop"), "none");
+    let releaseCatalog, catalogHeld;
+    const heldCatalog = new Promise(resolve => { catalogHeld = resolve; });
+    let held = false;
+    await page.route("**/appearance/images", async route => {
+      if (route.request().method() === "GET" && !held) {
+        held = true; catalogHeld();
+        await new Promise(resolve => { releaseCatalog = resolve; });
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ images: cli("list").images.filter(item => item.id === migratedId) }) });
+      } else await route.continue();
+    });
+    const migratedId = await page.evaluate(() => window.TychoBackdropImages.getState().library[0].id);
+    await page.evaluate(() => { void window.TychoBackdropImages.refresh(); });
+    await heldCatalog;
+    const uploadedResponse = page.waitForResponse(response => response.request().method() === "PUT" && response.url().includes("/appearance/images/"));
     await page.locator("[data-theme-image-file]").setInputFiles({ name: "Uploaded landscape.png", mimeType: "image/png", buffer: Buffer.from(image, "base64") });
+    await uploadedResponse;
+    releaseCatalog();
     await page.waitForFunction(() => !window.TychoBackdropImages.getState().busy && Boolean(window.TychoBackdropImages.getState().image?.serverId));
+    await page.unroute("**/appearance/images");
+    assert.equal(await page.locator("html").getAttribute("data-image-backdrop"), "ready", "A stale catalog cannot retire a newer upload");
     await page.locator("[data-theme-example]").first().click();
     assert.equal(await page.locator("[data-theme-mode=dark]").inputValue(), "builtin:synthwave");
     const editor = page.locator("#custom-theme-json");
@@ -112,7 +130,12 @@ async function main() {
       await page.locator("[data-theme-guide-copy]").click();
       assert.equal(await page.evaluate(() => navigator.clipboard.readText()), guide);
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "No horizontal overflow");
-      if (captures) { fs.mkdirSync(captures, { recursive: true }); await page.screenshot({ path: path.join(captures, `theme-settings-${width}-${mode}.png`) }); }
+      if (captures) {
+        fs.mkdirSync(captures, { recursive: true });
+        await page.screenshot({ path: path.join(captures, `theme-settings-${width}-${mode}.png`) });
+        await page.locator(".theme-image-settings").scrollIntoViewIfNeeded();
+        await page.screenshot({ path: path.join(captures, `theme-image-library-${width}-${mode}.png`) });
+      }
     }
     // The read disclosure is the fallback when clipboard permission is denied.
     await page.evaluate(() => { window.fixtureClipboardWrite = navigator.clipboard.writeText.bind(navigator.clipboard); navigator.clipboard.writeText = () => Promise.reject(new Error("fixture denied")); });
@@ -127,6 +150,8 @@ async function main() {
     await page.locator("[data-theme-image-delete]").click();
     await page.getByRole("button", { name: "Delete image", exact: true }).click(); await ready();
     await page.waitForFunction(() => document.documentElement.dataset.imageBackdrop === "none");
+    await page.evaluate(() => window.TychoAppearance.setPreference("dark"));
+    await page.waitForFunction(() => document.documentElement.dataset.imageBackdrop === "ready");
     const created = await (await request("POST", "/agents", { project_key: "fixture", template_key: "custom", name: "Theme check", prompt: "Synthetic fixture. Do not run.", agent: "codex" })).json();
     assert(created.agent, JSON.stringify(created));
     const key = created.agent.key;
@@ -137,6 +162,7 @@ async function main() {
       await page.setViewportSize({ width, height: 900 });
       await page.goto(`${base}/ui#agent/${key}`);
       await page.locator("#prompt-input").waitFor();
+      await page.waitForFunction(() => document.documentElement.dataset.imageBackdrop === "ready");
       if (!(await page.locator("[data-agent-focus]").isVisible())) await page.locator("[data-show-agent-focus]").click();
       await page.getByText("Review appearance", { exact: true }).waitFor();
       await page.evaluate(() => refresh({ force: true }));

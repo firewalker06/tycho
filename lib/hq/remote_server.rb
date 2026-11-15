@@ -1017,7 +1017,7 @@ module HQ
         headers[name.to_s.downcase] = value.to_s.strip unless name.to_s.empty?
       end
       length = headers["content-length"].to_i
-      if raw_path.to_s.split("?", 2).first.split("/").reject(&:empty?).each_cons(2).include?(%w[appearance images]) && length > 7 * 1024 * 1024
+      if raw_path.to_s.split("?", 2).first.to_s.split("/").reject(&:empty?).each_cons(2).include?(%w[appearance images]) && length > 7 * 1024 * 1024
         raise Error.new("Image request exceeds 7 MiB", status: 413)
       end
       deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + @client_read_timeout
