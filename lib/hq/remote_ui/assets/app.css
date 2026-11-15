@@ -3286,8 +3286,13 @@ button[data-toggle-pr-diff-full-view],
   overflow: hidden;
 }
 
-.detail-card.schedule-card {
-  overflow: visible;
+.schedule-card {
+  min-width: 0;
+}
+
+.schedule-list {
+  display: grid;
+  gap: 6px;
 }
 
 #settings-servers {
@@ -9883,6 +9888,7 @@ body:has(.inquiry-form-full-screen) {
     border-radius: 0;
     padding: 6px;
     background: transparent;
+    backdrop-filter: none;
     transform: none;
   }
 
@@ -10675,13 +10681,6 @@ body:has(.inquiry-form-full-screen) {
   display: none;
 }
 
-.schedule-list .schedule-summary-row {
-  cursor: default;
-  padding-right: 10px;
-  background: transparent;
-  border-bottom: 1px solid var(--border);
-}
-
 @media (min-width: 1100px) {
   .sidebar-settings-link {
     position: sticky;
@@ -10823,8 +10822,10 @@ body:has(.inquiry-form-full-screen) {
 .theme-example small { color: var(--muted); }
 @media (max-width: 600px) { .theme-examples { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
-:root:not([data-backdrop="none"])[data-backdrop] :is(.bottom-nav, .sidebar-settings-link, .message-group > summary) {
-  background: var(--panel);
+@media (max-width: 1099px) {
+  :root:not([data-backdrop="none"])[data-backdrop] .bottom-nav {
+    background: var(--panel);
+  }
 }
 
 
@@ -10861,7 +10862,9 @@ body:has(.inquiry-form-full-screen) {
 }
 :root:is([data-backdrop="photo"], [data-image-backdrop="ready"]) .content :is(.message-group > summary, .message-group > summary > span:last-child) { color: var(--muted); }
 :root:is([data-backdrop="photo"], [data-image-backdrop="ready"]) .content .message-time { opacity: 1; color: var(--muted); }
-:root[data-image-backdrop="ready"] :is(.bottom-nav, .sidebar-settings-link, .message-group > summary) { background: var(--panel); }
+@media (max-width: 1099px) {
+  :root[data-image-backdrop="ready"] .bottom-nav { background: var(--panel); }
+}
 .theme-image-preview { width: min(100%, 600px); aspect-ratio: 1.8; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .theme-image-preview img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .theme-image-settings p { margin: 0; }
