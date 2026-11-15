@@ -10817,7 +10817,7 @@ body:has(.inquiry-form-full-screen) {
 :root[data-backdrop="photo"]:not([data-image-backdrop="ready"]) body::before {
   background-image: var(--theme-backdrop-image);
 }
-:root:is([data-backdrop="photo"], [data-image-backdrop="ready"]) body::before {
+:root[data-appearance]:is([data-backdrop="photo"], [data-image-backdrop="ready"]) body::before {
   inset: -12px;
   filter: blur(3px) saturate(0.78) contrast(0.9) brightness(1.02);
 }

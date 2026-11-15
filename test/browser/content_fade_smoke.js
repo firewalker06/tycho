@@ -27,7 +27,7 @@ module.exports = async ({browser,baseUrl,agentKey,captureDir}) => {
         await page.evaluate(t => {TychoAppearance.setPreference(t.mode);TychoAppearance.setTheme(t.mode,t.id);},theme);
         for (const screen of ["conversation","focus","settings","summary"]) {
           await page.goto(screen === "settings" ? `${baseUrl}/ui#settings` : screen === "summary" ? `${route}/summary/rich-summary` : route);
-          if (screen === "settings") { await page.getByRole("button",{name:"Configuration",exact:true}).click(); await page.locator("#appearance-heading").scrollIntoViewIfNeeded(); }
+          if (screen === "settings") { await page.getByRole("button",{name:"Configuration",exact:true}).click(); await page.locator("#appearance-heading").evaluate(n=>n.scrollIntoView({block:"start",behavior:"instant"})); }
           else if(screen === "summary") await page.locator("[data-agent-summary-page]").waitFor();
           else { await page.locator("#prompt-input").waitFor(); const focus=page.locator("[data-agent-focus]"); if(screen === "focus") {if(!await focus.isVisible()) await page.locator("[data-show-agent-focus]").click();await page.getByText("Check the content area",{exact:true}).waitFor();} else if(await focus.isVisible()) await page.getByRole("button",{name:"Close Focus panel",exact:true}).click(); }
           await page.waitForFunction(theme => theme.uploaded ? Boolean(TychoBackdropImages.getState().image?.url)&&document.documentElement.dataset.imageBackdrop==="ready" : TychoBackdropImages.getState().themePhoto?.id === theme.id,theme);
@@ -68,8 +68,8 @@ module.exports = async ({browser,baseUrl,agentKey,captureDir}) => {
           assert(!facts.overflow,`${screen} overflow at ${width}`);assert(facts.text.length,`${screen} has real text`);
           if(!baseline) {
             assert.equal(facts.background,"none","No full-content fade remains");
-            const layers=await page.evaluate(()=>({image:getComputedStyle(document.body,"::before").filter,tint:getComputedStyle(document.body,"::after").backgroundColor,content:getComputedStyle(document.querySelector(".content")).filter,controls:[...document.querySelectorAll("button,input,.agent-focus-panel,.agent-summary-viewer")].every(n=>getComputedStyle(n).filter==="none")}));
-            assert.match(layers.image,/blur\(3px\)/);assert.equal(layers.content,"none");assert(layers.controls,"Text and controls stay sharp");facts.layers=layers;
+            const layers=await page.evaluate(()=>({image:getComputedStyle(document.body,"::before").filter,inset:getComputedStyle(document.body,"::before").left,tint:getComputedStyle(document.body,"::after").backgroundColor,content:getComputedStyle(document.querySelector(".content")).filter,controls:[...document.querySelectorAll("button,input,.agent-focus-panel,.agent-summary-viewer")].every(n=>getComputedStyle(n).filter==="none")}));
+            assert.match(layers.image,/blur\(3px\)/);assert.equal(layers.inset,"-12px","Image overscan wins over legacy layer rules");assert.equal(layers.content,"none");assert(layers.controls,"Text and controls stay sharp");facts.layers=layers;
           }
           if(captureDir){fs.mkdirSync(captureDir,{recursive:true});await page.screenshot({path:path.join(captureDir,`fade-${theme.id.replace(/^builtin:/, "")}-${width}-${screen}.png`)});}
           results.push({theme:theme.name,mode:theme.mode,width,screen,...facts});
