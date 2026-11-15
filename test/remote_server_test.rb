@@ -9659,6 +9659,10 @@ module RemoteServerTest
            "expected stopped and paused schedules to override associated agent icon colors")
     assert(js[:body].include?("function renderSchedules()") && js[:body].include?('class="schedule-list"'),
            "expected Remote UI schedule rows on a dedicated Schedules page")
+    assert(js[:body].include?('class="schedule-card" aria-label="Schedules"') &&
+           !js[:body].include?('class="detail-card schedule-card"') &&
+           !js[:body].include?('class="schedule-summary-row"'),
+           "expected Schedules to show rows without a duplicate heading or enclosing panel")
     assert(!js[:body].include?("schedule-now-details") && !js[:body].include?("schedule-disclosure"),
            "expected schedules to remain visible without a disclosure control")
     assert(js[:body].include?("function scheduleSectionRows"),

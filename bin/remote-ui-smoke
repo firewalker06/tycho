@@ -11120,6 +11120,25 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "queue_result_smoke")
       next
     end
+    if ENV["TYCHO_REMOTE_UI_SURFACE_CLEANUP_ONLY"] == "1"
+      associate_agent_schedule(fixture.fetch(:logs_dir), agent_key)
+      script = <<~RUBY2
+        require #{File.join(ROOT, "lib", "hq", "remote_server").inspect}
+        registry = HQ::Registry.new(path: ENV.fetch("TYCHO_CONFIG_PATH"), system_prompts_path: ENV.fetch("TYCHO_SYSTEM_PROMPTS_PATH"))
+        agent = HQ::AgentStore.new(registry.projects).load.find { |item| item.key == #{agent_key.inspect} }
+        memory = HQ::AgentMemory.new(agent)
+        memory.append_user_message!("Check the Conversation and Schedules layout.")
+        memory.append_assistant_message!("The navigation, activity controls, and schedule actions remain available.")
+        memory.append_tool_summary!("Checked the isolated workspace.", tool_name: "exec")
+        memory.append_assistant_message!("The tool check is complete.")
+        memory.append_token_usage!("Synthetic usage event.", metadata: { total_tokens: 12 })
+        memory.append_run_summary!(summary: "The layout check is ready for review.", status: "success")
+      RUBY2
+      out, status = Open3.capture2e(env, RbConfig.ruby, "-e", script, chdir: ROOT)
+      raise "Failed to seed surface fixture: #{out}" unless status.success?
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "surface_cleanup_smoke")
+      next
+    end
     if ENV["TYCHO_REMOTE_UI_SIDEBAR_RAIL_ONLY"] == "1"
       associate_agent_pull_request(fixture.fetch(:logs_dir), agent_key)
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "sidebar_rail_smoke")
