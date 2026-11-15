@@ -7,6 +7,54 @@
 Ruby 4.0.9 or later is required. Upgrade Ruby before running `bundle install`
 or the setup script.
 
+## 0.16.0
+
+### Coordinate queue migration
+
+Stop all TUI, Remote server, scheduler, and other queue writers together before
+upgrading. Preserve a backup of the complete logs directory before the first
+lifecycle load. Queue migration is automatic; do not run older writers against
+migrated state. Do not restore a single state file or delete the queue store.
+See [queue storage and recovery](QUEUE_STORE.md). This preparation does not
+restart any live service or migrate operator data.
+
+For rollback, stop all writers and restore the complete pre-upgrade backup as
+one coordinated state. Finish any pending version 2 cleanup transaction with
+this version first. Migration receipt cleanup is optional, local, and requires
+explicit approval for `--apply`; it does not remove queue records. See
+[cleanup retention](QUEUE_MIGRATION_RETENTION.md).
+
+### Check runtime and new workflows
+
+Ruby 4.0.9 or later remains required. Run `bundle install` to resolve explicit
+`chunky_png` and `fiddle` dependencies. Existing projects, agents, schedules,
+credentials, native sessions, and attachments remain valid.
+
+- If using dsh, install the verified developer-preview version and Node.js
+  baseline from [DeepSeek requirements](DEEPSEEK.md). Rename a custom harness
+  named `dsh`. Read the capability and sandbox limits before provider use.
+- Manual Remote UI project creation requires a supported local filesystem and
+  trusted directory ownership/permissions. It trusts same-user and root
+  processes. Existing custom-path CLI/API use remains available.
+- Project deletion keeps workspace files. Remove all schedule references first;
+  use permanent archive removal only when intended.
+- Existing browser-only backdrop images stay local until explicitly uploaded.
+  Server images are shared; palette choices and adjustments stay browser-local.
+- Focus starts empty where absent. Archive retains it; clones start empty.
+
+### Verify the upgrade
+
+```sh
+tycho --version
+tycho doctor
+tycho agent list
+tycho schedule list
+```
+
+Expect `0.16.0`. Check queue identifiers and pending work after migration,
+then verify a disposable agent run and resume with each harness you use.
+Keep GitHub, Homebrew, website, and social delivery results separate.
+
 ## 0.15.0
 
 Upgrade through Homebrew or update the source checkout. Ruby 4.0.9 or later
