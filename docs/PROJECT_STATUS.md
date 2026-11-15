@@ -22,8 +22,10 @@ an agent prompt guide; [theme documentation](REMOTE_UI_APPEARANCE.md) defines
 the format, storage scope, and contrast checks. Custom palettes apply in the
 head bootstrap before CSS, follow System mode, and sync across same-origin
 tabs without replacing drafts. Four bundled themes (two Dark, two Light) add
-visible SVG backdrops: Synthwave Sunset, Aurora Night, Paper Garden, and Coastal
-Morning. The Themes gallery shows bundled and imported custom palettes with live
+bundled photo backdrops: Senggigi Beach (Light), Depok City (Dark), Waking Up
+(Light), and Cyberpunk (Dark). Licensed place photos and generated art include
+packaged provenance. Photo selection keeps saved library images and provides
+explicit source restore controls. Old vector example selections remain compatible. The Themes gallery shows bundled and imported custom palettes with live
 previews, direct custom-theme deletion, and editable bundled copies. Import
 updates an existing id in place; deletion preserves unrelated themes and
 server images. The gallery refreshes on import and cross-tab updates. Custom JSON

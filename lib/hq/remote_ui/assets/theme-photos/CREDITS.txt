@@ -1,0 +1,43 @@
+Tycho bundled theme photo credits
+
+Senggigi Beach
+Creator: Midori
+Source: https://commons.wikimedia.org/wiki/File:Senggigi_Beach.jpg
+creator_url: https://commons.wikimedia.org/wiki/User:Midori
+original: https://upload.wikimedia.org/wikipedia/commons/a/ad/Senggigi_Beach.jpg
+license_url: https://creativecommons.org/licenses/by/3.0/
+location_evidence: Creator describes a view of Senggigi Beach beside Senggigi Beach Hotel, Lombok. Own-work source, 19 May 2010.
+License: CC BY 3.0
+Changes: Resized to at most 1920 pixels wide, metadata stripped, encoded as WebP. No place or objects changed.
+SHA-256: b6e5d4130bfb9f617ff10b34a2fdf7cfa7793a95815e35d4116f5860ff5f487a
+
+Depok City
+Creator: Mfikriansori
+Source: https://commons.wikimedia.org/wiki/File:Jalan_Margonda,_Depok.jpg
+creator_url: https://commons.wikimedia.org/wiki/User:Mfikriansori
+original: https://upload.wikimedia.org/wikipedia/commons/5/5b/Jalan_Margonda%2C_Depok.jpg
+license_url: https://creativecommons.org/licenses/by-sa/4.0/
+location_evidence: Creator identifies Jalan Margonda in Depok, West Java, 2 April 2022. The photo shows Margonda landmarks and signs (including Mahata Margonda), consistent with that identification. A different ANTARA skyline upload was rejected because its credit metadata conflicts with the uploader license claim.
+License: CC BY-SA 4.0
+Changes: Resized to at most 1920 pixels wide, brightness reduced by 32 with ImageMagick, metadata stripped, encoded as WebP. This is an adapted daytime photo, not a night photograph. No place or objects changed. The adapted photo remains CC BY-SA 4.0.
+SHA-256: 43342746b4bd6dbd557fd0a3c90972d2475c630204d4d9e34cb8a3314087f09d
+
+Waking Up
+Creator: Generated with the built-in OpenAI image_gen tool
+Source: Generated for this application; not a stock photo or real-location claim.
+generation_tool: image_gen.imagegen (GPT Image family; exact model revision not exposed by the tool)
+generation_prompt: Photorealistic warm morning cafe, soft sunlight through large windows, wood tables and coffee cup near an edge. Landscape 16:9, calm low-detail center, detail at edges. Warm cream, honey and muted sage. No people needed, text, logos or watermark. Fictional generated cafe.
+License: Generated product artwork; no third-party stock-photo license claimed.
+Changes: Inspected generated PNG, stripped metadata, encoded as optimized WebP. No scene elements changed.
+SHA-256: 57e9e71be8e5503705615b8bc40d0b620c9c722750b5502403f75b81c9aad6df
+
+Cyberpunk
+Creator: Generated with the built-in OpenAI image_gen tool
+Source: Generated for this application; not a stock photo or real-location claim.
+generation_tool: image_gen.imagegen (GPT Image family; exact model revision not exposed by the tool)
+generation_prompt: Photorealistic fictional cinematic cyberpunk city at night, cyan and magenta neon on rain-wet surfaces, blue-black buildings and mist. Landscape 16:9, calm dark center, detailed buildings and neon at edges. No visible writing, logos, brands or watermark. No identifiable real location.
+License: Generated product artwork; no third-party stock-photo license claimed.
+Changes: Inspected generated PNG, stripped metadata, encoded as optimized WebP. No scene elements changed.
+SHA-256: f5b218588fdd409539d1ab943e74a178da9e936436c49ed8431b5b014603a611
+
+The Depok photo adaptation is CC BY-SA 4.0; the Senggigi photo is CC BY 3.0. These photo licenses are separate from the application code license. Attribution is retained in the app Photo credits link and this packaged file. No creator endorsement is implied. Full external license texts are bundled beside this file.

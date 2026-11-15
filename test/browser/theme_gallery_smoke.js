@@ -21,7 +21,7 @@ module.exports = async function themeGallerySmoke({ page, context, base, request
   const assetsBefore = await images(), choicesBefore = await selectedImages();
   const themes = await page.evaluate(() => TychoAppearance.getThemeState());
   const dusk = { ...themes.samples.dark, id: "imported-dusk", name: "Imported Dusk" };
-  const morning = { ...themes.samples.light, id: "imported-morning", name: "Imported Morning", backdrop: themes.examples.find(theme => theme.mode === "light").backdrop };
+  const morning = { ...themes.samples.light, id: "imported-morning", name: "Imported Morning", backdrop: themes.legacyExamples.find(theme => theme.mode === "light").backdrop };
   const spare = { ...themes.samples.dark, id: "unselected-custom", name: "Unselected Custom" };
   assert.equal(await page.getByRole("heading", { name: "Scenes", exact: true }).count(), 0);
   assert.equal(await page.getByRole("heading", { name: "Themes", exact: true }).count(), 1);

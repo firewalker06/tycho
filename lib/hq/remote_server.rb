@@ -823,6 +823,10 @@ module HQ
     end
 
     def route_ui(path)
+      if RemoteUI.theme_photo_route?(path)
+        content_type = path.end_with?(".webp") ? "image/webp" : "text/plain; charset=utf-8"
+        return ui_asset(content_type, RemoteUI.theme_photo_asset(path), headers: { "Cache-Control" => "public, max-age=3600", "X-Content-Type-Options" => "nosniff" })
+      end
       if RemoteUI.font_asset_route?(path)
         return ui_asset(
           "font/woff2",
@@ -898,6 +902,7 @@ module HQ
 
     def ui_request?(request)
       return false unless request.method == "GET"
+      return true if RemoteUI.theme_photo_route?(request.path)
       return true if RemoteUI.font_asset_route?(request.path)
       return true if RemoteUI.harness_logo_route?(request.path)
 

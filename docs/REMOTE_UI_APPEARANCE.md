@@ -238,20 +238,29 @@ the defaults. If storage is full or blocked, changes apply for this tab and
 Settings reports the limit. Clearing browser storage removes custom themes.
 The head bootstrap applies the selected palette before CSS and app startup.
 
-## Themes gallery and vector backdrops
+## Themes gallery and photo backdrops
 
-The reference in [Card 877](https://fizzy.startkit.tech/1/cards/877) and the
-[ClaudeDevs video](https://x.com/ClaudeDevs/status/2121392666244186327) shows
-backdrop artwork behind the conversation, including a striped sunset and neon
-grid. Tycho's examples use original, code-drawn vector backdrops. No reference
-images or video are bundled or fetched by the UI.
+Four bundled photo themes work without Internet access while the local Tycho
+server is available. They do not require an upload or a developer's image library.
 
-| Example | Mode | Backdrop |
+| Theme | Mode | Photo |
 | --- | --- | --- |
-| Synthwave Sunset | Dark | Striped gold/pink sun, stars, outlined mountains, perspective grid |
-| Aurora Night | Dark | Green/teal ribbons, stars, distant mountain silhouettes |
-| Paper Garden | Light | Sage leaves, curved stems, warm sun, paper-colored ground |
-| Coastal Morning | Light | Blue wave layers, gold sun, distant birds |
+| Senggigi Beach | Light | Real Senggigi Beach, Midori, CC BY 3.0 |
+| Depok City | Dark | Real Jalan Margonda, Mfikriansori, CC BY-SA 4.0, darkened |
+| Waking Up | Light | GPT Image generated fictional morning cafe |
+| Cyberpunk | Dark | GPT Image generated fictional neon city |
+
+[Photo sources, licenses, changes and generated provenance](../lib/hq/remote_ui/assets/theme-photos/README.md)
+are bundled with the app. **Photo credits** in Settings opens the attribution record.
+The adapted Depok photo retains CC BY-SA 4.0; this does not change the code license.
+
+Selecting a photo theme applies its photo and palette. It keeps the saved per-mode
+library image. **Use saved image** restores that image; **Use theme photo** restores
+the bundled photo. Explicitly choosing or uploading another image uses that image.
+Selecting the photo tile again restores its photo. Choices persist and sync across
+tabs. A missing saved image falls back to the bundled photo. Theme deletion never
+deletes library images. Old vector example ids and custom themes remain compatible;
+old examples remain in the selector when selected. Dracula and Nord remain defaults.
 
 The **Themes** gallery includes bundled and imported custom themes. Saving a
 new theme adds its tile immediately. Saving the same id updates one tile;
@@ -266,20 +275,15 @@ of these previews. Custom tiles have a keyboard-accessible **Delete** button;
 bundled tiles have no delete action. Dracula and Nord remain available in
 the selectors, including after selected-theme deletion.
 
-All four bundled vector themes are available without import. In Settings → Configuration → Appearance,
-select a theme from the Dark/Light selector, or use a **Themes** tile.
-A tile selects its theme and its Color mode so you can try it immediately.
-The other mode's choice is retained. Dracula and Nord remain the defaults and
-have no vector backdrop. Existing palette-only custom themes retain their selected ids
-and appearance. The examples are separate from the 30-theme custom limit and
-cannot be removed. Their reserved ids start with `builtin:`.
+The four photo examples are separate from the 30-theme custom limit and cannot
+be removed. Their reserved ids start with `builtin:`. A tile selects its theme
+and Color mode; the other mode's choice is retained. Each tile has the same
+preview, title, metadata and action space. Only custom tiles have Delete.
 
-Select an example, then open **Edit or import theme JSON** and use **Load dark JSON** or
-**Load light JSON**. This loads an editable copy with a new custom id, such as
-`synthwave-copy`. Change the id again if you want to keep an existing copy.
-Change its colors or backdrop values and select **Save theme**. The built-in
-example stays available. Copying and importing this JSON transfers the vector backdrop
-settings as well as the palette.
+**Load dark JSON** or **Load light JSON** loads an editable custom copy. A bundled
+photo copy contains its palette, not its product photo. Custom JSON cannot name
+an asset path or URL. Use the separate image library controls to select a photo.
+Old vector JSON still exports and imports its vector backdrop.
 
 Add this optional top-level field beside `colors` in any custom theme JSON:
 
@@ -312,14 +316,14 @@ backgrounds; JSON cannot supply CSS, SVG markup, asset paths, or network URLs.
 
 Example agent prompt for a backdrop:
 
-> Load the Synthwave Sunset example as a custom copy. Keep its twelve palette
+> Create a custom theme with twelve palette
 > roles readable. Change the backdrop to aurora, with teal, blue, and pale green
 > hex colors, intensity 0.65, and motion slow. Use a new id and name. Return
 > valid theme JSON only. Do not change application code.
 
 Check backdrop strength on desktop and mobile, especially text outside cards,
 focus, and disabled controls. The importer checks the field format, not visual
-contrast. Use the existing appearance smoke command to verify all four bundled themes,
+contrast. Use the appearance and theme smoke commands to verify all four photo themes,
 preview tiles, theme copying, reduced motion, and old palette-only themes.
 
 ## Server image backdrops

@@ -10902,6 +10902,13 @@ body:has(#confirmation-dialog[open]) [data-project-deletion-status] {
 }
 
 .settings-appearance .theme-examples { max-block-size: 34rem; overflow-y: auto; padding: 4px; scrollbar-gutter: stable; }
-.theme-gallery-item { display: grid; grid-template-rows: 1fr auto; gap: 6px; min-inline-size: 0; }
+.theme-gallery-item { display: grid; grid-template-rows: 1fr 36px; gap: 6px; min-inline-size: 0; }
 .theme-gallery-item .theme-example { inline-size: 100%; min-inline-size: 0; align-content: start; }
 .theme-delete { justify-self: end; color: var(--danger); min-block-size: 36px; padding: 4px 10px; }
+
+.settings-appearance [data-theme-photo-status]:empty { display: none; }
+.settings-appearance [data-theme-photo-controls][hidden] { display: none; }
+
+.theme-gallery-item .theme-example { grid-template-rows: auto 2.6em 1.4em; }
+.theme-gallery-item .theme-example > span:not(.theme-example-art) { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; line-height: 1.3; }
+.theme-gallery-item .theme-example small { line-height: 1.4; }

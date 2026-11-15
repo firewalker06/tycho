@@ -120,7 +120,22 @@ module RemoteUIAppearanceTest
         denied.appearance.importTheme(JSON.stringify(theme));
         assert.equal(denied.appearance.getState().persistent, false);
         const scenes = fixture("dark");
-        const examples = scenes.appearance.getThemeState().examples;
+        const photos = scenes.appearance.getThemeState().examples;
+        assert.deepEqual(photos.map(theme => [theme.name, theme.mode]), [["Senggigi Beach", "light"], ["Depok City", "dark"], ["Waking Up", "light"], ["Cyberpunk", "dark"]]);
+        for (const photo of photos) {
+          scenes.appearance.setTheme(photo.mode, photo.id);
+          scenes.appearance.setPreference(photo.mode);
+          assert.equal(scenes.appearance.getThemePhoto().url, photo.photo);
+          scenes.appearance.preferUserImage(photo.mode);
+          assert.equal(scenes.appearance.getThemePhoto().overridden, true);
+          const restored = fixture(photo.mode, { savedThemes: scenes.values.get("hq.remote.themes.v1") });
+          assert.equal(restored.appearance.getThemePhoto().overridden, true);
+          scenes.appearance.setTheme(photo.mode, photo.id);
+          assert.equal(scenes.appearance.getThemePhoto().overridden, false, "explicit photo selection restores the bundled photo");
+          assert.equal(scenes.appearance.preferUserImage(photo.mode, "stale-theme-id"), false);
+          assert(scenes.appearance.examplePreview(photo.id).includes("/theme-photos/"));
+        }
+        const examples = scenes.appearance.getThemeState().legacyExamples;
         assert.equal(examples.length, 4);
         assert.equal(examples.filter(theme => theme.mode === "dark").length, 2);
         assert.equal(examples.filter(theme => theme.mode === "light").length, 2);

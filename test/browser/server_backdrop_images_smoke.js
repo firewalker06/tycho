@@ -118,8 +118,8 @@ async function main() {
     await page.waitForFunction(() => !window.TychoBackdropImages.getState().busy && Boolean(window.TychoBackdropImages.getState().image?.serverId));
     await page.unroute("**/appearance/images");
     assert.equal(await page.locator("html").getAttribute("data-image-backdrop"), "ready", "A stale catalog cannot retire a newer upload");
-    await page.locator("[data-theme-example]").first().click();
-    assert.equal(await page.locator("[data-theme-mode=dark]").inputValue(), "builtin:synthwave");
+    await page.locator('[data-theme-example="builtin:depok-city"]').click();
+    assert.equal(await page.locator("[data-theme-mode=dark]").inputValue(), "builtin:depok-city");
     const editor = page.locator("#custom-theme-json");
     await page.getByText("Edit or import theme JSON", { exact: true }).click();
     const theme = await page.evaluate(() => ({ ...window.TychoAppearance.getThemeState().sample, id: "agent-theme", name: "Agent theme" }));
@@ -128,6 +128,7 @@ async function main() {
     await page.locator("[data-theme-load=dark]").click(); assert.equal(JSON.parse(await editor.inputValue()).id, "agent-theme");
     await page.getByText("Edit or import theme JSON", { exact: true }).click();
     await require("./theme_gallery_smoke")({ page, context, base, request, captures });
+    await require("./theme_photo_smoke")({ page, context, base, request, captures });
     const layoutResults = await require("./appearance_layout_smoke")({ page, captures, guide });
     // The read disclosure is the fallback when clipboard permission is denied.
     await page.evaluate(() => { window.fixtureClipboardWrite = navigator.clipboard.writeText.bind(navigator.clipboard); navigator.clipboard.writeText = () => Promise.reject(new Error("fixture denied")); });
@@ -175,7 +176,7 @@ async function main() {
       if (captures) await page.screenshot({ path: path.join(captures, `theme-danger-zone-${width}.png`) });
     }
     assert.equal(errors.length, 0, errors.join("\n"));
-    console.log(JSON.stringify({ result: "passed", checks: ["authenticated API limits and invalid data", "CLI peer upload/list/replace/remove", "broker image read", "copyable guide desktop/mobile dark/light", "browser selection reload and version refresh", "offline cache and auth rejection", "explicit legacy image migration", "browser file upload", "theme import/export and scene selection", "confirmed shared removal", "Focus and Danger zone preservation", "responsive Appearance layout, advanced errors, keyboard and drafts", "imported theme gallery, previews, delete, cross-tab and image preservation"], layout_cases: layoutResults.length, screenshots: captures || null }, null, 2));
+    console.log(JSON.stringify({ result: "passed", checks: ["authenticated API limits and invalid data", "CLI peer upload/list/replace/remove", "broker image read", "copyable guide desktop/mobile dark/light", "browser selection reload and version refresh", "offline cache and auth rejection", "explicit legacy image migration", "browser file upload", "theme import/export and photo selection", "confirmed shared removal", "Focus and Danger zone preservation", "responsive Appearance layout, advanced errors, keyboard and drafts", "imported theme gallery, previews, delete, cross-tab and image preservation", "four bundled photos, offline assets, image restoration, legacy themes and aligned cards"], layout_cases: layoutResults.length, screenshots: captures || null }, null, 2));
     await context.close();
   } finally { await browser.close(); }
 }
