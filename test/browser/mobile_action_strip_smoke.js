@@ -103,9 +103,17 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     // Native Chrome touch scrolling, with no production event interception.
     const cdp = await context.newCDPSession(page);
     const box = await strip.boundingBox();
+    const hit = await strip.evaluate((node, box) => {
+      window.fixtureTouchTrace = { node, events: [] };
+      // Observe delivery and native scroll without intercepting browser defaults.
+      for (const type of ["touchstart", "touchmove", "touchend", "scroll"]) {
+        node.addEventListener(type, () => window.fixtureTouchTrace.events.push({ type, left: node.scrollLeft }), { passive: true });
+      }
+      return node.contains(document.elementFromPoint(box.x + box.width - 25, box.y + box.height / 2));
+    }, box);
+    assert(hit, "The native gesture must start on the visible action strip");
     await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: box.x + box.width - 25, y: box.y + box.height / 2 }] });
-    // Give Chrome a rendered frame per native move; back-to-back CDP events
-    // can be coalesced before the compositor begins a touch scroll.
+    // Pace the native gesture across rendered frames, as a swipe occurs.
     await frames();
     for (let i = 1; i <= 6; i++) {
       await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: box.x + box.width - 25 - i * 25, y: box.y + box.height / 2 }] });
@@ -115,6 +123,11 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     await frames();
     await page.waitForFunction(() => document.querySelector("[data-agent-floating-actions]").scrollLeft > 1);
     await frames(); assert((await geometry()).mask.includes("linear-gradient"));
+    const touch = await page.evaluate(() => ({ connected: window.fixtureTouchTrace.node.isConnected, events: window.fixtureTouchTrace.events }));
+    assert(touch.connected, "The observed strip must remain mounted during touch");
+    for (const type of ["touchstart", "touchmove", "touchend"]) assert(touch.events.some(event => event.type === type), `${type} must reach the strip`);
+    assert(touch.events.some(event => event.type === "scroll" && event.left > 1), "Native touch must produce a scroll event");
+    results.push({ theme, state: "native touch", touch, geometry: await geometry() });
     await cdp.detach();
 
     await configure(true, true);
