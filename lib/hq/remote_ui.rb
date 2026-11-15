@@ -17,6 +17,10 @@ module HQ
     STARTUP_JS_PATH = File.join(ROOT, "assets", "startup.js")
     HELPERS_JS_PATH = File.join(ROOT, "assets", "app_helpers.js")
     JS_PATH = File.join(ROOT, "assets", "app.js")
+    NOW_MASCOT_JS_PATH = File.join(ROOT, "assets", "now_mascot.js")
+    NOW_MASCOT_ASSETS = %w[d e f].to_h do |id|
+      ["/now-mascot/#{id}.webp", File.join(ROOT, "assets", "now-mascot", "#{id}.webp")]
+    end.freeze
     PROMPT_SUBMISSIONS_PATH = File.join(ROOT, "assets", "prompt_submissions.js")
     INQUIRY_SUBMISSIONS_PATH = File.join(ROOT, "assets", "inquiry_submissions.js")
     LOGO_PATH = File.join(ROOT, "assets", "tycho-logo.png")
@@ -70,6 +74,8 @@ module HQ
       STARTUP_JS_PATH,
       HELPERS_JS_PATH,
       JS_PATH,
+      NOW_MASCOT_JS_PATH,
+      *NOW_MASCOT_ASSETS.values,
       PROMPT_SUBMISSIONS_PATH,
       INQUIRY_SUBMISSIONS_PATH,
       SERVICE_WORKER_PATH,
@@ -122,7 +128,12 @@ module HQ
     end
 
     def self.js
-      [asset_content(PROMPT_SUBMISSIONS_PATH), asset_content(INQUIRY_SUBMISSIONS_PATH), asset_content(JS_PATH)].join("\n")
+      [asset_content(PROMPT_SUBMISSIONS_PATH), asset_content(INQUIRY_SUBMISSIONS_PATH),
+       asset_content(NOW_MASCOT_JS_PATH), asset_content(JS_PATH)].join("\n")
+    end
+
+    def self.now_mascot_asset(route)
+      asset_content(NOW_MASCOT_ASSETS.fetch(route))
     end
 
     def self.helpers_js

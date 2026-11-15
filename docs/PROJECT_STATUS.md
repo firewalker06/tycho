@@ -216,8 +216,14 @@ management, and session controls always visible. Desktop and mobile primary
 navigation contains Now, Agents, and Schedules. Desktop Settings is a plain
 link with the existing gear icon at the bottom of the desktop sidebar; mobile
 Settings stays in the context menu.
-Schedule save, cancel, and Back actions return to Schedules. The Now empty-state
-follow-up remains separate in card #860.
+Schedule save, cancel, and Back actions return to Schedules. The Now empty state
+uses one approved FRED expression and its bound caption at a time (card #881).
+Selection survives polling, rotates without repeats every 30 visible seconds,
+and stays static under reduced motion. The image is centered in the remaining
+viewport below the header, beside the desktop sidebar, and above mobile navigation;
+its caption remains below it, including in short landscape windows. The transparent,
+unboxed container grows through the parent grid and flex layout with no border or shadow.
+See [Now empty state](NOW_EMPTY_STATE.md).
 
 ## Manual queue delivery with inactive schedules
 

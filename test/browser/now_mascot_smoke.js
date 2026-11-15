@@ -1,0 +1,160 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+
+module.exports = async ({ browser, baseUrl, captureDir }) => {
+  const pairs = { d: "All done. Hooray!", e: "Nothing left? Thought so.", f: "And… relax. All done." };
+  const centeringChecks = [];
+  for (const width of [1440, 390]) for (const mode of ["dark", "light"]) {
+    const context = await browser.newContext({viewport: {width, height: 900}, serviceWorkers: "block", reducedMotion: "no-preference"});
+    const page = await context.newPage();
+    const errors = [];
+    page.on("pageerror", e => errors.push(e.message));
+    await page.addInitScript(() => { document.hasFocus = () => true; Math.random = () => window.__mascotRandom || 0; });
+    try {
+      await page.clock.install();
+      await page.goto(`${baseUrl}/ui#now`);
+      await page.waitForFunction(() => state.lastUpdatedAt !== null && !state.refreshInFlight);
+      await page.evaluate(() => { state.agents = []; render(); });
+      await page.locator("[data-now-mascot]").waitFor();
+      await page.clock.pauseAt(new Date());
+      // Restart just the mascot cadence under the clock; keep the production model.
+      await page.evaluate(() => { nowMascot.update({empty: true, shown: false}); syncNowMascot(); });
+      const checkPair = async () => {
+        assert.equal(await page.locator("[data-now-mascot]").count(), 1);
+        const id = await page.locator("[data-now-mascot]").getAttribute("data-now-mascot");
+        assert.equal(await page.locator("[data-now-mascot] p").textContent(), pairs[id]);
+        assert.equal(await page.locator("[data-now-mascot] img").getAttribute("src"), `/now-mascot/${id}.webp`);
+        await page.locator("[data-now-mascot] img").evaluate(img => img.decode());
+        assert.deepEqual(await page.locator("[data-now-mascot] img").evaluate(img => [img.naturalWidth, img.naturalHeight, img.clientWidth, img.clientHeight]), [384, 256, 192, 128]);
+        return id;
+      };
+      const checkCenter = async () => {
+        const geometry = await page.evaluate(() => {
+          const rect = selector => document.querySelector(selector).getBoundingClientRect().toJSON();
+          return { variant: document.querySelector("[data-now-mascot]").dataset.nowMascot,
+            image: rect("[data-now-mascot] img"), caption: rect("[data-now-mascot] p"),
+            content: rect("#view"), header: rect(".app-header"), nav: rect("#bottom-nav"),
+            width: innerWidth, height: innerHeight, scroll: document.documentElement.scrollHeight,
+            surfaces: ["#view", "[data-now-mascot]"].map(selector => {
+              const style = getComputedStyle(document.querySelector(selector));
+              return {background: style.backgroundColor, border: style.borderTopWidth, shadow: style.boxShadow};
+            }) };
+        });
+        const {image, caption, content, header, nav, width, height, scroll} = geometry;
+        const bottom = width < 1100 ? nav.top : height;
+        assert(Math.abs(image.x + image.width / 2 - (content.left + content.right) / 2) <= 1, "image is horizontally centered in the content column");
+        assert(Math.abs(image.y + image.height / 2 - (header.bottom + bottom) / 2) <= 1, "image itself is vertically centered below the header and above navigation: " + JSON.stringify(geometry));
+        assert(caption.top >= image.bottom + 7 && caption.bottom <= bottom, "caption fits below image without overlapping navigation");
+        assert(image.top >= header.bottom && image.right <= content.right && image.left >= content.left, "image stays inside the available content area");
+        assert(scroll <= height + 1, "empty state does not add document scrolling");
+        assert(geometry.surfaces.every(s => s.background === "rgba(0, 0, 0, 0)" && s.border === "0px" && s.shadow === "none"), "empty view and container have no background, border, or shadow");
+        assert.equal(await page.locator("#view").evaluate(node => getComputedStyle(node).display), "flex", "main grows through flex layout");
+        assert.equal(await page.locator("[data-now-mascot]").evaluate(node => getComputedStyle(node).flexGrow), "1", "empty container flexes into the remaining grid row");
+        assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "no horizontal overflow");
+        centeringChecks.push({mode, ...geometry});
+        return geometry;
+      };
+      const settleLayout = () => page.waitForFunction(() => {
+        const expected = innerWidth < 1100 ? document.querySelector("#bottom-nav").getBoundingClientRect().height : 0;
+        return Math.abs(parseFloat(getComputedStyle(document.querySelector("#view")).getPropertyValue("--now-nav-height")) - expected) < 1;
+      });
+      let id = await checkPair();
+      const first = id;
+      await page.evaluate(() => { for (let i = 0; i < 6; i++) render(); });
+      assert.equal(await checkPair(), first, "rerenders preserve selection");
+      await page.evaluate(() => refresh({force: true}));
+      await page.evaluate(() => { state.agents = []; render(); });
+      assert.equal(await checkPair(), first, "polling preserves selection");
+      await page.waitForFunction(() => !state.refreshInFlight && !state.activityInFlight);
+      await page.evaluate(() => { clearTimeout(state.timer); clearTimeout(state.activityTimer); schedule = () => {}; scheduleAgentActivity = () => {}; });
+      for (let i = 0; i < 3; i++) {
+        await page.clock.runFor(30000);
+        const next = await checkPair();
+        assert.notEqual(next, id, "rotation avoids immediate repeat");
+        id = next;
+      }
+      await page.emulateMedia({reducedMotion: "reduce"});
+      await page.clock.runFor(100);
+      await page.clock.runFor(60000);
+      assert.equal(await checkPair(), id, "reduced motion keeps a static selection");
+      await page.emulateMedia({reducedMotion: "no-preference"});
+      await page.evaluate(() => { Object.defineProperty(document, "hidden", {configurable: true, value: true}); document.dispatchEvent(new Event("visibilitychange")); });
+      await page.clock.runFor(60000);
+      assert.equal(await checkPair(), id, "hidden page stops rotation");
+      await page.evaluate(() => { Object.defineProperty(document, "hidden", {configurable: true, value: false}); document.dispatchEvent(new Event("visibilitychange")); });
+      await page.clock.runFor(30000);
+      assert.notEqual(await checkPair(), id);
+      id = await checkPair();
+      await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pagehide")));
+      await page.clock.runFor(60000);
+      assert.equal(await checkPair(), id, "page disposal stops rotation");
+      await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow")));
+      await checkPair();
+      await page.evaluate(() => { state.connection = "Offline: synthetic failure"; render(); });
+      assert.equal(await page.locator("[data-now-mascot]").count(), 0, "errors cannot show success");
+      assert(await page.getByText("Cannot confirm all clear", {exact: true}).isVisible());
+      await page.evaluate(() => { state.lastUpdatedAt = null; state.connection = "Connecting"; render(); });
+      assert.equal(await page.locator("[data-now-mascot]").count(), 0, "loading cannot show success");
+      await page.evaluate(() => { state.lastUpdatedAt = new Date(); state.connection = "Connected"; state.servers.forEach(s => s.stale = false); render(); });
+      await checkPair();
+      await page.evaluate(() => { state.agents = [{key: "fixture-running", running: true, name: "Working", status: "running"}]; render(); });
+      assert.equal(await page.locator("[data-now-mascot]").count(), 0, "work removes empty state");
+      await page.clock.runFor(30000);
+      assert.equal(await page.locator("[data-now-mascot]").count(), 0, "nonempty work stays free of a rotation timer");
+      await page.evaluate(() => { state.agents = []; render(); });
+      await page.goto(`${baseUrl}/ui#agents`);
+      assert.equal(await page.locator("[data-now-mascot]").count(), 0, "route exit removes mascot");
+      await page.goto(`${baseUrl}/ui#now`);
+      await page.waitForFunction(() => !state.refreshInFlight && state.lastUpdatedAt);
+      await page.evaluate(() => { state.agents = []; render(); });
+      await page.emulateMedia({reducedMotion: "reduce"});
+      await page.clock.runFor(100);
+      await page.clock.resume();
+      for (const backdrop of [false, true]) {
+        await page.evaluate(({mode, backdrop}) => {
+          TychoAppearance.setPreference(mode);
+          TychoAppearance.setTheme(mode, backdrop ? (mode === "dark" ? "builtin:depok-city" : "builtin:senggigi-beach") : (mode === "dark" ? "dracula" : "nord"));
+        }, {mode, backdrop});
+        if (backdrop) await page.waitForFunction(() => document.documentElement.dataset.imageBackdrop === "theme");
+        for (const variant of ["d", "e", "f"]) {
+          // Select through the real controller, without adding a production test switch.
+          await page.evaluate(variant => {
+            nowMascot.update({empty: false, shown: false});
+            window.__mascotRandom = variant === "f" ? .99 : 0;
+            // The controller captured the init-script function: alternate entries until selected.
+            for (let i = 0; i < 6; i++) { render(); if (document.querySelector("[data-now-mascot]")?.dataset.nowMascot === variant) break; nowMascot.update({empty: false, shown: false}); }
+          }, variant);
+          const selected = await checkPair();
+          assert.equal(selected, variant);
+          assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+          const box = await page.locator("[data-now-mascot]").boundingBox();
+          assert(box.x >= 0 && box.x + box.width <= width + 1 && box.y + box.height <= 901, JSON.stringify({box,width, header:await page.locator(".app-header").boundingBox(),main:await page.locator("#view").boundingBox()}));
+          await settleLayout();
+          await checkCenter();
+          if (captureDir) { fs.mkdirSync(captureDir, {recursive: true}); await page.screenshot({path: path.join(captureDir, `${width}-${mode}-${backdrop ? "photo" : "plain"}-${variant}-${selected}.png`)}); }
+        }
+        const selected = await checkPair();
+        for (const size of [{width: 844, height: 390}, {width: 667, height: 320}, {width: 320, height: 568}, {width: 1440, height: 360}, {width, height: 900}]) {
+          await page.setViewportSize(size);
+          await settleLayout();
+          assert.equal(await page.locator("[data-now-mascot]").getAttribute("data-now-mascot"), selected, "resize retains the selected pair");
+          await checkCenter();
+          if (captureDir) await page.screenshot({path: path.join(captureDir, `resize-${width}-${mode}-${backdrop ? "photo" : "plain"}-${size.width}x${size.height}.png`)});
+        }
+        await page.setViewportSize({width: 390, height: 844});
+        const safeArea = await page.addStyleTag({content: ":root { --safe-area-top: 20px; } #bottom-nav { padding-bottom: 42px; }"});
+        await settleLayout();
+        await checkCenter();
+        assert.equal(await page.locator("[data-now-mascot]").getAttribute("data-now-mascot"), selected, "safe-area changes retain selection");
+        if (captureDir) await page.screenshot({path: path.join(captureDir, `safe-area-${width}-${mode}-${backdrop ? "photo" : "plain"}.png`)});
+        await safeArea.evaluate(node => node.remove());
+        await page.setViewportSize({width, height: 900});
+        await settleLayout();
+      }
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  }
+  if (captureDir) fs.writeFileSync(path.join(captureDir, "centering-checks.json"), JSON.stringify(centeringChecks, null, 2));
+  console.log(`Now mascot: pairing, lifecycle, loading/error/work and ${centeringChecks.length} desktop/mobile/landscape/resize/safe-area geometry cases passed.`);
+};

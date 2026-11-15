@@ -8939,6 +8939,14 @@ module RemoteServerTest
            helpers_js[:body].include?("function attachmentBlobPath"),
            "expected Remote UI attachment target primitives to live in the helper asset")
     js = server.send(:route_ui, "/ui.js")
+    %w[d e f].each do |id|
+      route = "/now-mascot/#{id}.webp"
+      image = server.send(:route_ui, route)
+      assert(image[:content_type] == "image/webp", "expected mascot WebP MIME type")
+      assert(image[:body].start_with?("RIFF") && image[:body].byteslice(8, 4) == "WEBP",
+             "expected the encoded mascot image, not an HTML fallback")
+      assert(image[:body].bytesize < 10_000, "expected a compact mascot asset")
+    end
     assert(js[:body].include?('ownership === "takeover"') &&
            js[:body].include?('agent-ownership-badge takeover') &&
            !js[:body].include?('aria-label="generation'),
