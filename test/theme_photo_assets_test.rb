@@ -16,6 +16,12 @@ manifest.each do |item|
   raise "Missing route" unless HQ::RemoteUI.theme_photo_route?(route)
   raise "Missing version dependency" unless HQ::RemoteUI::ASSET_VERSION_PATHS.include?(File.join(root, item.fetch("file")))
 end
+legacy_root = File.join(root, "legacy")
+JSON.parse(File.read(File.join(legacy_root, "provenance.json"))).each do |item|
+  bytes = File.binread(File.join(legacy_root, item.fetch("file")))
+  raise "Earlier image was changed" unless Digest::SHA256.hexdigest(bytes) == item.fetch("sha256")
+  raise "Earlier credit lost" if item.fetch("creator").empty? || item.fetch("license_url").empty?
+end
 raise "Unsafe route" if HQ::RemoteUI.theme_photo_route?("/theme-photos/../appearance.js")
 raise "Unversioned photo URL" if HQ::RemoteUI.appearance_js.include?("__TYCHO_PHOTO_VERSION__")
 %w[CREDITS.txt CC-BY-3.0.txt CC-BY-SA-4.0.txt].each do |file|

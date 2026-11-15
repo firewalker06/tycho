@@ -246,7 +246,7 @@ server is available. They do not require an upload or a developer's image librar
 | Theme | Mode | Photo |
 | --- | --- | --- |
 | Senggigi Beach | Light | Real Senggigi Beach, Midori, CC BY 3.0 |
-| Depok City | Dark | Real Jalan Margonda, Mfikriansori, CC BY-SA 4.0, darkened |
+| Depok City | Dark | Real Margo City exterior, RasyaAbhirama13, CC BY-SA 4.0 |
 | Waking Up | Light | GPT Image generated fictional morning cafe |
 | Cyberspace | Dark | GPT Image generated fictional orbital space station |
 
@@ -360,8 +360,11 @@ Vector-only themes are unchanged.
 Cyberspace uses the legacy `builtin:cyberpunk` identifier so existing selections
 remain valid. Its new generated space-station image is bundled for offline use;
 the earlier city image remains preserved in the package. Waking Up is unchanged.
-New Senggigi Beach and Depok City photo candidates are review files only until
-the operator selects replacements.
+The operator selected Senggigi S4 (view from Jalan Raya Senggigi) and Depok D4
+(Margo City exterior). Both use optimized full-resolution source photos, with
+credits and licenses bundled. Their theme identifiers remain unchanged. The
+Cyberspace station is a proposed asset pending operator approval; do not treat
+its presence in this PR as approval for release.
 
 ### Agent workflow
 
