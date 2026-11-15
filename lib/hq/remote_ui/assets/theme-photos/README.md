@@ -18,4 +18,4 @@ the separate application code remains under its own license.
 
 Image options use 20% strength, 50% edge vignette and centered focal position by default. Explicit saved settings remain unchanged. Vignette fades image edges toward the palette background; no CSS blur or center wash is applied. Original images remain unchanged. The old Cyberpunk asset and its separate provenance remain packaged for compatibility; the visible theme is Cyberspace with generated space-station artwork.
 
-The operator selected Senggigi S4 and Depok D4. Current assets are resized from their full-resolution originals without baked visual treatments. Earlier files and their attribution records remain under legacy/. Cyberspace remains proposed and pending operator approval.
+The operator selected Senggigi S4 and Depok D4. Current assets are resized from their full-resolution originals without baked visual treatments. Earlier files and their attribution records remain under legacy/. Cyberspace now uses operator-approved R3. Its generated edit prompt and input/output hashes are recorded in provenance.json. The rejected first station is replaced; no treatment is baked in during integration.

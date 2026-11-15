@@ -31,13 +31,13 @@ License: Generated product artwork; no third-party stock-photo license claimed.
 Changes: Inspected generated PNG, stripped metadata, encoded as optimized WebP. No scene elements changed.
 SHA-256: 57e9e71be8e5503705615b8bc40d0b620c9c722750b5502403f75b81c9aad6df
 
-Cyberspace
-Creator: Generated with the built-in OpenAI image_gen tool (GPT Image family; exact model revision is not exposed).
-Source: Original fictional space station artwork generated for Tycho. Not a stock photo or real-location claim.
+Cyberspace — approved R3
+Creator: Generated/edited with the built-in OpenAI image_gen tool (GPT Image family; exact revision is not exposed).
+Source: Operator-approved R3, an edit of a generated C3 concept. Fictional space station; not a stock photo or real-location claim.
 License: Generated product artwork; no third-party stock-photo license claimed.
-Generation: One built-in image_gen call. Full prompt and hashes are in provenance.json.
-Changes: Inspected original PNG, stripped metadata and encoded as optimized WebP. No scene elements changed.
-Compatibility: The existing builtin:cyberpunk theme identifier remains valid. Original cyberpunk.webp is preserved; its full provenance is in legacy-cyberpunk-provenance.json.
+Generation: One selected R3 edit from a three-candidate batch. Full selected prompt and source/output hashes are in provenance.json. Other outputs are not used.
+Changes: Inspected approved PNG; stripped metadata and encoded as optimized WebP. No crop, resizing, blur, vignette, brightness or color treatment added during integration.
+Compatibility: Existing builtin:cyberpunk theme identifier remains valid. Original cyberpunk.webp and its provenance remain packaged for compatibility. The rejected first station image is not the active product asset.
 
 UI display: Image strength controls opacity. Vignette fades only the edges toward the palette canvas. New choices use 20% strength, 50% vignette and 50% horizontal/vertical focal position. Saved adjustments are kept. No CSS blur, center fade or baked preview treatment is applied. Originals and downloads are unchanged.
 

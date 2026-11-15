@@ -56,16 +56,21 @@
     "name": "Cyberspace",
     "mode": "dark",
     "creator": "Generated with the built-in OpenAI image_gen tool",
-    "source": "Generated for this application; not a stock photo or real-location claim.",
+    "source": "Operator-approved R3, edited from a generated C3 concept with the built-in image_gen tool. Fictional space station; no real-location claim.",
     "license": "Generated product artwork; no third-party stock-photo license claimed.",
     "generation_tool": "image_gen.imagegen (GPT Image family; exact model revision not exposed by the tool)",
     "generation_calls": 1,
-    "generation_prompt": "Use case: photorealistic-natural. Asset type: landscape backdrop for the Cyberspace dark theme in a software application. Create a cinematic photorealistic exterior view of a fictional orbital SPACE STATION in deep space. Show a coherent ring-and-docking structure, small illuminated windows and restrained cyan lights, with a distant blue planet limb and a few stars. The station must be clearly recognizable as a space station, not a terrestrial city. Wide 16:9 landscape framing. Keep the center calm, dark and low in detail for interface readability, with station architecture and the planet mainly toward the sides. Palette deep navy compatible with canvas #0B1323. Natural sharp photographic detail, no whole-image blur, no baked vignette or center fade, no fog wash, no visible writing, logos or watermarks. Finished original raster artwork.",
-    "changes": "Inspected generated PNG, stripped metadata, encoded as optimized WebP. No scene elements changed.",
-    "original_sha256": "7d166af7fa3f6748c23a4ec0b14bddb7b29a6689c64ebba74ab2a68ea19c08ed",
+    "generation_prompt": "Edit this image into a restrained, natural cinematic space background. Preserve the wide landscape format and the detailed space-station section cropped by the LOWER and RIGHT edges in the LOWER RIGHT CORNER. Preserve a planet cropped by the TOP and LEFT edges at the UPPER LEFT CORNER. REMOVE ALL existing spacecraft and replace them with EXACTLY ONE small spacecraft, only about 4 percent of image width, located at x=82 percent from left and y=36 percent from top, well away from center above the station. No other ships anywhere, including hangars, background specks or planet. Make the CENTRAL CONTENT AREA quiet, near-black open space with only a few tiny natural white stars. Remove ALL colored nebula clouds, colorful bands, magenta/emerald/teal/violet washes and luminous fantasy gas. Space must be a clean near-black starfield. Use physically plausible natural white sunlight, neutral metal hulls and restrained small warm-white station windows. Realistic planet colors, subtle natural illumination and a thin realistic atmosphere. No neon color lighting. Keep crisp polished detail; do not simulate interface treatment. No baked fade, blur, vignette, gradient overlay, fog wash, text, logos or watermark. Do not add a second ship. This is an edit of the supplied image, not a collage. Planet: realistic blue-gray ocean and white cloud cover with subtle muted continental tones, no pink rim. Station: brushed titanium and charcoal, naturally lit, no colored accents. One small cargo tug at the specified off-center location.",
+    "changes": "Inspected approved R3 PNG; stripped metadata and encoded as optimized WebP. No crop, resizing, blur, vignette, brightness or color treatment applied during integration.",
+    "original_sha256": "e2e500fd699b034542347170de83b28e38a3bd141d1cef45fa8fe49c6616eb64",
     "file": "cyberspace.webp",
-    "sha256": "768a024aaf26e4bce911bee2a5782704c18d542f8abbdc68bc54f461ee8a0531",
-    "bytes": 112988,
-    "compatibility": "The selected theme identifier builtin:cyberpunk is retained. The original cyberpunk.webp and its provenance remain in the package."
+    "sha256": "529764550c18158bdd083d1c821be15dca1ef99f218e8e8d9aab2b234f412475",
+    "bytes": 104474,
+    "compatibility": "The selected theme identifier builtin:cyberpunk is retained. The original cyberpunk.webp and its provenance remain in the package.",
+    "generation_method": "Selected R3 edit from a three-candidate edit batch; the other two outputs are not used.",
+    "batch_generation_calls": 3,
+    "input_sha256": "ffd13345b67e3d59600896763f58688990ee4bf625d39c931ccc79603a205a5d",
+    "operator_choice": "R3",
+    "approval": "Operator approved R3 before integration."
   }
 ]

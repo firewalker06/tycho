@@ -362,9 +362,8 @@ remain valid. Its new generated space-station image is bundled for offline use;
 the earlier city image remains preserved in the package. Waking Up is unchanged.
 The operator selected Senggigi S4 (view from Jalan Raya Senggigi) and Depok D4
 (Margo City exterior). Both use optimized full-resolution source photos, with
-credits and licenses bundled. Their theme identifiers remain unchanged. The
-Cyberspace station is a proposed asset pending operator approval; do not treat
-its presence in this PR as approval for release.
+credits and licenses bundled. Their theme identifiers remain unchanged. Cyberspace uses operator-approved R3, an edited generated space-station image.
+Its prompt and hashes are bundled. Photo approval is not release authorization.
 
 ### Agent workflow
 
