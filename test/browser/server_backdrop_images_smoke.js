@@ -11,6 +11,18 @@ const cli = (...args) => JSON.parse(execFileSync("bin/tycho", ["appearance", "im
 async function request(method, route, body, authenticated = true) {
   return fetch(base + route, { method, headers: { ...(authenticated ? auth : {}), "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
 }
+// Assert rejection before the server reads a body. Sending 7 MiB through fetch
+// races its body writer against the deliberate connection close (EPIPE).
+function oversizedUploadStatus() {
+  return new Promise((resolve, reject) => {
+    const req = require("node:http").request(`${base}/appearance/images/bad`, {
+      method: "PUT", headers: { ...auth, "Content-Type": "application/json", "Content-Length": 7 * 1024 * 1024 + 1 }
+    }, response => { response.resume(); response.on("end", () => resolve(response.statusCode)); });
+    req.on("error", reject);
+    req.setTimeout(5000, () => req.destroy(new Error("Oversized upload was not rejected before body read.")));
+    req.end();
+  });
+}
 async function main() {
   const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH, headless: true });
   try {
@@ -35,7 +47,7 @@ async function main() {
     assert.equal((await request("PUT", "/appearance/images/unauthorized", { name: "No", data: image }, false)).status, 401);
     assert.equal((await request("PUT", "/appearance/images/bad", { name: "Bad", data: Buffer.from("<svg/>").toString("base64") })).status, 422);
     assert.equal((await request("GET", "/appearance/images/missing/blob")).status, 404);
-    assert.equal((await request("PUT", "/appearance/images/bad", { name: "Bad", data: "x".repeat(7 * 1024 * 1024) })).status, 413);
+    assert.equal(await oversizedUploadStatus(), 413);
     const upload = cli("upload", "agent-landscape", file, "--name", "Agent landscape", "--server", "fixture-peer");
     assert.equal(upload.image.id, "agent-landscape");
     assert.equal(cli("list", "--server", "fixture-peer").images.length, 1);
