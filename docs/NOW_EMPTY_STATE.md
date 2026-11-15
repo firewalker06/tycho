@@ -25,7 +25,7 @@ The approved raster studies used the original FRED PNG from commit
 See [conversation animations](CONVERSATION_ANIMATIONS.md) for the original art and
 current conversation SVG. Only the Now state uses these new raster expressions.
 
-The three transparent WebPs are in `lib/hq/remote_ui/assets/now-fred/`. Each is
+The three transparent WebPs are in `lib/hq/remote_ui/assets/now-mascot/`. Each is
 384 × 256 pixels, displayed at 192 × 128 CSS pixels for 2× rendering. ImageMagick
 resized the approved PNGs with `-resize 384x256 -define webp:method=6 -quality 85`.
 
@@ -41,10 +41,10 @@ Only the selected image is requested by the page.
 
 ## Verification
 
-`test/remote_ui_now_fred_test.rb` uses a controlled clock and random source to
+`test/remote_ui_now_mascot_test.rb` uses a controlled clock and random source to
 check bound records, all three choices, no repeat, stable polling, hidden and
 reduced-motion suspension, route exit, reentry and disposal.
 
-Run `TYCHO_REMOTE_UI_NOW_FRED_ONLY=1 bin/remote-ui-smoke` for the isolated Chrome
+Run `TYCHO_REMOTE_UI_NOW_MASCOT_ONLY=1 bin/remote-ui-smoke` for the isolated Chrome
 checks and desktop/mobile Dark/Light/plain/photo captures. Set
 `TYCHO_REMOTE_UI_CAPTURE_DIR` to an outside-repository evidence directory.

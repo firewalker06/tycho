@@ -11036,7 +11036,7 @@ body:has(#confirmation-dialog[open]) [data-project-deletion-status] {
   min-height: 240px;
   text-align: center;
 }
-.now-empty-fred {
+.now-empty-mascot {
   display: block;
   width: 192px;
   height: 128px;
