@@ -117,9 +117,10 @@ module.exports = async function appearanceSmoke({ browser, baseUrl, agentKey, ca
         await page.locator("#prompt-input").fill(`${theme.name}: scene example.`);
         const scene = await page.evaluate(async () => {
           const style = getComputedStyle(document.body, "::before");
-          const source = style.backgroundImage.slice(5, -2);
+          const source = TychoBackdropImages.getState().themePhoto.url;
+          if (!style.backgroundImage.includes(source)) throw new Error("Active photo is missing from the backdrop");
           const image = new Image(); image.src = source; await image.decode();
-          return { image: image.width > 0, opacity: Number(style.opacity), input: style.pointerEvents, animation: style.animationName, style: document.documentElement.dataset.backdrop, position: style.backgroundPositionX };
+          return { image: image.width > 0, opacity: Number(style.opacity), input: style.pointerEvents, animation: style.animationName, style: document.documentElement.dataset.backdrop, position: style.backgroundPositionX.split(",").at(-1).trim() };
         });
         assert(scene.image && scene.opacity > 0.5, "the backdrop artwork must decode and be visible");
         assert.equal(scene.style, "photo");

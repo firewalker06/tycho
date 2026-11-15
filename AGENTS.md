@@ -206,3 +206,5 @@ Also call out changes to Bubbletea input handling, bracketed paste behavior, or 
 
 - `bin/tycho appearance images upload ID path/to/image.png [--name NAME] [--server KEY] [--json]`, `appearance images list`, and `appearance images remove ID`: manage the shared server PNG library without changing browser choices. See [Appearance](docs/REMOTE_UI_APPEARANCE.md).
 - `bin/remote-ui-theme-smoke`: verify the authenticated image API, agent CLI, migration, cache lifecycle, and desktop/mobile theme guide in isolated Chrome fixtures. Set `TYCHO_PLAYWRIGHT_PATH` to reuse Playwright and `TYCHO_REMOTE_UI_CAPTURE_DIR` to retain screenshots outside the checkout.
+
+- Set `TYCHO_REMOTE_UI_CONTENT_FADE_ONLY=1` with `bin/remote-ui-smoke` to check photo readability in Conversation, Settings, Focus and Summary at 1920/1440/390, new raster fade defaults, and saved adjustments. Set `TYCHO_REMOTE_UI_CAPTURE_DIR` to retain evidence outside the repository.

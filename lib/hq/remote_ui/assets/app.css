@@ -10744,12 +10744,24 @@ body:has(.inquiry-form-full-screen) {
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  background-image: radial-gradient(ellipse at center, color-mix(in srgb, var(--bg) var(--theme-raster-fade), transparent), transparent 80%), var(--theme-raster-image);
+  background-image: radial-gradient(ellipse at center, color-mix(in srgb, var(--bg) var(--theme-raster-fade), transparent) 0% 55%, transparent 100%), var(--theme-raster-image);
   background-size: cover;
   background-position: var(--theme-raster-position);
   opacity: var(--theme-raster-opacity);
   animation: none;
 }
+/* Protect actual reading regions, including split Summary/Focus columns.
+   Fade controls still tune the artwork; saved adjustments never lower this floor. */
+:root[data-backdrop="photo"]:not([data-image-backdrop="ready"]) body::before {
+  background-image: radial-gradient(ellipse at center, color-mix(in srgb, var(--bg) 90%, transparent) 0% 55%, transparent 100%), var(--theme-backdrop-image);
+}
+:root:is([data-backdrop="photo"], [data-image-backdrop="ready"]) .content {
+  background-image: linear-gradient(to right, transparent, color-mix(in srgb, var(--bg) 98%, transparent) 12px, color-mix(in srgb, var(--bg) 98%, transparent) calc(100% - 12px), transparent);
+}
+:root:is([data-backdrop="photo"], [data-image-backdrop="ready"]) .content :is(.message-group > summary, .message-group > summary > span:last-child, .message:not(.user) .message-time) {
+  color: var(--muted);
+}
+:root:is([data-backdrop="photo"], [data-image-backdrop="ready"]) .content .message-time { opacity: 1; }
 :root[data-image-backdrop="ready"] :is(.bottom-nav, .sidebar-settings-link, .message-group > summary) { background: var(--panel); }
 .theme-image-preview { width: min(100%, 600px); aspect-ratio: 1.8; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .theme-image-preview img { display: block; width: 100%; height: 100%; object-fit: cover; }
