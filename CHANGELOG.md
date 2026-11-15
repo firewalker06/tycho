@@ -41,7 +41,7 @@ All notable changes to Tycho will be documented in this file.
   show Summary links as attachment rows, and fix authenticated local images.
 - Improve split-panel widths, compact sidebar, mobile composer/navigation,
   search focus, and startup loading. Remove redundant page backgrounds and
-  rotate expressive FRED images in the Now empty state.
+  rotate expressive mascot images in the Now empty state.
 
 ### Upgrade and verification
 
