@@ -94,7 +94,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     await strip.locator("button").first().locator("span").evaluate(el => { el.textContent = "Focus and next actionable items"; });
     await frames(); g = await geometry();
     assert(g.max > 100 && g.buttons.every(b => b.lines === 1));
-    await strip.locator("button").first().focus(); await frames();
+    await strip.focus(); await page.keyboard.press("Tab"); await frames();
     g = await geometry(); assert(g.buttons[0].x >= -1 && g.buttons[0].right <= g.right, JSON.stringify(g));
     const focusStyle = await strip.locator("button").first().evaluate(el => ({ style: getComputedStyle(el).outlineStyle, width: getComputedStyle(el).outlineWidth }));
     assert(focusStyle.style === "solid" && parseFloat(focusStyle.width) >= 2);
