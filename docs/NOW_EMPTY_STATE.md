@@ -48,3 +48,13 @@ reduced-motion suspension, route exit, reentry and disposal.
 Run `TYCHO_REMOTE_UI_NOW_MASCOT_ONLY=1 bin/remote-ui-smoke` for the isolated Chrome
 checks and desktop/mobile Dark/Light/plain/photo captures. Set
 `TYCHO_REMOTE_UI_CAPTURE_DIR` to an outside-repository evidence directory.
+
+The empty view fills only the remaining viewport below the measured header and
+above the measured mobile navigation (including its safe-area padding). Desktop
+centering uses the content column beside the sidebar. The image itself is at the
+horizontal and vertical center; the caption sits beneath it. Container-relative
+image sizing shrinks the art in short viewports. This replaces the fixed-height
+banner without adding document scrolling. Resize updates navigation clearance
+without selecting a new record. Chrome checks also measure image-center error,
+caption clearance, document overflow, portrait, short landscape, and live resize
+across the sidebar breakpoint.

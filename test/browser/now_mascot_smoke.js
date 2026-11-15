@@ -4,6 +4,7 @@ const path = require("node:path");
 
 module.exports = async ({ browser, baseUrl, captureDir }) => {
   const pairs = { d: "All done. Hooray!", e: "Nothing left? Thought so.", f: "And… relax. All done." };
+  const centeringChecks = [];
   for (const width of [1440, 390]) for (const mode of ["dark", "light"]) {
     const context = await browser.newContext({viewport: {width, height: 900}, serviceWorkers: "block", reducedMotion: "no-preference"});
     const page = await context.newPage();
@@ -28,6 +29,31 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
         assert.deepEqual(await page.locator("[data-now-mascot] img").evaluate(img => [img.naturalWidth, img.naturalHeight, img.clientWidth, img.clientHeight]), [384, 256, 192, 128]);
         return id;
       };
+      const checkCenter = async () => {
+        const geometry = await page.evaluate(() => {
+          const rect = selector => document.querySelector(selector).getBoundingClientRect().toJSON();
+          return { variant: document.querySelector("[data-now-mascot]").dataset.nowMascot,
+            image: rect("[data-now-mascot] img"), caption: rect("[data-now-mascot] p"),
+            content: rect("#view"), header: rect(".app-header"), nav: rect("#bottom-nav"),
+            width: innerWidth, height: innerHeight, scroll: document.documentElement.scrollHeight };
+        });
+        const {image, caption, content, header, nav, width, height, scroll} = geometry;
+        const bottom = width < 1100 ? nav.top : height;
+        assert(Math.abs(image.x + image.width / 2 - (content.left + content.right) / 2) <= 1, "image is horizontally centered in the content column");
+        assert(Math.abs(image.y + image.height / 2 - (header.bottom + bottom) / 2) <= 1, "image itself is vertically centered below the header and above navigation: " + JSON.stringify(geometry));
+        assert(caption.top >= image.bottom + 7 && caption.bottom <= bottom, "caption fits below image without overlapping navigation");
+        assert(image.top >= header.bottom && image.right <= content.right && image.left >= content.left, "image stays inside the available content area");
+        assert(scroll <= height + 1, "empty state does not add document scrolling");
+        assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "no horizontal overflow");
+        centeringChecks.push({mode, ...geometry});
+        return geometry;
+      };
+      const settleLayout = () => page.waitForFunction(() => {
+        const expected = innerWidth < 1100 ? document.querySelector("#bottom-nav").getBoundingClientRect().height : 0;
+        const header = Math.ceil(document.querySelector(".app-header").getBoundingClientRect().height);
+        return Math.abs(parseFloat(document.querySelector("#view").style.getPropertyValue("--now-nav-height")) - expected) < 1 &&
+          parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--app-header-height")) === header;
+      });
       let id = await checkPair();
       const first = id;
       await page.evaluate(() => { for (let i = 0; i < 6; i++) render(); });
@@ -79,6 +105,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       await page.evaluate(() => { state.agents = []; render(); });
       await page.emulateMedia({reducedMotion: "reduce"});
       await page.clock.runFor(100);
+      await page.clock.resume();
       for (const backdrop of [false, true]) {
         await page.evaluate(({mode, backdrop}) => {
           TychoAppearance.setPreference(mode);
@@ -97,12 +124,32 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
           assert.equal(selected, variant);
           assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
           const box = await page.locator("[data-now-mascot]").boundingBox();
-          assert(box.x >= 0 && box.x + box.width <= width && box.y + box.height <= 900);
+          assert(box.x >= 0 && box.x + box.width <= width + 1 && box.y + box.height <= 901, JSON.stringify({box,width, header:await page.locator(".app-header").boundingBox(),main:await page.locator("#view").boundingBox()}));
+          await settleLayout();
+          await checkCenter();
           if (captureDir) { fs.mkdirSync(captureDir, {recursive: true}); await page.screenshot({path: path.join(captureDir, `${width}-${mode}-${backdrop ? "photo" : "plain"}-${variant}-${selected}.png`)}); }
         }
+        const selected = await checkPair();
+        for (const size of [{width: 844, height: 390}, {width: 667, height: 320}, {width: 320, height: 568}, {width: 1440, height: 360}, {width, height: 900}]) {
+          await page.setViewportSize(size);
+          await settleLayout();
+          assert.equal(await page.locator("[data-now-mascot]").getAttribute("data-now-mascot"), selected, "resize retains the selected pair");
+          await checkCenter();
+          if (captureDir) await page.screenshot({path: path.join(captureDir, `resize-${width}-${mode}-${backdrop ? "photo" : "plain"}-${size.width}x${size.height}.png`)});
+        }
+        await page.setViewportSize({width: 390, height: 844});
+        const safeArea = await page.addStyleTag({content: ":root { --safe-area-top: 20px; } #bottom-nav { padding-bottom: 42px; }"});
+        await settleLayout();
+        await checkCenter();
+        assert.equal(await page.locator("[data-now-mascot]").getAttribute("data-now-mascot"), selected, "safe-area changes retain selection");
+        if (captureDir) await page.screenshot({path: path.join(captureDir, `safe-area-${width}-${mode}-${backdrop ? "photo" : "plain"}.png`)});
+        await safeArea.evaluate(node => node.remove());
+        await page.setViewportSize({width, height: 900});
+        await settleLayout();
       }
       assert.deepEqual(errors, []);
     } finally { await context.close(); }
   }
-  console.log("Now mascot: pairing, lifecycle, loading/error/work, desktop/mobile, Dark/Light and photo cases passed.");
+  if (captureDir) fs.writeFileSync(path.join(captureDir, "centering-checks.json"), JSON.stringify(centeringChecks, null, 2));
+  console.log(`Now mascot: pairing, lifecycle, loading/error/work and ${centeringChecks.length} desktop/mobile/landscape/resize/safe-area geometry cases passed.`);
 };

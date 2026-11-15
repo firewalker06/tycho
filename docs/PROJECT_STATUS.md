@@ -219,7 +219,10 @@ Settings stays in the context menu.
 Schedule save, cancel, and Back actions return to Schedules. The Now empty state
 uses one approved FRED expression and its bound caption at a time (card #881).
 Selection survives polling, rotates without repeats every 30 visible seconds,
-and stays static under reduced motion. See [Now empty state](NOW_EMPTY_STATE.md).
+and stays static under reduced motion. The image is centered in the remaining
+viewport below the header, beside the desktop sidebar, and above mobile navigation;
+its caption remains below it, including in short landscape windows.
+See [Now empty state](NOW_EMPTY_STATE.md).
 
 ## Manual queue delivery with inactive schedules
 
