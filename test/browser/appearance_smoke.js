@@ -122,9 +122,9 @@ module.exports = async function appearanceSmoke({ browser, baseUrl, agentKey, ca
           const image = new Image(); image.src = source; await image.decode();
           return { image: image.width > 0, opacity: Number(style.opacity), input: style.pointerEvents, animation: style.animationName, style: document.documentElement.dataset.backdrop, position: style.backgroundPositionX.split(",").at(-1).trim() };
         });
-        assert(scene.image && scene.opacity > 0.5, "the backdrop artwork must decode and be visible");
+        assert(scene.image && scene.opacity === 0.2, "the backdrop artwork must decode and be visible");
         assert.equal(scene.style, "photo");
-        if (device === "mobile") assert.equal(scene.position, "85%", "mobile crops toward the sun and scene features");
+        if (device === "mobile") assert.equal(scene.position, "50%", "mobile respects the centered focal default");
         assert.equal(scene.input, "none");
         assert.equal(scene.animation, "none", "reduced motion disables scene motion");
         await readable(page.locator(".message.assistant"));

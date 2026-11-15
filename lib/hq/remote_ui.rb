@@ -56,7 +56,7 @@ module HQ
       "/harness-logos/deepseek-icon.svg" => File.join(HARNESS_LOGO_ROOT, "deepseek-icon.svg")
     }.freeze
     THEME_PHOTO_ROOT = File.join(ROOT, "assets", "theme-photos")
-    THEME_PHOTO_ASSETS = %w[senggigi-beach.webp depok-city.webp waking-up.webp cyberpunk.webp CREDITS.txt CC-BY-3.0.txt CC-BY-SA-4.0.txt provenance.json].to_h do |name|
+    THEME_PHOTO_ASSETS = %w[senggigi-beach.webp depok-city.webp waking-up.webp cyberspace.webp cyberpunk.webp CREDITS.txt CC-BY-3.0.txt CC-BY-SA-4.0.txt provenance.json].to_h do |name|
       ["/theme-photos/#{name}", File.join(THEME_PHOTO_ROOT, name)]
     end.freeze
     ASSET_VERSION_PATHS = [

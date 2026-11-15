@@ -121,11 +121,19 @@ module RemoteUIAppearanceTest
         assert.equal(denied.appearance.getState().persistent, false);
         const scenes = fixture("dark");
         const photos = scenes.appearance.getThemeState().examples;
-        assert.deepEqual(photos.map(theme => [theme.name, theme.mode]), [["Senggigi Beach", "light"], ["Depok City", "dark"], ["Waking Up", "light"], ["Cyberpunk", "dark"]]);
+        assert.deepEqual(photos.map(theme => [theme.name, theme.mode]), [["Senggigi Beach", "light"], ["Depok City", "dark"], ["Waking Up", "light"], ["Cyberspace", "dark"]]);
         for (const photo of photos) {
           scenes.appearance.setTheme(photo.mode, photo.id);
           scenes.appearance.setPreference(photo.mode);
           assert.equal(scenes.appearance.getThemePhoto().url, photo.photo);
+          assert.equal(scenes.appearance.getThemePhoto().intensity, .2);
+          assert.equal(scenes.appearance.getThemePhoto().fade, .5);
+          scenes.appearance.updateThemePhoto({intensity:.35, fade:.8, x:25, y:70});
+          const adjusted = fixture(photo.mode, { savedThemes: scenes.values.get("hq.remote.themes.v1") });
+          assert.equal(adjusted.appearance.getThemePhoto().intensity, .35);
+          assert.equal(adjusted.appearance.getThemePhoto().fade, .8);
+          assert.equal(adjusted.appearance.getThemePhoto().x, 25);
+          assert.throws(() => scenes.appearance.updateThemePhoto({fade:2}));
           scenes.appearance.preferUserImage(photo.mode);
           assert.equal(scenes.appearance.getThemePhoto().overridden, true);
           const restored = fixture(photo.mode, { savedThemes: scenes.values.get("hq.remote.themes.v1") });

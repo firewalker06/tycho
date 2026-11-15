@@ -10,12 +10,10 @@ the separate application code remains under its own license.
 - Senggigi Beach: Midori's own-work photograph of the actual beach.
 - Depok City: Mfikriansori's own-work photograph of Jalan Margonda in Depok,
   darkened for the Dark theme. This is not represented as a night photograph.
-- Waking Up and Cyberpunk: fictional generated artwork from one built-in
+- Waking Up and Cyberspace: fictional generated artwork from one built-in
   image_gen call per asset, inspected before WebP conversion. No CLI/API
   fallback or unrelated stock image was used. Exact model revision is not
   exposed by the built-in tool. Original PNGs remain at the tool's default
   generated-image destination; production uses the bundled WebP copies.
 
-The UI softens backdrop display with CSS-only blur, color/contrast adjustment,
-and a light palette tint. Bundled files and their hashes are unchanged; previews
-and downloads remain unfiltered.
+Image options use 20% strength, 50% edge vignette and centered focal position by default. Explicit saved settings remain unchanged. Vignette fades image edges toward the palette background; no CSS blur or center wash is applied. Original images remain unchanged. The old Cyberpunk asset and its separate provenance remain packaged for compatibility; the visible theme is Cyberspace with generated space-station artwork.

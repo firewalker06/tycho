@@ -3,14 +3,14 @@ const fs = require("node:fs");
 const path = require("node:path");
 module.exports = async function({ page, context, request, captures }) {
   await page.route("**/*", route => new URL(route.request().url()).origin === new URL(page.url()).origin ? route.continue() : route.abort());
-  for (const file of ["senggigi-beach.webp","depok-city.webp","waking-up.webp","cyberpunk.webp","CREDITS.txt","CC-BY-3.0.txt","CC-BY-SA-4.0.txt"]) {
+  for (const file of ["senggigi-beach.webp","depok-city.webp","waking-up.webp","cyberspace.webp","CREDITS.txt","CC-BY-3.0.txt","CC-BY-SA-4.0.txt"]) {
     const response = await request("GET", `/theme-photos/${file}`, undefined, false);
     assert.equal(response.status,200,"Bundled asset needs no library credential");
     assert((await response.arrayBuffer()).byteLength > 1000);
   }
   const before = await (await request("GET", "/appearance/images")).json();
   const examples = await page.evaluate(() => TychoAppearance.getThemeState().examples);
-  assert.deepEqual(examples.map(t => [t.name, t.mode]), [["Senggigi Beach","light"],["Depok City","dark"],["Waking Up","light"],["Cyberpunk","dark"]]);
+  assert.deepEqual(examples.map(t => [t.name, t.mode]), [["Senggigi Beach","light"],["Depok City","dark"],["Waking Up","light"],["Cyberspace","dark"]]);
   for (const theme of examples) {
     for (const width of [1920,1440,1024,390]) {
       await page.setViewportSize({width,height:width === 390 ? 844 : 1100});
@@ -21,9 +21,25 @@ module.exports = async function({ page, context, request, captures }) {
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "No horizontal overflow");
       if (captures) { fs.mkdirSync(captures,{recursive:true}); await page.screenshot({path:path.join(captures,`photo-${theme.id.slice(8)}-${width}.png`)}); }
     }
+    await page.locator(".theme-image-settings details").evaluate(n=>{n.open=true;});
+    const strength=page.locator('[data-theme-image-setting="intensity"]');
+    const vignette=page.locator('[data-theme-image-setting="fade"]');
+    assert.equal(await strength.inputValue(),"0.2");
+    assert.equal(await vignette.inputValue(),"0.5");
+    assert.equal(await vignette.getAttribute("aria-label"),"Vignette");
+    assert(await strength.isEnabled());
+    const retained=await page.evaluate(()=>TychoBackdropImages.getState().image);
+    await strength.focus();await strength.press("ArrowRight");
+    await page.waitForFunction(()=>TychoBackdropImages.getState().themePhoto?.intensity===.25);
+    await vignette.focus();await vignette.press("ArrowRight");
+    await page.waitForFunction(()=>TychoBackdropImages.getState().themePhoto?.fade===.55);
+    if(retained)assert.deepEqual(await page.evaluate(()=>{const i=TychoBackdropImages.getState().image;return[i.intensity,i.fade,i.x,i.y]}),[retained.intensity,retained.fade,retained.x,retained.y]);
     await page.reload();
     await page.getByRole("button", {name:"Configuration",exact:true}).click();
     await page.waitForFunction(id => TychoBackdropImages.getState().themePhoto?.id === id, theme.id);
+    assert.equal(await page.evaluate(()=>TychoBackdropImages.getState().themePhoto.intensity),.25);
+    assert.equal(await page.evaluate(()=>TychoBackdropImages.getState().themePhoto.fade),.55);
+    await page.evaluate(()=>TychoBackdropImages.update({intensity:.2,fade:.5,x:50,y:50}));
     if (await page.locator("[data-theme-use-saved]").isVisible()) {
       await page.locator("[data-theme-use-saved]").click();
       await page.waitForFunction(() => !TychoBackdropImages.getState().themePhoto);

@@ -10842,16 +10842,10 @@ body:has(.inquiry-form-full-screen) {
   opacity: var(--theme-raster-opacity);
   animation: none;
 }
-/* Filter only the fixed image layer. Text and controls keep their own sharp surfaces. */
+/* The original image stays sharp. Only the edges fade toward the palette canvas. */
 :root[data-backdrop="photo"]:not([data-image-backdrop="ready"]) body::before {
   background-image: var(--theme-backdrop-image);
-}
-:root[data-appearance]:is([data-backdrop="photo"], [data-image-backdrop="ready"]) body::before {
-  inset: -12px;
-  filter: blur(3px) saturate(0.78) contrast(0.9) brightness(1.02);
-}
-:root[data-appearance="dark"]:is([data-backdrop="photo"], [data-image-backdrop="ready"]) body::before {
-  filter: blur(3px) saturate(0.78) contrast(0.9) brightness(0.88);
+  background-position: var(--theme-photo-position, 50% 50%);
 }
 :root:is([data-backdrop="photo"], [data-image-backdrop="ready"]) body::after {
   content: "";
@@ -10859,29 +10853,14 @@ body:has(.inquiry-form-full-screen) {
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  background: color-mix(in srgb, var(--bg) 10%, transparent);
+  background: radial-gradient(ellipse at center, transparent 30%, var(--bg) 100%);
+  opacity: var(--theme-photo-vignette, 0.5);
 }
 :root[data-image-backdrop="ready"] body::after {
-  background: color-mix(in srgb, var(--bg) var(--theme-raster-tint, 10%), transparent);
+  opacity: var(--theme-raster-vignette, 0.5);
 }
-:root:is([data-backdrop="photo"], [data-image-backdrop="ready"]) .message.run_summary {
-  background: var(--panel);
-}
-:root:is([data-backdrop="photo"], [data-image-backdrop="ready"]) .agent-summary-viewer {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px;
-}
-:root:is([data-backdrop="photo"], [data-image-backdrop="ready"]) .settings-section-heading {
-  background: var(--panel);
-  border-radius: 8px;
-  padding: 8px;
-}
-:root:is([data-backdrop="photo"], [data-image-backdrop="ready"]) .content :is(.message-group > summary, .message-group > summary > span:last-child, .message:not(.user) .message-time) {
-  color: var(--muted);
-}
-:root:is([data-backdrop="photo"], [data-image-backdrop="ready"]) .content .message-time { opacity: 1; }
+:root:is([data-backdrop="photo"], [data-image-backdrop="ready"]) .content :is(.message-group > summary, .message-group > summary > span:last-child) { color: var(--muted); }
+:root:is([data-backdrop="photo"], [data-image-backdrop="ready"]) .content .message-time { opacity: 1; color: var(--muted); }
 :root[data-image-backdrop="ready"] :is(.bottom-nav, .sidebar-settings-link, .message-group > summary) { background: var(--panel); }
 .theme-image-preview { width: min(100%, 600px); aspect-ratio: 1.8; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .theme-image-preview img { display: block; width: 100%; height: 100%; object-fit: cover; }

@@ -31,15 +31,12 @@ License: Generated product artwork; no third-party stock-photo license claimed.
 Changes: Inspected generated PNG, stripped metadata, encoded as optimized WebP. No scene elements changed.
 SHA-256: 57e9e71be8e5503705615b8bc40d0b620c9c722750b5502403f75b81c9aad6df
 
-Cyberpunk
-Creator: Generated with the built-in OpenAI image_gen tool
-Source: Generated for this application; not a stock photo or real-location claim.
-generation_tool: image_gen.imagegen (GPT Image family; exact model revision not exposed by the tool)
-generation_prompt: Photorealistic fictional cinematic cyberpunk city at night, cyan and magenta neon on rain-wet surfaces, blue-black buildings and mist. Landscape 16:9, calm dark center, detailed buildings and neon at edges. No visible writing, logos, brands or watermark. No identifiable real location.
+Cyberspace
+Creator: Generated with the built-in OpenAI image_gen tool (GPT Image family; exact model revision is not exposed).
+Source: Original fictional space station artwork generated for Tycho. Not a stock photo or real-location claim.
 License: Generated product artwork; no third-party stock-photo license claimed.
-Changes: Inspected generated PNG, stripped metadata, encoded as optimized WebP. No scene elements changed.
-SHA-256: f5b218588fdd409539d1ab943e74a178da9e936436c49ed8431b5b014603a611
+Generation: One built-in image_gen call. Full prompt and hashes are in provenance.json.
+Changes: Inspected original PNG, stripped metadata and encoded as optimized WebP. No scene elements changed.
+Compatibility: The existing builtin:cyberpunk theme identifier remains valid. Original cyberpunk.webp is preserved; its full provenance is in legacy-cyberpunk-provenance.json.
 
-The Depok photo adaptation is CC BY-SA 4.0; the Senggigi photo is CC BY 3.0. These photo licenses are separate from the application code license. Attribution is retained in the app Photo credits link and this packaged file. No creator endorsement is implied. Full external license texts are bundled beside this file.
-
-UI display: backdrop images use CSS-only blur, color/contrast adjustment, and a light uniform palette tint. This does not change the bundled image files. Previews and downloads stay unfiltered.
+UI display: Image strength controls opacity. Vignette fades only the edges toward the palette canvas. New choices use 20% strength, 50% vignette and 50% horizontal/vertical focal position. Saved adjustments are kept. No CSS blur, center fade or baked preview treatment is applied. Originals and downloads are unchanged.

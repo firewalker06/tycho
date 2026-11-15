@@ -1,0 +1,16 @@
+{
+  "id": "cyberpunk",
+  "name": "Cyberpunk",
+  "mode": "dark",
+  "creator": "Generated with the built-in OpenAI image_gen tool",
+  "source": "Generated for this application; not a stock photo or real-location claim.",
+  "license": "Generated product artwork; no third-party stock-photo license claimed.",
+  "generation_tool": "image_gen.imagegen (GPT Image family; exact model revision not exposed by the tool)",
+  "generation_calls": 1,
+  "generation_prompt": "Use case: photorealistic-natural. Asset type: bundled landscape photo background for the Cyberpunk dark theme of a software application. Create a fictional cinematic cyberpunk city at night, photorealistic architectural detail, restrained cyan and magenta neon light on rain-wet surfaces, deep blue-black buildings and atmospheric mist. Wide landscape composition, ideally 16:9. A calm dark center behind interface panels, with the brightest detailed buildings and neon accents at the edges. No visible writing, letters, logos, brands or watermarks. No identifiable real location. This is generated fictional city photography, not an image of Depok or another named city. Finished raster artwork with coherent perspective and realistic lighting, suitable as a calm dark application backdrop.",
+  "changes": "Inspected generated PNG, stripped metadata, encoded as optimized WebP. No scene elements changed.",
+  "original_sha256": "b19befbee42540d642ec7e1cce4f8e3e69cb74158bc980f232c62131d004d09b",
+  "file": "cyberpunk.webp",
+  "sha256": "f5b218588fdd409539d1ab943e74a178da9e936436c49ed8431b5b014603a611",
+  "bytes": 185594
+}
