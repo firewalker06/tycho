@@ -11017,7 +11017,7 @@ end
 Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
   fixture = write_fixture(dir)
   metadata_fixture = write_project_metadata_lifecycle_fixture(dir, fixture) if ENV["TYCHO_REMOTE_UI_METADATA_LIFECYCLE_ONLY"] == "1"
-  agent_key = write_delegated_summary_fixture(fixture) if ENV["TYCHO_REMOTE_UI_DELEGATED_SUMMARY_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_BUTTON_BORDERS_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_UTILITY_BORDERS_ONLY"] == "1"
+  agent_key = write_delegated_summary_fixture(fixture) if ENV["TYCHO_REMOTE_UI_ACTION_STRIP_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_DELEGATED_SUMMARY_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_BUTTON_BORDERS_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_UTILITY_BORDERS_ONLY"] == "1"
   if ENV["TYCHO_REMOTE_UI_SUMMARY_IDLE_STOP_ONLY"] == "1"
     agent_key = "web-agent-summary-idle-fixture"
     logs_dir = fixture.fetch(:logs_dir)
@@ -11249,6 +11249,15 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     end
     if ENV["TYCHO_REMOTE_UI_LINKED_AGENTS_ONLY"] == "1"
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "linked_agents_smoke")
+      next
+    end
+    if ENV["TYCHO_REMOTE_UI_MOBILE_NAV_ONLY"] == "1"
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "mobile_navigation_smoke")
+      next
+    end
+    if ENV["TYCHO_REMOTE_UI_ACTION_STRIP_ONLY"] == "1"
+      associate_agent_pull_request(fixture.fetch(:logs_dir), agent_key)
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "mobile_action_strip_smoke")
       next
     end
     if ENV["TYCHO_REMOTE_UI_FOCUS_ONLY"] == "1"

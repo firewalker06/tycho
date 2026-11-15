@@ -1887,6 +1887,28 @@ select {
   height: 16px;
 }
 
+@media (max-width: 1099px) {
+  .bottom-nav button {
+    gap: 0;
+  }
+
+  .bottom-nav .nav-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .bottom-nav .nav-mark .ui-icon {
+    width: 28px;
+    height: 28px;
+  }
+}
+
 .summary-card,
 .detail-card,
 .field-card,
@@ -6803,6 +6825,10 @@ details.queue-read-block:not([open]) > .queue-read-body {
   gap: 8px;
 }
 
+.agent-action-track {
+  display: contents;
+}
+
 .conversation-catchup-actions {
   display: inline-flex;
   flex-wrap: wrap;
@@ -7091,10 +7117,47 @@ details.queue-read-block:not([open]) > .queue-read-body {
   }
 }
 
-@media (max-width: 520px) {
+@media (max-width: 640px) {
   .agent-floating-actions {
-    justify-content: flex-start;
+    display: block;
+    min-width: 0;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    padding: 4px;
+    margin: -4px;
   }
+
+  .agent-floating-actions::-webkit-scrollbar {
+    display: none;
+  }
+
+  .agent-floating-actions.is-clipped-left {
+    /* Fade the content itself so any theme or backdrop stays visible beneath it. */
+    mask-image: linear-gradient(to right, transparent, black 16px);
+  }
+
+  .agent-action-track {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    width: max-content;
+    min-width: 100%;
+  }
+
+  .agent-action-track .agent-floating-pill {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    scroll-margin-inline: 20px;
+  }
+
+  .agent-action-track .ui-icon {
+    flex-shrink: 0;
+  }
+}
+
+@media (max-width: 520px) {
 
   .agent-dock:has(.inquiry-form) {
     max-height: min(72dvh, 620px);
