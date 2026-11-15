@@ -10872,3 +10872,31 @@ body:has(#confirmation-dialog[open]) [data-project-deletion-status] {
 .settings-appearance :is([data-theme-guide-status], [data-appearance-status], [data-theme-removal-result], [data-theme-image-description], [data-theme-image-status]):empty { display: none; }
 .theme-agent-guide pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 28rem; overflow-y: auto; }
 .theme-image-settings > details[open] { display: grid; gap: 12px; }
+
+/* Keep Appearance readable without changing the surrounding Settings layout. */
+.settings-appearance { container-type: inline-size; max-inline-size: 70rem; overflow-wrap: anywhere; }
+.appearance-columns { display: grid; gap: 28px; align-items: start; }
+.appearance-columns > *, .appearance-palette-fields > * { min-inline-size: 0; }
+.appearance-columns > section { inline-size: 100%; max-inline-size: 42rem; }
+.appearance-palette-settings { align-content: start; }
+.appearance-palette-fields { display: grid; gap: 16px; }
+.settings-appearance #appearance-preference { max-inline-size: 22rem; }
+.settings-appearance .appearance-startup { max-inline-size: 42rem; }
+.settings-appearance .theme-examples { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.settings-appearance .theme-image-preview { max-inline-size: 100%; }
+.settings-appearance .theme-agent-guide { display: grid; padding-block-end: 16px; border-block-end: 1px solid var(--border); }
+.settings-appearance .theme-agent-guide pre { max-inline-size: 80ch; }
+.settings-appearance :is(input, select, textarea) { min-inline-size: 0; max-inline-size: 100%; }
+.settings-appearance input[type="range"] { margin-inline: 0; }
+
+@container (min-width: 36rem) {
+  .appearance-palette-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settings-appearance .theme-examples { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .settings-appearance .theme-agent-guide { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+  .settings-appearance .theme-agent-guide > :is(details, p) { grid-column: 1 / -1; }
+}
+
+@container (min-width: 54rem) {
+  .appearance-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 32px; }
+  .settings-appearance .theme-examples { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

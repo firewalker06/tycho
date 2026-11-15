@@ -311,7 +311,10 @@ preview tiles, scene copying, reduced motion, and old palette-only themes.
 
 Settings → Configuration → Appearance has a visible **Ask an agent to make a
 theme** guide with **Copy agent guide** and **Read guide**. The palette editor
-and image adjustment fields are separate disclosures. The guide contains the
+and image adjustment fields are separate disclosures. On wide screens, Palette
+and Image backdrop use two aligned columns. The guide stays above both groups.
+The form uses bounded control widths and stacks the groups on narrower screens.
+The visual order follows DOM and keyboard order; the rest of Settings is unchanged. The guide contains the
 palette roles, apply steps, CLI commands, API contract, limits, and storage scope.
 
 **Image backdrop** selects an image from this host's shared server library.

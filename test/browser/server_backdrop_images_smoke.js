@@ -127,20 +127,7 @@ async function main() {
     assert.equal(await page.locator("[data-theme-mode=dark]").inputValue(), "agent-theme");
     await page.locator("[data-theme-load=dark]").click(); assert.equal(JSON.parse(await editor.inputValue()).id, "agent-theme");
     await page.getByText("Edit or import theme JSON", { exact: true }).click();
-    for (const width of [1440, 390]) for (const mode of ["dark", "light"]) {
-      await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
-      await page.locator("[data-appearance-preference]").selectOption(mode);
-      await page.locator("[data-theme-guide-copy]").scrollIntoViewIfNeeded();
-      await page.locator("[data-theme-guide-copy]").click();
-      assert.equal(await page.evaluate(() => navigator.clipboard.readText()), guide);
-      assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "No horizontal overflow");
-      if (captures) {
-        fs.mkdirSync(captures, { recursive: true });
-        await page.screenshot({ path: path.join(captures, `theme-settings-${width}-${mode}.png`) });
-        await page.locator(".theme-image-settings").scrollIntoViewIfNeeded();
-        await page.screenshot({ path: path.join(captures, `theme-image-library-${width}-${mode}.png`) });
-      }
-    }
+    const layoutResults = await require("./appearance_layout_smoke")({ page, captures, guide });
     // The read disclosure is the fallback when clipboard permission is denied.
     await page.evaluate(() => { window.fixtureClipboardWrite = navigator.clipboard.writeText.bind(navigator.clipboard); navigator.clipboard.writeText = () => Promise.reject(new Error("fixture denied")); });
     await page.locator("[data-theme-guide-copy]").click();
@@ -187,7 +174,7 @@ async function main() {
       if (captures) await page.screenshot({ path: path.join(captures, `theme-danger-zone-${width}.png`) });
     }
     assert.equal(errors.length, 0, errors.join("\n"));
-    console.log(JSON.stringify({ result: "passed", checks: ["authenticated API limits and invalid data", "CLI peer upload/list/replace/remove", "broker image read", "copyable guide desktop/mobile dark/light", "browser selection reload and version refresh", "offline cache and auth rejection", "explicit legacy image migration", "browser file upload", "theme import/export and scene selection", "confirmed shared removal", "Focus and Danger zone preservation"], screenshots: captures || null }, null, 2));
+    console.log(JSON.stringify({ result: "passed", checks: ["authenticated API limits and invalid data", "CLI peer upload/list/replace/remove", "broker image read", "copyable guide desktop/mobile dark/light", "browser selection reload and version refresh", "offline cache and auth rejection", "explicit legacy image migration", "browser file upload", "theme import/export and scene selection", "confirmed shared removal", "Focus and Danger zone preservation", "responsive Appearance layout, advanced errors, keyboard and drafts"], layout_cases: layoutResults.length, screenshots: captures || null }, null, 2));
     await context.close();
   } finally { await browser.close(); }
 }
