@@ -73,6 +73,10 @@ async function main() {
     await page.route("**/appearance/images", route => route.fulfill({ status: 401, contentType: "application/json", body: '{"error":"Unauthorized"}' }));
     await page.evaluate(() => window.TychoBackdropImages.refresh());
     assert.equal(await page.locator("html").getAttribute("data-image-backdrop"), "none");
+    await page.unroute("**/appearance/images");
+    await page.route("**/appearance/images", route => route.abort());
+    await page.evaluate(() => window.TychoBackdropImages.refresh());
+    assert.equal(await page.locator("html").getAttribute("data-image-backdrop"), "none", "Offline fallback cannot bypass a prior auth rejection");
     await page.unroute("**/appearance/images"); await page.evaluate(() => window.TychoBackdropImages.refresh());
     cli("remove", "agent-landscape", "--server", "fixture-peer");
     await page.evaluate(() => window.TychoBackdropImages.refresh());
