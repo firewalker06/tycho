@@ -157,5 +157,6 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     await context.close();
   }
   if (captureDir) fs.writeFileSync(path.join(captureDir, "action-strip-results.json"), JSON.stringify(results, null, 2));
+  await require("./mobile_navigation_smoke")({ browser, baseUrl, agentKey, captureDir });
   console.log("mobile_action_strip_smoke: ok (Dark/Light, 320/390/640/844/1440, states, long labels, wheel/touch/keyboard, polling, draft/selection, resize, fade)");
 };
