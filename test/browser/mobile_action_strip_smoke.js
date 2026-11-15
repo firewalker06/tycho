@@ -104,8 +104,15 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     const cdp = await context.newCDPSession(page);
     const box = await strip.boundingBox();
     await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: box.x + box.width - 25, y: box.y + box.height / 2 }] });
-    for (let i = 1; i <= 6; i++) await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: box.x + box.width - 25 - i * 25, y: box.y + box.height / 2 }] });
+    // Give Chrome a rendered frame per native move; back-to-back CDP events
+    // can be coalesced before the compositor begins a touch scroll.
+    await frames();
+    for (let i = 1; i <= 6; i++) {
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: box.x + box.width - 25 - i * 25, y: box.y + box.height / 2 }] });
+      await frames();
+    }
     await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await frames();
     await page.waitForFunction(() => document.querySelector("[data-agent-floating-actions]").scrollLeft > 1);
     await frames(); assert((await geometry()).mask.includes("linear-gradient"));
     await cdp.detach();
