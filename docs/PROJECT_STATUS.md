@@ -21,10 +21,13 @@ validated color roles map to semantic and legacy UI tokens. Settings includes
 an agent prompt guide; [theme documentation](REMOTE_UI_APPEARANCE.md) defines
 the format, storage scope, and contrast checks. Custom palettes apply in the
 head bootstrap before CSS, follow System mode, and sync across same-origin
-tabs without replacing drafts. Four scene examples (two Dark, two Light) add
+tabs without replacing drafts. Four bundled themes (two Dark, two Light) add
 visible SVG backdrops: Synthwave Sunset, Aurora Night, Paper Garden, and Coastal
-Morning. Settings has preview tiles and editable example copies. Custom JSON
-can choose a scene, three colors, intensity, and still/slow motion. Reduced
+Morning. The Themes gallery shows bundled and imported custom palettes with live
+previews, direct custom-theme deletion, and editable bundled copies. Import
+updates an existing id in place; deletion preserves unrelated themes and
+server images. The gallery refreshes on import and cross-tab updates. Custom JSON
+can choose a vector backdrop, three colors, intensity, and still/slow motion. Reduced
 motion stops drift; old palette-only themes keep their existing appearance.
 Raster backdrops now use a bounded shared server library. Agents can upload,
 list, replace, and remove PNGs through `tycho appearance images`, locally or

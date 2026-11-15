@@ -170,8 +170,10 @@ switch color mode. Select Light to preview it.
 Use **Load dark JSON** or **Load light JSON** to edit or copy the selected
 custom palette. For a built-in palette, these buttons load a template for that
 mode; set its colors before saving. Copy the JSON to transfer it to another
-browser. **Remove selected custom dark/light theme** removes that palette and
-restores the default for that mode. Selecting a default alone keeps custom
+browser. **Delete** on a custom tile, or **Delete selected theme** by a selector,
+removes that palette. Deleting a selected theme restores Dracula for Dark or
+Nord for Light. Deleting an unselected theme keeps the current selection.
+Other themes and server images stay unchanged. Selecting a default alone keeps custom
 palettes available.
 
 A theme has this format (all twelve color roles are required):
@@ -236,12 +238,12 @@ the defaults. If storage is full or blocked, changes apply for this tab and
 Settings reports the limit. Clearing browser storage removes custom themes.
 The head bootstrap applies the selected palette before CSS and app startup.
 
-## Scene backdrops and four example themes
+## Themes gallery and vector backdrops
 
 The reference in [Card 877](https://fizzy.startkit.tech/1/cards/877) and the
 [ClaudeDevs video](https://x.com/ClaudeDevs/status/2121392666244186327) shows
-scene artwork behind the conversation, including a striped sunset and neon
-grid. Tycho's examples use original, code-drawn vector scenes. No reference
+backdrop artwork behind the conversation, including a striped sunset and neon
+grid. Tycho's examples use original, code-drawn vector backdrops. No reference
 images or video are bundled or fetched by the UI.
 
 | Example | Mode | Backdrop |
@@ -251,19 +253,32 @@ images or video are bundled or fetched by the UI.
 | Paper Garden | Light | Sage leaves, curved stems, warm sun, paper-colored ground |
 | Coastal Morning | Light | Blue wave layers, gold sun, distant birds |
 
-All four are available without import. In Settings → Configuration → Appearance,
-select a theme from the Dark/Light selector, or use a **Scene examples** tile.
+The **Themes** gallery includes bundled and imported custom themes. Saving a
+new theme adds its tile immediately. Saving the same id updates one tile;
+a mode change for an existing id is rejected by the existing validation.
+Custom tiles appear first, with the most recently saved theme first. A bounded
+scroll area keeps the gallery readable when many themes are saved. Updates,
+selection, and deletion persist on reload and update other tabs at this origin.
+
+Palette-only tiles preview canvas, surface, and accent colors. Vector-backed
+tiles preview their vector backdrop. Independent image choices are not part
+of these previews. Custom tiles have a keyboard-accessible **Delete** button;
+bundled tiles have no delete action. Dracula and Nord remain available in
+the selectors, including after selected-theme deletion.
+
+All four bundled vector themes are available without import. In Settings → Configuration → Appearance,
+select a theme from the Dark/Light selector, or use a **Themes** tile.
 A tile selects its theme and its Color mode so you can try it immediately.
 The other mode's choice is retained. Dracula and Nord remain the defaults and
-have no scene. Existing palette-only custom themes retain their selected ids
+have no vector backdrop. Existing palette-only custom themes retain their selected ids
 and appearance. The examples are separate from the 30-theme custom limit and
 cannot be removed. Their reserved ids start with `builtin:`.
 
-Select an example, then open the prompt guide and use **Load dark JSON** or
+Select an example, then open **Edit or import theme JSON** and use **Load dark JSON** or
 **Load light JSON**. This loads an editable copy with a new custom id, such as
 `synthwave-copy`. Change the id again if you want to keep an existing copy.
 Change its colors or backdrop values and select **Save theme**. The built-in
-example stays available. Copying and importing this JSON transfers the scene
+example stays available. Copying and importing this JSON transfers the vector backdrop
 settings as well as the palette.
 
 Add this optional top-level field beside `colors` in any custom theme JSON:
@@ -285,14 +300,14 @@ Add this optional top-level field beside `colors` in any custom theme JSON:
   waves, and sun/shore.
 - `intensity`: a number from 0 to 1. Zero hides the artwork; 1 shows its full
   strength. The palette's canvas remains underneath.
-- `motion`: `none` for a still scene, or `slow` for a 28-second eased drift.
+- `motion`: `none` for a still backdrop, or `slow` for a 28-second eased drift.
   The device's reduced-motion setting stops this movement.
 
 Remove the `backdrop` field to return a custom theme to a flat canvas. Updating
 an existing custom id can add or remove a backdrop. The same browser storage,
-cold-load, System-mode, cross-tab, and draft-preservation rules apply. Scene
+cold-load, System-mode, cross-tab, and draft-preservation rules apply. Backdrop
 art stays behind controls and text panels and cannot receive clicks. Mobile
-uses a crop that keeps the right-hand scene visible. All scenes are local SVG
+uses a crop that keeps the right-hand artwork visible. All vector backdrops are local SVG
 backgrounds; JSON cannot supply CSS, SVG markup, asset paths, or network URLs.
 
 Example agent prompt for a backdrop:
@@ -302,10 +317,10 @@ Example agent prompt for a backdrop:
 > hex colors, intensity 0.65, and motion slow. Use a new id and name. Return
 > valid theme JSON only. Do not change application code.
 
-Check scene strength on desktop and mobile, especially text outside cards,
+Check backdrop strength on desktop and mobile, especially text outside cards,
 focus, and disabled controls. The importer checks the field format, not visual
-contrast. Use the existing appearance smoke command to verify all four scenes,
-preview tiles, scene copying, reduced motion, and old palette-only themes.
+contrast. Use the existing appearance smoke command to verify all four bundled themes,
+preview tiles, theme copying, reduced motion, and old palette-only themes.
 
 ## Server image backdrops
 
@@ -346,7 +361,7 @@ then choose the uploaded image in **Image backdrop**. Refresh also runs every
 30 seconds while the page is visible and when it regains focus. Uploading
 with the same id replaces an image. Existing selections of that id use the
 replacement on the next successful refresh. **Clear selection** restores the
-selected palette/vector scene in this browser only. **Delete from server**
+selected palette/vector backdrop in this browser only. **Delete from server**
 requires confirmation and removes the shared image for all users. CLI removal
 is explicit and idempotent.
 
@@ -389,7 +404,7 @@ the next successful reconciliation; the selection remains visible as missing
 until cleared or replaced. A network failure can use the last cached selection.
 An explicit authentication rejection suppresses server image rendering until
 a successful authenticated refresh. Missing or damaged data falls back to the
-palette/vector scene and shows a recovery message. The server does not promise
+palette/vector backdrop and shows a recovery message. The server does not promise
 revocation of bytes that a browser already downloaded.
 
 ### Existing local images and transfer
@@ -402,7 +417,7 @@ normalized raster with its correct extension.
 
 Palette/vector JSON exports contain no image references, bytes, paths, or URLs.
 Importing JSON preserves an existing image choice. Clear that choice to see an
-imported scene. To move a complete look to another server, copy the palette
+imported backdrop. To move a complete look to another server, copy the palette
 JSON, download the raster, upload it to that server, then select it and set its
 adjustments there. An image is not silently resolved against an unrelated
 server library. Browser data deletion removes choices and caches, while server
