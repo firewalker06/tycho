@@ -221,7 +221,8 @@ uses one approved FRED expression and its bound caption at a time (card #881).
 Selection survives polling, rotates without repeats every 30 visible seconds,
 and stays static under reduced motion. The image is centered in the remaining
 viewport below the header, beside the desktop sidebar, and above mobile navigation;
-its caption remains below it, including in short landscape windows.
+its caption remains below it, including in short landscape windows. The transparent,
+unboxed container grows through the parent grid and flex layout with no border or shadow.
 See [Now empty state](NOW_EMPTY_STATE.md).
 
 ## Manual queue delivery with inactive schedules

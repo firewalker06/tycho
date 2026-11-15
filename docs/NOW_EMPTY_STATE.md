@@ -49,12 +49,17 @@ Run `TYCHO_REMOTE_UI_NOW_MASCOT_ONLY=1 bin/remote-ui-smoke` for the isolated Chr
 checks and desktop/mobile Dark/Light/plain/photo captures. Set
 `TYCHO_REMOTE_UI_CAPTURE_DIR` to an outside-repository evidence directory.
 
-The empty view fills only the remaining viewport below the measured header and
-above the measured mobile navigation (including its safe-area padding). Desktop
+The parent shell uses a viewport-sized grid with an intrinsic header row and a
+remaining-space main row. The main view is a flex column and the empty container
+grows with `flex: 1 1 0`; neither child has a fixed height or a viewport-height
+subtraction formula. Both children explicitly have a transparent background,
+zero border, and no shadow. Shell padding reserves the measured mobile
+navigation height (including its safe-area padding). Desktop
 centering uses the content column beside the sidebar. The image itself is at the
 horizontal and vertical center; the caption sits beneath it. Container-relative
 image sizing shrinks the art in short viewports. This replaces the fixed-height
-banner without adding document scrolling. Resize updates navigation clearance
+banner without adding document scrolling. Header wrapping flows through the
+intrinsic grid row; a size observer tracks dock changes. Resize updates navigation clearance
 without selecting a new record. Chrome checks also measure image-center error,
 caption clearance, document overflow, portrait, short landscape, and live resize
 across the sidebar breakpoint.

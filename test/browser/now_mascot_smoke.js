@@ -35,7 +35,11 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
           return { variant: document.querySelector("[data-now-mascot]").dataset.nowMascot,
             image: rect("[data-now-mascot] img"), caption: rect("[data-now-mascot] p"),
             content: rect("#view"), header: rect(".app-header"), nav: rect("#bottom-nav"),
-            width: innerWidth, height: innerHeight, scroll: document.documentElement.scrollHeight };
+            width: innerWidth, height: innerHeight, scroll: document.documentElement.scrollHeight,
+            surfaces: ["#view", "[data-now-mascot]"].map(selector => {
+              const style = getComputedStyle(document.querySelector(selector));
+              return {background: style.backgroundColor, border: style.borderTopWidth, shadow: style.boxShadow};
+            }) };
         });
         const {image, caption, content, header, nav, width, height, scroll} = geometry;
         const bottom = width < 1100 ? nav.top : height;
@@ -44,15 +48,16 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
         assert(caption.top >= image.bottom + 7 && caption.bottom <= bottom, "caption fits below image without overlapping navigation");
         assert(image.top >= header.bottom && image.right <= content.right && image.left >= content.left, "image stays inside the available content area");
         assert(scroll <= height + 1, "empty state does not add document scrolling");
+        assert(geometry.surfaces.every(s => s.background === "rgba(0, 0, 0, 0)" && s.border === "0px" && s.shadow === "none"), "empty view and container have no background, border, or shadow");
+        assert.equal(await page.locator("#view").evaluate(node => getComputedStyle(node).display), "flex", "main grows through flex layout");
+        assert.equal(await page.locator("[data-now-mascot]").evaluate(node => getComputedStyle(node).flexGrow), "1", "empty container flexes into the remaining grid row");
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "no horizontal overflow");
         centeringChecks.push({mode, ...geometry});
         return geometry;
       };
       const settleLayout = () => page.waitForFunction(() => {
         const expected = innerWidth < 1100 ? document.querySelector("#bottom-nav").getBoundingClientRect().height : 0;
-        const header = Math.ceil(document.querySelector(".app-header").getBoundingClientRect().height);
-        return Math.abs(parseFloat(document.querySelector("#view").style.getPropertyValue("--now-nav-height")) - expected) < 1 &&
-          parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--app-header-height")) === header;
+        return Math.abs(parseFloat(getComputedStyle(document.querySelector("#view")).getPropertyValue("--now-nav-height")) - expected) < 1;
       });
       let id = await checkPair();
       const first = id;
