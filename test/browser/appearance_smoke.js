@@ -117,20 +117,21 @@ module.exports = async function appearanceSmoke({ browser, baseUrl, agentKey, ca
         await page.locator("#prompt-input").fill(`${theme.name}: scene example.`);
         const scene = await page.evaluate(async () => {
           const style = getComputedStyle(document.body, "::before");
-          const source = style.backgroundImage.slice(5, -2);
+          const source = TychoBackdropImages.getState().themePhoto.url;
+          if (!style.backgroundImage.includes(source)) throw new Error("Active photo is missing from the backdrop");
           const image = new Image(); image.src = source; await image.decode();
-          return { image: image.width > 0, opacity: Number(style.opacity), input: style.pointerEvents, animation: style.animationName, style: document.documentElement.dataset.backdrop, position: style.backgroundPositionX };
+          return { image: image.width > 0, opacity: Number(style.opacity), input: style.pointerEvents, animation: style.animationName, style: document.documentElement.dataset.backdrop, position: style.backgroundPositionX.split(",").at(-1).trim() };
         });
-        assert(scene.image && scene.opacity > 0.5, "the backdrop artwork must decode and be visible");
-        assert.equal(scene.style, theme.backdrop.style);
-        if (device === "mobile") assert.equal(scene.position, "85%", "mobile crops toward the sun and scene features");
+        assert(scene.image && scene.opacity === 0.2, "the backdrop artwork must decode and be visible");
+        assert.equal(scene.style, "photo");
+        if (device === "mobile") assert.equal(scene.position, "50%", "mobile respects the centered focal default");
         assert.equal(scene.input, "none");
         assert.equal(scene.animation, "none", "reduced motion disables scene motion");
         await readable(page.locator(".message.assistant"));
         await readable(page.locator("#prompt-input"));
         await readable(page.locator(".bottom-nav button.active"));
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-        await capture(`scene-${theme.backdrop.style}-${device}`);
+        await capture(`photo-${theme.id.slice(8)}-${device}`);
         await page.goto(`${baseUrl}/ui#settings`);
         await page.locator("[data-theme-mode=dark]").waitFor();
         assert.equal(await page.locator(`[data-theme-mode=${theme.mode}]`).inputValue(), theme.id, "scene choice survives navigation");
@@ -143,6 +144,7 @@ module.exports = async function appearanceSmoke({ browser, baseUrl, agentKey, ca
       await capture(`scene-examples-${device}-settings`);
     }
     await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.evaluate(() => { TychoAppearance.setTheme("light", "builtin:coast"); TychoAppearance.setPreference("light"); });
     assert.equal(await page.evaluate(() => getComputedStyle(document.body, "::before").animationName), "theme-scene-drift");
     await page.emulateMedia({ reducedMotion: "reduce" });
     // Loading an example gives an editable custom copy, and keeps legacy palette-only themes.

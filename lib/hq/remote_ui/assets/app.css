@@ -5522,8 +5522,8 @@ details.queue-read-block:not([open]) > .queue-read-body {
 }
 
 .message.run_summary {
-  border-color: color-mix(in srgb, var(--accent-alt) 60%, var(--border));
-  background: color-mix(in srgb, var(--accent-alt) 12%, var(--panel));
+  border-color: color-mix(in srgb, var(--accent-alt, var(--accent)) 60%, var(--border));
+  background: color-mix(in srgb, var(--accent-alt, var(--accent)) 12%, var(--panel));
 }
 
 .summary-message-content {
@@ -6149,15 +6149,15 @@ details.queue-read-block:not([open]) > .queue-read-body {
   align-items: start;
   gap: 10px;
   min-width: 0;
-  border: 1px solid color-mix(in srgb, var(--accent-alt) 60%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--accent-alt, var(--accent)) 60%, var(--border));
   border-radius: 8px;
-  background: color-mix(in srgb, var(--accent-alt) 12%, var(--panel));
+  background: color-mix(in srgb, var(--accent-alt, var(--accent)) 12%, var(--panel));
   padding: 12px;
 }
 
 .summary-fallback-block > .status-mark {
   margin-top: 2px;
-  color: var(--accent-alt);
+  color: var(--accent-alt, var(--accent));
 }
 
 .summary-fallback-content {
@@ -10828,7 +10828,7 @@ body:has(.inquiry-form-full-screen) {
 }
 
 
-/* Raster images are browser-local, still, and independent of the selected palette. */
+/* Raster selection is browser-local; image ownership belongs to the server. */
 :root[data-appearance][data-image-backdrop="ready"] body { isolation: isolate; }
 :root[data-appearance][data-image-backdrop="ready"] body::before {
   content: "";
@@ -10836,12 +10836,31 @@ body:has(.inquiry-form-full-screen) {
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  background-image: radial-gradient(ellipse at center, color-mix(in srgb, var(--bg) var(--theme-raster-fade), transparent), transparent 80%), var(--theme-raster-image);
+  background-image: var(--theme-raster-image);
   background-size: cover;
   background-position: var(--theme-raster-position);
   opacity: var(--theme-raster-opacity);
   animation: none;
 }
+/* The original image stays sharp. Only the edges fade toward the palette canvas. */
+:root[data-backdrop="photo"]:not([data-image-backdrop="ready"]) body::before {
+  background-image: var(--theme-backdrop-image);
+  background-position: var(--theme-photo-position, 50% 50%);
+}
+:root:is([data-backdrop="photo"], [data-image-backdrop="ready"]) body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 30%, var(--bg) 100%);
+  opacity: var(--theme-photo-vignette, 0.5);
+}
+:root[data-image-backdrop="ready"] body::after {
+  opacity: var(--theme-raster-vignette, 0.5);
+}
+:root:is([data-backdrop="photo"], [data-image-backdrop="ready"]) .content :is(.message-group > summary, .message-group > summary > span:last-child) { color: var(--muted); }
+:root:is([data-backdrop="photo"], [data-image-backdrop="ready"]) .content .message-time { opacity: 1; color: var(--muted); }
 :root[data-image-backdrop="ready"] :is(.bottom-nav, .sidebar-settings-link, .message-group > summary) { background: var(--panel); }
 .theme-image-preview { width: min(100%, 600px); aspect-ratio: 1.8; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .theme-image-preview img { display: block; width: 100%; height: 100%; object-fit: cover; }
@@ -10957,3 +10976,50 @@ body:has(.agent-workspace.has-focus-panel) { overflow: hidden; }
 body:has(#confirmation-dialog[open]) [data-project-deletion-status] {
   visibility: hidden;
 }
+
+.settings-appearance h4 { margin: 0; }
+.theme-agent-guide { gap: 8px; }
+.theme-agent-guide p { margin: 0; }
+.settings-appearance :is([data-theme-guide-status], [data-appearance-status], [data-theme-removal-result], [data-theme-image-description], [data-theme-image-status]):empty { display: none; }
+.theme-agent-guide pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 28rem; overflow-y: auto; }
+.theme-image-settings > details[open] { display: grid; gap: 12px; }
+
+/* Keep Appearance readable without changing the surrounding Settings layout. */
+.settings-appearance { container-type: inline-size; max-inline-size: 70rem; overflow-wrap: anywhere; }
+.appearance-columns { display: grid; gap: 28px; align-items: start; }
+.appearance-columns > *, .appearance-palette-fields > * { min-inline-size: 0; }
+.appearance-columns > section { inline-size: 100%; max-inline-size: 42rem; }
+.appearance-palette-settings { align-content: start; }
+.appearance-palette-fields { display: grid; gap: 16px; }
+.settings-appearance #appearance-preference { max-inline-size: 22rem; }
+.settings-appearance .appearance-startup { max-inline-size: 42rem; }
+.settings-appearance .theme-examples { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.settings-appearance .theme-image-preview { max-inline-size: 100%; }
+.settings-appearance .theme-agent-guide { display: grid; padding-block-end: 16px; border-block-end: 1px solid var(--border); }
+.settings-appearance .theme-agent-guide pre { max-inline-size: 80ch; }
+.settings-appearance :is(input, select, textarea) { min-inline-size: 0; max-inline-size: 100%; }
+.settings-appearance input[type="range"] { margin-inline: 0; }
+
+@container (min-width: 36rem) {
+  .appearance-palette-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settings-appearance .theme-examples { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .settings-appearance .theme-agent-guide { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+  .settings-appearance .theme-agent-guide > :is(details, p) { grid-column: 1 / -1; }
+}
+
+@container (min-width: 54rem) {
+  .appearance-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 32px; }
+  .settings-appearance .theme-examples { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.settings-appearance .theme-examples { max-block-size: 34rem; overflow-y: auto; padding: 4px; scrollbar-gutter: stable; }
+.theme-gallery-item { display: grid; grid-template-rows: 1fr 36px; gap: 6px; min-inline-size: 0; }
+.theme-gallery-item .theme-example { inline-size: 100%; min-inline-size: 0; align-content: start; }
+.theme-delete { justify-self: end; color: var(--danger); min-block-size: 36px; padding: 4px 10px; }
+
+.settings-appearance [data-theme-photo-status]:empty { display: none; }
+.settings-appearance [data-theme-photo-controls][hidden] { display: none; }
+
+.theme-gallery-item .theme-example { grid-template-rows: auto 2.6em 1.4em; }
+.theme-gallery-item .theme-example > span:not(.theme-example-art) { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; line-height: 1.3; }
+.theme-gallery-item .theme-example small { line-height: 1.4; }

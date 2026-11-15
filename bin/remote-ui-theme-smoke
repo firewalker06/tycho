@@ -1,0 +1,63 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "tmpdir"
+require "fileutils"
+require "socket"
+require "net/http"
+require "json"
+require "rbconfig"
+require_relative "../test/support/test_environment"
+
+root = File.expand_path("..", __dir__)
+Dir.mktmpdir("tycho-theme-smoke-") do |dir|
+  port = TCPServer.open("127.0.0.1", 0) { |probe| probe.addr[1] }
+  base = "http://127.0.0.1:#{port}"
+  config = File.join(dir, "hq.yml")
+  prompts = File.join(dir, "prompts.yml")
+  File.write(config, <<~YAML)
+    projects:
+      - key: fixture
+        name: Theme fixture
+        path: #{dir.inspect}
+        agent: codex
+    remote_servers:
+      - key: fixture-peer
+        name: Fixture peer
+        url: #{base}
+        token_env: TYCHO_THEME_FIXTURE_TOKEN
+  YAML
+  File.write(prompts, "custom: Check this fixture.\n")
+  env = TestEnvironment.command_env(dir).merge(
+    "TYCHO_CONFIG_PATH" => config, "TYCHO_SYSTEM_PROMPTS_PATH" => prompts,
+    "TYCHO_REMOTE_TOKEN" => "synthetic-theme-fixture", "TYCHO_THEME_FIXTURE_TOKEN" => "synthetic-theme-fixture",
+    "TYCHO_THEME_FIXTURE_URL" => base, "TYCHO_THEME_FIXTURE_ROOT" => dir
+  )
+  log = File.join(dir, "server.log")
+  pid = Process.spawn(env, RbConfig.ruby, File.join(root, "bin/tycho"), "serve", "--host", "127.0.0.1", "--port", port.to_s, out: log, err: log)
+  begin
+    deadline = Time.now + 20
+    loop do
+      begin
+        break if Net::HTTP.get_response(URI("#{base}/ui")).code == "200"
+      rescue SystemCallError
+        nil
+      end
+      raise "Fixture startup failed: #{File.read(log)}" if Time.now > deadline
+      sleep 0.1
+    end
+    playwright = ENV["TYCHO_PLAYWRIGHT_PATH"]
+    unless playwright
+      node_dir = File.join(dir, "node")
+      raise "Cannot install Playwright" unless system("npm", "install", "--prefix", node_dir, "--no-audit", "--ignore-scripts", "playwright", out: File::NULL)
+      playwright = File.join(node_dir, "node_modules", "playwright")
+    end
+    env["TYCHO_PLAYWRIGHT_PATH"] = playwright
+    env["TYCHO_REMOTE_UI_CAPTURE_DIR"] = ENV["TYCHO_REMOTE_UI_CAPTURE_DIR"]
+    env["CHROME_PATH"] = ENV["CHROME_PATH"] || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    raise "Theme smoke failed" unless system(env, "node", File.join(root, "test/browser/server_backdrop_images_smoke.js"), chdir: root)
+  ensure
+    Process.kill("TERM", pid) rescue nil
+    Process.wait(pid) rescue nil
+  end
+end

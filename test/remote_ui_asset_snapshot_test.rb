@@ -384,8 +384,8 @@ module RemoteUIAssetSnapshotTest
       ".summary-fallback-block {",
       "grid-template-columns: auto minmax(0, 1fr);",
       "overflow-wrap: anywhere;",
-      "border: 1px solid color-mix(in srgb, var(--accent-alt) 60%, var(--border));",
-      "background: color-mix(in srgb, var(--accent-alt) 12%, var(--panel));",
+      "border: 1px solid color-mix(in srgb, var(--accent-alt, var(--accent)) 60%, var(--border));",
+      "background: color-mix(in srgb, var(--accent-alt, var(--accent)) 12%, var(--panel));",
     ]
     missing = required_css.reject { |fragment| css.include?(fragment) }
     raise "missing empty Summary fallback styling: #{missing.join(", ")}" unless missing.empty?

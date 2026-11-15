@@ -1,0 +1,44 @@
+Tycho bundled theme photo credits
+
+Senggigi Beach
+Creator: Midori
+Source: https://commons.wikimedia.org/wiki/File:Senggigi_Beach_view_from_Jalan_Raya_Senggigi.JPG
+creator_url: https://commons.wikimedia.org/wiki/User:Midori
+original: https://upload.wikimedia.org/wikipedia/commons/a/ae/Senggigi_Beach_view_from_Jalan_Raya_Senggigi.JPG
+license_url: https://creativecommons.org/licenses/by/3.0/
+location_evidence: Own-work description identifies the view of Senggigi Beach from Jalan Raya Senggigi, Lombok; 19 May 2010. Operator selected S4 from the validated package.
+License: CC BY 3.0
+Changes: Resized to fit 1920 pixels, metadata stripped, encoded as WebP. No crop, blur, vignette, brightness or color treatment baked into the photo. No place, objects or signs changed.
+SHA-256: 2ba5e546a4e03c6eeb6e7e687dbe9fb02e4037de730554df039b3311c8e028f9
+
+Depok City
+Creator: RasyaAbhirama13
+Source: https://commons.wikimedia.org/wiki/File:Margo_City_exterior.jpg
+creator_url: https://commons.wikimedia.org/wiki/User:RasyaAbhirama13
+original: https://upload.wikimedia.org/wikipedia/commons/f/f9/Margo_City_exterior.jpg
+license_url: https://creativecommons.org/licenses/by-sa/4.0/
+location_evidence: Own-work description identifies the exterior of Margo City shopping mall in Depok, West Java, Indonesia; 19 April 2025. Operator selected D4 from the validated package.
+License: CC BY-SA 4.0
+Changes: Resized to fit 1920 pixels, metadata stripped, encoded as WebP. No crop, blur, vignette, brightness or color treatment baked into the photo. No place, objects or signs changed. The adapted photo remains CC BY-SA 4.0.
+SHA-256: 08d154778f67a0d9cfb219da80bdc992e2bd863e4972e7ec05936dd5809b27aa
+
+Waking Up
+Creator: Generated with the built-in OpenAI image_gen tool
+Source: Generated for this application; not a stock photo or real-location claim.
+generation_tool: image_gen.imagegen (GPT Image family; exact model revision not exposed by the tool)
+generation_prompt: Photorealistic warm morning cafe, soft sunlight through large windows, wood tables and coffee cup near an edge. Landscape 16:9, calm low-detail center, detail at edges. Warm cream, honey and muted sage. No people needed, text, logos or watermark. Fictional generated cafe.
+License: Generated product artwork; no third-party stock-photo license claimed.
+Changes: Inspected generated PNG, stripped metadata, encoded as optimized WebP. No scene elements changed.
+SHA-256: 57e9e71be8e5503705615b8bc40d0b620c9c722750b5502403f75b81c9aad6df
+
+Cyberspace — approved R3
+Creator: Generated/edited with the built-in OpenAI image_gen tool (GPT Image family; exact revision is not exposed).
+Source: Operator-approved R3, an edit of a generated C3 concept. Fictional space station; not a stock photo or real-location claim.
+License: Generated product artwork; no third-party stock-photo license claimed.
+Generation: One selected R3 edit from a three-candidate batch. Full selected prompt and source/output hashes are in provenance.json. Other outputs are not used.
+Changes: Inspected approved PNG; stripped metadata and encoded as optimized WebP. No crop, resizing, blur, vignette, brightness or color treatment added during integration.
+Compatibility: Existing builtin:cyberpunk theme identifier remains valid. Original cyberpunk.webp and its provenance remain packaged for compatibility. The rejected first station image is not the active product asset.
+
+UI display: Image strength controls opacity. Vignette fades only the edges toward the palette canvas. New choices use 20% strength, 50% vignette and 50% horizontal/vertical focal position. Saved adjustments are kept. No CSS blur, center fade or baked preview treatment is applied. Originals and downloads are unchanged.
+
+Earlier beach/city image files and full attribution records are preserved under legacy/. Their licenses remain CC BY 3.0 and CC BY-SA 4.0 respectively.

@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-11-14
+2026-11-15
 
 ## Custom Remote UI themes
 
@@ -21,15 +21,26 @@ validated color roles map to semantic and legacy UI tokens. Settings includes
 an agent prompt guide; [theme documentation](REMOTE_UI_APPEARANCE.md) defines
 the format, storage scope, and contrast checks. Custom palettes apply in the
 head bootstrap before CSS, follow System mode, and sync across same-origin
-tabs without replacing drafts. Four scene examples (two Dark, two Light) add
-visible SVG backdrops: Synthwave Sunset, Aurora Night, Paper Garden, and Coastal
-Morning. Settings has preview tiles and editable example copies. Custom JSON
-can choose a scene, three colors, intensity, and still/slow motion. Reduced
+tabs without replacing drafts. Four bundled themes (two Dark, two Light) add
+bundled photo backdrops: Senggigi Beach (Light), Depok City (Dark), Waking Up
+(Light), and Cyberpunk (Dark). Licensed place photos and generated art include
+packaged provenance. Photo selection keeps saved library images and provides
+explicit source restore controls. Old vector example selections remain compatible. The Themes gallery shows bundled and imported custom palettes with live
+previews, direct custom-theme deletion, and editable bundled copies. Import
+updates an existing id in place; deletion preserves unrelated themes and
+server images. The gallery refreshes on import and cross-tab updates. Custom JSON
+can choose a vector backdrop, three colors, intensity, and still/slow motion. Reduced
 motion stops drift; old palette-only themes keep their existing appearance.
-Optional raster backdrops are stored per color mode as browser-local IndexedDB
-Blobs. Settings provides preview, replacement/removal, strength, center fade,
-focal position, recovery, and a separate image download. Portable theme JSON
-contains no local image reference; no image is sent to the server.
+Raster backdrops now use a bounded shared server library. Agents can upload,
+list, replace, and remove PNGs through `tycho appearance images`, locally or
+with `--server`. Browser upload also accepts JPEG/WebP and normalizes to PNG.
+Dark/Light selections and adjustments stay browser-specific; IndexedDB caches
+the selected assets and reconciles server versions. Existing browser-only
+images remain private until the user selects **Upload local image**. Appearance
+has a visible copyable agent guide, with JSON and image details in disclosures.
+Portable palette JSON contains no image references. See the
+[appearance guide](REMOTE_UI_APPEARANCE.md) for authentication, limits, caching,
+and transfer semantics. Release v0.16 remains on hold for operator review.
 
 
 ## Agent Focus

@@ -55,6 +55,10 @@ module HQ
       "/harness-logos/openai-blossom-dark.svg" => File.join(HARNESS_LOGO_ROOT, "openai-blossom-dark.svg"),
       "/harness-logos/deepseek-icon.svg" => File.join(HARNESS_LOGO_ROOT, "deepseek-icon.svg")
     }.freeze
+    THEME_PHOTO_ROOT = File.join(ROOT, "assets", "theme-photos")
+    THEME_PHOTO_ASSETS = %w[senggigi-beach.webp depok-city.webp waking-up.webp cyberspace.webp cyberpunk.webp CREDITS.txt CC-BY-3.0.txt CC-BY-SA-4.0.txt provenance.json].to_h do |name|
+      ["/theme-photos/#{name}", File.join(THEME_PHOTO_ROOT, name)]
+    end.freeze
     ASSET_VERSION_PATHS = [
       TEMPLATE_PATH,
       DESIGN_SYSTEM_TEMPLATE_PATH,
@@ -72,6 +76,7 @@ module HQ
       NOTIFICATION_TRACE_PATH,
       *FONT_ASSETS.values,
       *HARNESS_LOGO_ASSETS.values,
+      *THEME_PHOTO_ASSETS.values,
       *PNG_ASSETS.values
     ].freeze
     FAVICON_SVG = <<~SVG
@@ -109,7 +114,7 @@ module HQ
     end
 
     def self.appearance_js
-      [asset_content(APPEARANCE_JS_PATH), asset_content(BACKDROP_IMAGES_JS_PATH)].join("\n")
+      [asset_content(APPEARANCE_JS_PATH).gsub("__TYCHO_PHOTO_VERSION__", asset_version), asset_content(BACKDROP_IMAGES_JS_PATH)].join("\n")
     end
 
     def self.startup_js
@@ -185,6 +190,14 @@ module HQ
 
     def self.harness_logo_route?(route)
       HARNESS_LOGO_ASSETS.key?(route)
+    end
+
+    def self.theme_photo_route?(route)
+      THEME_PHOTO_ASSETS.key?(route)
+    end
+
+    def self.theme_photo_asset(route)
+      asset_content(THEME_PHOTO_ASSETS.fetch(route))
     end
 
     def self.asset_version

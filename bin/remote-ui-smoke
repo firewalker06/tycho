@@ -11281,6 +11281,18 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "logo_smoke")
       next
     end
+    if ENV["TYCHO_REMOTE_UI_BACKDROP_FILTER_COMPARE_ONLY"] == "1"
+      write_summary_idle_stop_fixture(fixture.fetch(:logs_dir), agent_key)
+      seed_conversation_tail_fixture(env, agent_key, 20)
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "backdrop_filter_comparison")
+      next
+    end
+    if ENV["TYCHO_REMOTE_UI_CONTENT_FADE_ONLY"] == "1"
+      write_summary_idle_stop_fixture(fixture.fetch(:logs_dir), agent_key)
+      seed_conversation_tail_fixture(env, agent_key, 2)
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "content_fade_smoke")
+      next
+    end
     if ENV["TYCHO_REMOTE_UI_APPEARANCE_ONLY"] == "1"
       seed_conversation_tail_fixture(env, agent_key, 2)
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "appearance_smoke")
