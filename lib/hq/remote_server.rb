@@ -18,6 +18,7 @@ require_relative "remote_ui"
 require_relative "terminal_qr"
 require_relative "version"
 require_relative "domain/tycho_updater"
+require_relative "domain/backdrop_image_store"
 require_relative "domain/project"
 require_relative "domain/project_git_metadata_cache"
 require_relative "domain/project_workspace"
@@ -525,6 +526,23 @@ module HQ
           return broker.proxy(parts[1], method, proxy_path, body, request)
         end
       end
+      if parts[0, 2] == ["appearance", "images"]
+        store = BackdropImageStore.new
+        begin
+          return { status: 200, body: { images: store.list }, headers: { "Cache-Control" => "no-store" } } if method == "GET" && parts.length == 2
+          if parts.length == 3
+            return ok(image: store.upload(parts[2], body)) if method == "PUT"
+            return ok(store.remove(parts[2])) if method == "DELETE"
+          end
+          if method == "GET" && parts.length == 4 && parts[3] == "blob"
+            image, bytes = store.read(parts[2])
+            return { status: 200, body: bytes, raw_body: true, content_type: "image/png",
+                     headers: { "Cache-Control" => "private, no-cache", "ETag" => %Q("#{image.fetch("version")}"), "X-Content-Type-Options" => "nosniff" } }
+          end
+        rescue BackdropImageStore::Error => e
+          raise Error.new(e.message, status: e.message == "Image not found" ? 404 : 422)
+        end
+      end
       return ok(service.agent_activity) if method == "GET" && parts == ["activity"]
       return ok(service.resource_snapshot) if method == "GET" && parts == ["resources"]
       return ok(service.metrics_query(request&.query_params || {})) if method == "GET" && parts == ["metrics"]
@@ -999,6 +1017,9 @@ module HQ
         headers[name.to_s.downcase] = value.to_s.strip unless name.to_s.empty?
       end
       length = headers["content-length"].to_i
+      if raw_path.to_s.split("?", 2).first.split("/").reject(&:empty?).each_cons(2).include?(%w[appearance images]) && length > 7 * 1024 * 1024
+        raise Error.new("Image request exceeds 7 MiB", status: 413)
+      end
       deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + @client_read_timeout
       buffer << read_chunk(client, deadline) while buffer.bytesize < length
       body = buffer.byteslice(0, length).to_s.force_encoding(Encoding::UTF_8)
@@ -1748,7 +1769,8 @@ module HQ
         return {
           status: response.code.to_i,
           body: parsed.is_a?(Hash) ? parsed : { data: parsed },
-          content_type: content_type.empty? ? "application/json" : content_type
+          content_type: content_type.empty? ? "application/json" : content_type,
+          headers: proxy_response_headers(response)
         }
       end
 
@@ -1811,7 +1833,7 @@ module HQ
 
     def proxy_response_headers(response)
       headers = {}
-      %w[cache-control x-content-type-options content-disposition].each do |name|
+      %w[cache-control etag x-content-type-options content-disposition].each do |name|
         value = response[name]
         headers[name.split("-").map(&:capitalize).join("-")] = value if value
       end
@@ -1821,7 +1843,7 @@ module HQ
 
   class RemoteBroker
     LOOPBACK_PEER_KEY = /\Aloopback-(\d{1,5})\z/
-    RESOURCE_ROOTS = %w[activity agents projects attachments].freeze
+    RESOURCE_ROOTS = %w[appearance activity agents projects attachments].freeze
 
     LocalServerConfig = Struct.new(:key, :name, :url, keyword_init: true) do
       def resolved_token

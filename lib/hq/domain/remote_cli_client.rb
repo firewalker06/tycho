@@ -75,6 +75,7 @@ module HQ
       request_class = {
         "GET" => Net::HTTP::Get,
         "POST" => Net::HTTP::Post,
+        "PUT" => Net::HTTP::Put,
         "PATCH" => Net::HTTP::Patch,
         "DELETE" => Net::HTTP::Delete
       }.fetch(method.to_s.upcase) do

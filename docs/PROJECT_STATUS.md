@@ -10,7 +10,7 @@ type: project
 
 ## Last Updated
 
-2026-11-14
+2026-11-15
 
 ## Custom Remote UI themes
 
@@ -26,10 +26,16 @@ visible SVG backdrops: Synthwave Sunset, Aurora Night, Paper Garden, and Coastal
 Morning. Settings has preview tiles and editable example copies. Custom JSON
 can choose a scene, three colors, intensity, and still/slow motion. Reduced
 motion stops drift; old palette-only themes keep their existing appearance.
-Optional raster backdrops are stored per color mode as browser-local IndexedDB
-Blobs. Settings provides preview, replacement/removal, strength, center fade,
-focal position, recovery, and a separate image download. Portable theme JSON
-contains no local image reference; no image is sent to the server.
+Raster backdrops now use a bounded shared server library. Agents can upload,
+list, replace, and remove PNGs through `tycho appearance images`, locally or
+with `--server`. Browser upload also accepts JPEG/WebP and normalizes to PNG.
+Dark/Light selections and adjustments stay browser-specific; IndexedDB caches
+the selected assets and reconciles server versions. Existing browser-only
+images remain private until the user selects **Upload local image**. Appearance
+has a visible copyable agent guide, with JSON and image details in disclosures.
+Portable palette JSON contains no image references. See the
+[appearance guide](REMOTE_UI_APPEARANCE.md) for authentication, limits, caching,
+and transfer semantics. Release v0.16 remains on hold for operator review.
 
 
 ## Agent Focus

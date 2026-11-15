@@ -87,6 +87,7 @@ PLATFORMS
 DEPENDENCIES
   bubbles
   bubbletea
+  chunky_png (~> 1.4)
   dry-cli
   erb (~> 6.0)
   fiddle (~> 1.1)

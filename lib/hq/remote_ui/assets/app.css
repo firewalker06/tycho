@@ -10736,7 +10736,7 @@ body:has(.inquiry-form-full-screen) {
 }
 
 
-/* Raster images are browser-local, still, and independent of the selected palette. */
+/* Raster selection is browser-local; image ownership belongs to the server. */
 :root[data-appearance][data-image-backdrop="ready"] body { isolation: isolate; }
 :root[data-appearance][data-image-backdrop="ready"] body::before {
   content: "";
@@ -10865,3 +10865,10 @@ body:has(.agent-workspace.has-focus-panel) { overflow: hidden; }
 body:has(#confirmation-dialog[open]) [data-project-deletion-status] {
   visibility: hidden;
 }
+
+.settings-appearance h4 { margin: 0; }
+.theme-agent-guide { gap: 8px; }
+.theme-agent-guide p { margin: 0; }
+.settings-appearance :is([data-theme-guide-status], [data-appearance-status], [data-theme-removal-result], [data-theme-image-description], [data-theme-image-status]):empty { display: none; }
+.theme-agent-guide pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 28rem; overflow-y: auto; }
+.theme-image-settings > details[open] { display: grid; gap: 12px; }

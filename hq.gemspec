@@ -40,6 +40,7 @@ Gem::Specification.new do |spec|
                  config/system_prompts.yml.example
                ]
 
+  spec.add_dependency "chunky_png", "~> 1.4"
   spec.add_dependency "bubbles"
   spec.add_dependency "bubbletea"
   spec.add_dependency "dry-cli"

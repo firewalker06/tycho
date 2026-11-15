@@ -4,6 +4,7 @@ source "https://rubygems.org"
 
 ruby ">= 4.0.9"
 
+gem "chunky_png", "~> 1.4"
 gem "bubbles"
 gem "bubbletea"
 gem "dry-cli"

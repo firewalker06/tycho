@@ -160,7 +160,8 @@ Settings → Configuration → Appearance has independent **Dark theme** and
 Light. Color mode still controls which selector is active. System switches
 between the two selected palettes when the device color mode changes.
 
-Open **Customize themes and agent prompt guide**. Edit the JSON template, or
+Use **Copy agent guide** near the top of Appearance, or open **Read guide**.
+Open **Edit or import theme JSON** to edit palettes. Edit the JSON template, or
 ask an agent to make a palette. Select **Save theme** to add and select it for
 its declared mode. Saving an existing id replaces that palette. Use a new id
 to keep both versions. Saving a light palette while Dark is active does not
@@ -306,80 +307,131 @@ focus, and disabled controls. The importer checks the field format, not visual
 contrast. Use the existing appearance smoke command to verify all four scenes,
 preview tiles, scene copying, reduced motion, and old palette-only themes.
 
-## Local raster-image backdrops
+## Server image backdrops
 
-Settings → Configuration → Appearance → **Local image backdrop** lets you choose
-or replace an image for the current Dark or Light mode. Each mode has one image.
-The image replaces that mode's vector scene but does not change its selected
-palette. Switching palettes keeps the image. **Remove image** restores the
-selected theme's scene or flat canvas. The preview shows the saved image and
-its crop. **Image strength** controls its opacity; **Soft center fade** adds a
-palette-colored fade over the center. This is a fade, not a blur. Horizontal
-and vertical focal-position controls choose the crop with percentages from
-0 to 100. Images use cover sizing, so narrow screens can crop more of the sides.
-Text panels and navigation retain solid semantic surfaces, including peer panels.
+Settings → Configuration → Appearance has a visible **Ask an agent to make a
+theme** guide with **Copy agent guide** and **Read guide**. The palette editor
+and image adjustment fields are separate disclosures. The guide contains the
+palette roles, apply steps, CLI commands, API contract, limits, and storage scope.
 
-Images stay in this browser profile on this device, at this exact origin
-(scheme, host, and port). They are not uploaded to Tycho and are not synced to
-other devices or server addresses. IndexedDB database `tycho-backdrop-images`,
-store `backdrops`, contains one normalized Blob and its settings per mode.
-No image bytes, base64 payloads, or object URLs are written to localStorage or
-portable theme JSON. Existing theme choices and old palette-only themes are
-not migrated or overwritten.
+**Image backdrop** selects an image from this host's shared server library.
+Each browser keeps separate Dark and Light selections, strength, center fade,
+and focal position. Uploading from an agent adds an available image. It does
+not change any browser's selection. Other users keep their choices. Settings
+uses the library of the host whose UI is open; open a peer's UI to select its
+images. The CLI and authenticated broker API can target configured peers.
 
-| Input limit | Value |
+### Agent workflow
+
+Create a local PNG, then use these commands from the machine with that file:
+
+```bash
+tycho appearance images upload my-backdrop path/to/image.png --name "My backdrop" --json
+tycho appearance images list --json
+tycho appearance images upload my-backdrop path/to/replacement.png --name "Updated backdrop" --json
+tycho appearance images remove my-backdrop --json
+```
+
+Add `--server SERVER_KEY` to each command for a configured peer. Without it,
+commands use the local machine's Tycho storage, including when the server is
+stopped. Target the same host whose Settings will be opened. Commands use
+Tycho's existing credential store; never place credentials in prompts or theme
+JSON. CLI JSON errors use stdout and a nonzero exit status.
+
+In that server's Settings, open **Image options**, select **Refresh library**,
+then choose the uploaded image in **Image backdrop**. Refresh also runs every
+30 seconds while the page is visible and when it regains focus. Uploading
+with the same id replaces an image. Existing selections of that id use the
+replacement on the next successful refresh. **Clear selection** restores the
+selected palette/vector scene in this browser only. **Delete from server**
+requires confirmation and removes the shared image for all users. CLI removal
+is explicit and idempotent.
+
+### Limits and storage
+
+| Boundary | Limit |
 | --- | --- |
-| Formats | PNG, JPEG, WebP |
-| Encoded bytes | At most 5 MiB |
-| Dimensions before decode | At most 4096 pixels per side and 12,000,000 pixels total |
-| Saved longest edge | At most 2560 pixels, with aspect ratio retained |
-| Saved bytes | At most 5 MiB per mode |
+| CLI/API input | PNG, at most 5 MiB |
+| Browser input | PNG, JPEG or WebP, at most 5 MiB |
+| Input dimensions | 4096 pixels per side, 12,000,000 pixels total |
+| Browser normalization | Still PNG, longest edge at most 2560 pixels |
+| Saved raster | At most 5 MiB after normalization |
+| Server library | 20 images, replacement allowed at the limit |
+| HTTP upload body | At most 7 MiB, including base64 and JSON |
+| PNG decompression | At most 64 MiB before pixel decode |
 
-The controller checks MIME type, file signature, header dimensions, and a real
-browser decode. SVG, GIF, file paths, and network URLs are not accepted. It
-renders the decoded first frame into a canvas and saves a still WebP copy
-(quality 0.9); browsers without canvas WebP encoding can return PNG. This strips
-source metadata and animation. Oversized input, corrupt files, decode failures,
-and failed saves show an error and keep the previous image. The saved copy can
-have different bytes, dimensions, and quality from the original. Keep the
-original file if you need it later.
+The server uses the existing ChunkyPNG library as a declared direct dependency.
+It checks the PNG signature, dimensions, chunk bounds, checksums, and bounded
+pixel decompression, then decodes and re-encodes pixels. Nonessential chunks
+are removed before decode, including compressed metadata. SVG, paths, URLs,
+and non-image payloads are rejected. There is no external URL fetch.
 
-The small localStorage change marker and BroadcastChannel notify other tabs
-at this origin. Focus and visibility changes also refresh image state. Reload
-reads the saved Blob asynchronously; the existing palette/vector scene is the
-fallback while it loads. No image decoding or encoding runs on scroll, and
-settings changes reuse the same object URL. Replacement, removal, stale loads,
-and page disposal release unused object URLs. Browser data deletion or a
-missing image restores the palette/vector fallback. A damaged stored image
-shows a recovery message and can be replaced or removed. **Retry image storage**
-retries after storage becomes available. A blocked/full store does not silently
-replace the previous saved image. Site data can be cleared or evicted by the
-browser; keep a downloaded copy of images you want to retain.
+The library lives in `backdrop_images` under the configured Tycho logs root,
+outside the checkout by default. Each image id owns one private atomic record with a small JSON metadata
+header followed by normalized PNG bytes. Listing reads only metadata. A process-shared lock
+serializes mutations. Replacement overwrites the record, removal deletes it,
+and normal failures remove temporary files. There is no version-file history
+to accumulate. Each record has a SHA-256 version derived from normalized pixels.
+Back up the logs root to retain this library.
 
-### Transfer and theme JSON
+The browser keeps one selected image Blob per mode in IndexedDB database
+`tycho-backdrop-images`, store `backdrops`. These records are a cache of server
+images plus browser-specific choices and settings. Image bytes and tokens do
+not enter theme JSON or localStorage. Server metadata is read with `no-store`;
+image reads require the same host authentication as the other APIs and return
+`private, no-cache` with a version ETag. The browser reconciles each selected
+id/version against fresh metadata before it replaces the cached Blob. Unused
+object URLs are revoked. Removing a shared image clears its cached raster at
+the next successful reconciliation; the selection remains visible as missing
+until cleared or replaced. A network failure can use the last cached selection.
+An explicit authentication rejection suppresses server image rendering until
+a successful authenticated refresh. Missing or damaged data falls back to the
+palette/vector scene and shows a recovery message. The server does not promise
+revocation of bytes that a browser already downloaded.
 
-**Download saved image** exports the normalized raster copy for the active mode,
-with its real file extension. To transfer a complete look, copy the palette or
-vector theme JSON separately, download the image, then choose that downloaded
-file in the other browser. Image strength, center fade, and focal position are
-local mode settings; set them again in the receiving browser. Theme JSON never
-contains a local image id, temporary URL, or missing file reference. Importing
-JSON does not transfer or remove a mode's existing local image. Remove that
-image to see an imported vector scene.
+### Existing local images and transfer
 
-The Settings agent prompt guide keeps this boundary explicit: agents can
-prepare portable palette/vector JSON, while the user chooses a raster file
-through **Local image backdrop**. Do not ask an agent to put image bytes or
-URLs into theme JSON.
+Old browser-only IndexedDB images remain usable with their settings. They are
+not uploaded automatically. **Upload local image** explicitly shares the active
+mode's image with this server and keeps its adjustment values. The CLI cannot
+read another browser's IndexedDB. **Download saved image** exports the cached
+normalized raster with its correct extension.
+
+Palette/vector JSON exports contain no image references, bytes, paths, or URLs.
+Importing JSON preserves an existing image choice. Clear that choice to see an
+imported scene. To move a complete look to another server, copy the palette
+JSON, download the raster, upload it to that server, then select it and set its
+adjustments there. An image is not silently resolved against an unrelated
+server library. Browser data deletion removes choices and caches, while server
+assets remain available for selection.
+
+### Authenticated API
+
+All image routes use the host's existing bearer authentication policy.
+Tokenless loopback operation retains Tycho's existing local access policy.
+The routes are also available through the authenticated peer broker.
+
+| Method | Route | Result |
+| --- | --- | --- |
+| GET | `appearance/images` | `{images: [...]}` metadata only |
+| PUT | `appearance/images/ID` | `{image: {...}}`; JSON body has only `name` and base64 PNG `data` |
+| GET | `appearance/images/ID/blob` | Normalized PNG bytes |
+| DELETE | `appearance/images/ID` | `{removed: ID}`, including repeated removal |
+
+Prefix each route with a slash. IDs start with a lowercase letter and use
+lowercase letters, digits, and hyphens, at most 40 characters. Names use 1–120
+characters with no control characters. Missing reads return 404, invalid
+uploads return 422, oversized request bodies return 413, and missing or rejected
+authentication returns 401. Metadata contains id, name, version, mime, bytes,
+width, and height; it contains no server filesystem path. A replacement keeps
+its id. Removal and replacement require no browser selection changes.
 
 ### Verification
 
-The existing appearance smoke command also exercises image selection,
-replacement/removal, real PNG/JPEG/WebP decode, dimension and byte limits,
-normalization, reload, two-tab updates, separate modes, storage failures,
-missing records, stale decode cancellation, object URL cleanup, and download
-transfer. All browser state belongs to throwaway fixtures. The synthetic
-landscape is an owned canvas-generated PNG, selected through the actual file
-input. The smoke prints image-load time and measured Settings-scroll frame
-gaps for its fixture and Chrome version; those measurements are not a general
-performance guarantee.
+Run `bin/remote-ui-theme-smoke` for the isolated authenticated API/CLI and real
+Chrome acceptance test. Set `TYCHO_PLAYWRIGHT_PATH` to an installed Playwright
+package, or let the runner install it into its temporary fixture. Set
+`TYCHO_REMOTE_UI_CAPTURE_DIR` to an external directory to retain screenshots.
+The runner creates a temporary host, config, logs root, library, and browser
+profile; it never uses live agents or provider calls. The owned landscape is
+generated by canvas. Automated store checks run in `bin/test`.

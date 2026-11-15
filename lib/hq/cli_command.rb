@@ -69,6 +69,45 @@ module HQ
         end
       end
 
+      class ImageList < Dry::CLI::Command
+        extend CommandMetadata
+        desc "List server backdrop images"
+        remote_options
+        def call(**opts)
+          exit CLICommand.backdrop_images("list", nil, nil, opts, out: out, err: err)
+        end
+      end
+
+      class ImageUpload < Dry::CLI::Command
+        extend CommandMetadata
+        desc "Upload or replace a server PNG backdrop (does not select it)"
+        argument :id, required: true
+        argument :file, required: true
+        option :name, desc: "Display name"
+        remote_options
+        def call(id:, file:, **opts)
+          exit CLICommand.backdrop_images("upload", id, file, opts, out: out, err: err)
+        end
+      end
+
+      class ImageRemove < Dry::CLI::Command
+        extend CommandMetadata
+        desc "Remove a shared server backdrop"
+        argument :id, required: true
+        remote_options
+        def call(id:, **opts)
+          exit CLICommand.backdrop_images("remove", id, nil, opts, out: out, err: err)
+        end
+      end
+
+      register "appearance" do |prefix|
+        prefix.register "images" do |images|
+          images.register "list", ImageList
+          images.register "upload", ImageUpload
+          images.register "remove", ImageRemove
+        end
+      end
+
       class HarnessList < Dry::CLI::Command
         extend CommandMetadata
 
@@ -2389,6 +2428,33 @@ module HQ
       0
     rescue RemoteCLIClient::Error, ArgumentError => e
       failure(e.message, err:)
+    end
+
+    def backdrop_images(action, id, file, opts, out:, err:)
+      require_relative "domain/backdrop_image_store"
+      store = BackdropImageStore.new
+      body = nil
+      if action == "upload"
+        raise ArgumentError, "Choose a PNG file of at most 5 MiB" unless File.file?(file) && File.size(file).between?(1, BackdropImageStore::MAX_BYTES)
+        body = { "name" => opts[:name] || File.basename(file), "data" => Base64.strict_encode64(File.binread(file)) }
+      end
+      result = if remote_requested?(opts)
+                 path = "/appearance/images"
+                 path += "/#{URI.encode_www_form_component(id)}" if id
+                 remote_client(opts[:server]).request({ "list" => "GET", "upload" => "PUT", "remove" => "DELETE" }.fetch(action), path, body: body)
+               else
+                 case action
+                 when "list" then { images: store.list }
+                 when "upload" then { image: store.upload(id, body) }
+                 when "remove" then store.remove(id)
+                 end
+               end
+      out.puts JSON.pretty_generate(result)
+      0
+    rescue ArgumentError, SystemCallError => e
+      command_failure(e.message, opts, out: out, err: err)
+    rescue RemoteCLIClient::Error => e
+      command_failure(e.message, opts, out: out, err: err)
     end
 
     def remote_client(server_key)

@@ -22,6 +22,7 @@ module.exports = async function backdropImagesSmoke({ browser, baseUrl, agentKey
     await page.goto(`${baseUrl}/ui#settings`);
     await page.locator("[data-theme-image-file]").waitFor(); await ready();
     await page.locator('[data-scroll-settings-section="settings-configuration"]').click();
+    await page.locator(".theme-image-settings details").evaluate(element => { element.open = true; });
   };
   const capture = async name => {
     await page.evaluate(() => { if (document.querySelector(".content.agent-detail")) window.scrollTo(0, 0); });
@@ -62,6 +63,7 @@ module.exports = async function backdropImagesSmoke({ browser, baseUrl, agentKey
     assert.equal(await page.evaluate(() => getComputedStyle(document.body, "::before").animationName), "none");
     const originalUrl = await page.evaluate(() => window.TychoBackdropImages.getState().image.url);
     await page.reload(); await page.locator("[data-theme-image-file]").waitFor(); await saved();
+    await page.locator(".theme-image-settings details").evaluate(element => { element.open = true; });
     assert.notEqual(await page.evaluate(() => window.TychoBackdropImages.getState().image.url), originalUrl, "reload reads a durable blob and creates a fresh URL");
     const peer = await context.newPage(); await peer.goto(route);
     await peer.waitForFunction(() => document.documentElement.dataset.imageBackdrop === "ready");
@@ -113,7 +115,7 @@ module.exports = async function backdropImagesSmoke({ browser, baseUrl, agentKey
     const transfer = fs.readFileSync(await exported.path());
     await page.evaluate(() => window.TychoAppearance.setPreference("light"));
     assert.equal(await page.locator("html").getAttribute("data-image-backdrop"), "none", "dark and light images are independent");
-    await page.locator("[data-theme-image-file]").setInputFiles(file(transfer, "image/webp", "transferred.webp")); await saved();
+    await page.locator("[data-theme-image-file]").setInputFiles(file(transfer, "image/png", "transferred.png")); await saved();
     await page.evaluate(() => window.TychoAppearance.setPreference("dark"));
     assert.equal(await page.evaluate(() => window.TychoBackdropImages.getState().image.x), 75);
     const focusApi = `${baseUrl}/agents/${agentKey}/focus`;
@@ -184,7 +186,7 @@ module.exports = async function backdropImagesSmoke({ browser, baseUrl, agentKey
     await ready();
     await page.waitForFunction(() => window.imageRace.finished);
     assert.equal(await page.locator("html").getAttribute("data-image-backdrop"), "none");
-    assert.deepEqual(requests.filter(request => !["POST /push/status", "POST /servers/resources/refresh"].includes(request)), [], "images make no API writes; existing status/resource refresh calls remain");
+    assert.deepEqual(requests.filter(request => !["POST /push/status", "POST /servers/resources/refresh"].includes(request) && !request.startsWith("PUT /appearance/images/")), [], "image uploads use only the supported library API");
     await page.evaluate(() => window.TychoBackdropImages.dispose());
     assert.equal(await page.evaluate(() => imageUrlAudit.live.size), 0, "disposing revokes all cached image URLs");
     await peer.close();
@@ -195,6 +197,7 @@ module.exports = async function backdropImagesSmoke({ browser, baseUrl, agentKey
     await blocked.waitForFunction(() => window.TychoBackdropImages.getState().loaded);
     assert.match(await blocked.locator("[data-theme-image-status]").textContent(), /storage is unavailable/);
     await blocked.evaluate(() => { window.denyImageStorage = false; });
+    await blocked.locator(".theme-image-settings details").evaluate(element => { element.open = true; });
     await blocked.locator("[data-theme-image-retry]").click();
     await blocked.waitForFunction(() => window.TychoBackdropImages.getState().loaded && !window.TychoBackdropImages.getState().error);
     await denied.close();
