@@ -10,7 +10,7 @@ script = <<~'JS'
   function fixture(type, status, image = false) {
     let active = true, failing = true, route = { type, key: "web", scope: "worktree", id: "file", attachmentId: "file" };
     let calls = 0;
-    const state = { schedules: [], scheduleMessages: {}, initialRouteLoaded: false, projectDiffs: {}, pullRequests: {}, attachmentDetails: {}, attachmentRequestGenerations: {},
+    const state = { agentSidePanels: new Map(), schedules: [], scheduleMessages: {}, initialRouteLoaded: false, projectDiffs: {}, pullRequests: {}, attachmentDetails: {}, attachmentRequestGenerations: {},
       attachmentImageErrors: {}, attachmentImageErrorStatuses: {}, attachmentImageRequestGenerations: {}, attachmentImageUrls: {},
       agents: [], resourceRequestSequence: 0, resourceMutationGeneration: 0, failureCount: 0, setup: {}, lastShellUpdatedAt: new Date(), setupDetailed: true,
       setupRequestSequence: 0, setupResponseSequence: 0 };
