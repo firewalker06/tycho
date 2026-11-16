@@ -22,6 +22,77 @@ module.exports = async function attachmentPreviewSmoke({ browser, baseUrl, agent
   await page.goto(summaryUrl, { waitUntil: "networkidle" });
   await previewButton("Release review").waitFor();
   await open("Release review");
+  // A shell reconciliation must keep the live preview connected. Re-inserting
+  // an identical iframe restarts its document; text previews also lose selection.
+  const originalReview = fs.readFileSync(attachments["Release review"].path, "utf8");
+  const pollResults = [];
+  for (const title of ["Release review", "Interactive report"]) {
+    await open(title);
+    const id = attachments[title].id;
+    let attachmentReads = 0;
+    const countRead = (request) => {
+      if (request.url().includes(`/attachments/${id}`)) attachmentReads += 1;
+    };
+    page.on("request", countRead);
+    await page.evaluate(() => {
+      window.pollPreviewNode = document.querySelector(".summary-attachment-preview-pane .attachment-viewer");
+      window.pollPreviewScroll = document.querySelector(".summary-attachment-preview-scroll");
+      window.pollPreviewScroll.scrollTop = 250;
+      window.pollPreviewScrollTop = window.pollPreviewScroll.scrollTop;
+      window.pollPreviewDisconnects = 0;
+      window.pollPreviewObserver = new MutationObserver((records) => {
+        for (const record of records) {
+          for (const node of record.removedNodes) {
+            if (node === window.pollPreviewNode || node.contains?.(window.pollPreviewNode)) window.pollPreviewDisconnects += 1;
+          }
+        }
+      });
+      window.pollPreviewObserver.observe(document.querySelector("#view"), { childList: true, subtree: true });
+    });
+    if (title === "Interactive report") {
+      await pane.locator("iframe").contentFrame().locator("body").waitFor();
+      await pane.locator("iframe").contentFrame().locator("body").evaluate((body) => { body.dataset.readerState = "kept"; });
+    }
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      await page.evaluate(async (cycle) => {
+        // Also exercise the preview anchor when no live editor is available.
+        if (cycle === 1) document.querySelector("#composer")?.remove();
+        state.lastShellUpdatedAt = null;
+        // Require the normal poll render path even if all fixture data is equal.
+        state.renderedViewHtml = "";
+        await refresh({ preserveFocusedWorkspace: true });
+      }, cycle);
+    }
+    const result = await page.evaluate(() => ({
+      sameNode: window.pollPreviewNode === document.querySelector(".summary-attachment-preview-pane .attachment-viewer"),
+      disconnects: window.pollPreviewDisconnects,
+      scrollBefore: window.pollPreviewScrollTop,
+      scrollAfter: document.querySelector(".summary-attachment-preview-scroll").scrollTop,
+    }));
+    await page.evaluate(() => window.pollPreviewObserver.disconnect());
+    page.off("request", countRead);
+    result.attachmentReads = attachmentReads;
+    pollResults.push({ title, ...result });
+    await assert(result.sameNode && result.disconnects === 0 && result.scrollBefore === result.scrollAfter && attachmentReads === 0,
+      `Polling refreshed the open attachment: ${JSON.stringify({ title, ...result })}`);
+    if (title === "Interactive report") {
+      await assert(await pane.locator("iframe").contentFrame().locator("body").getAttribute("data-reader-state") === "kept", "Polling restarted the HTML document");
+    }
+    await capture(`attachment-poll-stable-${title === "Release review" ? "markdown" : "html"}`);
+    // The explicit Refresh cache action must still load changed source content.
+    const changed = title === "Release review" ? "# Manually refreshed review\n\nUpdated source content." : "<h1>Manually refreshed report</h1>";
+    fs.writeFileSync(attachments[title].path, changed);
+    await pane.locator("summary[aria-label='Attachment actions']").click();
+    await pane.locator(`[data-refresh-attachment="${id}"]`).click();
+    if (title === "Release review") await pane.getByRole("heading", { name: "Manually refreshed review", exact: true }).waitFor();
+    else await pane.locator("iframe").contentFrame().getByRole("heading", { name: "Manually refreshed report" }).waitFor();
+    await capture(`attachment-manual-refresh-${title === "Release review" ? "markdown" : "html"}`);
+    // Restore the shared fixture for the existing lifecycle and layout checks.
+    fs.writeFileSync(attachments[title].path, title === "Release review" ? originalReview : "<h1>Interactive report</h1><script>document.body.dataset.preview = 'ready'</script>");
+  }
+  console.log(`attachment-poll-results: ${JSON.stringify(pollResults)}`);
+  if (captureDir) fs.writeFileSync(path.join(captureDir, "attachment-poll-results.json"), JSON.stringify(pollResults, null, 2));
+  await open("Release review");
   await page.evaluate((key) => {
     const agent = findAgent(key);
     agent.latest_inquiry = {
