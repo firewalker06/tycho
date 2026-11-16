@@ -30,6 +30,13 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       for (const kind of ["focus", "summary", "pull-requests"]) {
         assert.equal(await toggle(kind).isVisible(), true, `${kind} toggle visible at ${width}`);
         assert.equal(await toggle(kind).getAttribute("aria-pressed"), String(kinds.includes(kind)), `${kind} active state`);
+        assert.equal(await toggle(kind).locator("svg").count(), 1, `${kind} keeps its icon`);
+        const style = await toggle(kind).evaluate(e => {
+          const s = getComputedStyle(e);
+          return { borders: [s.borderTopWidth, s.borderRightWidth, s.borderBottomWidth, s.borderLeftWidth].map(parseFloat), shadow: s.boxShadow };
+        });
+        assert(style.borders.every(value => value <= 1), `thin borders in every state: ${JSON.stringify(style)}`);
+        assert.equal(style.shadow, "none", "no thick one-sided shadow accent");
       }
     };
     const placement = async () => {
@@ -57,6 +64,14 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     await page.goto(`${baseUrl}/ui#agent/${agentKey}/summary`, { waitUntil: "networkidle" });
     await page.locator("[data-side-workspace]").waitFor();
     await active(["summary"]);
+    assert.equal(await toggle("pull-requests").innerText(), "PRs");
+    assert.equal(await page.locator(".side-conversation-controls").getAttribute("role"), "group");
+    assert.equal(await page.locator('.side-conversation-controls [role="radio"]').count(), 0);
+    const joined = await page.locator(".side-conversation-controls").evaluate(e => {
+      const visible = [...e.querySelectorAll("button")].filter(b => b.getClientRects().length);
+      return visible.slice(1).every((button, i) => Math.abs(button.getBoundingClientRect().left - visible[i].getBoundingClientRect().right) < 1);
+    });
+    assert(joined, "buttons must join without gaps");
     await page.locator("#prompt-input").fill("Keep this draft while switching panels.");
     await placement();
     await capture("two-open");
@@ -152,6 +167,9 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     await placement();
     await page.locator("#prompt-input").waitFor({ state: "visible" });
     await toggle("summary").focus();
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Shift+Tab");
+    assert(await toggle("summary").evaluate(e => e.matches(":focus-visible") && getComputedStyle(e).outlineStyle !== "none"), "group keeps visible keyboard focus");
     await page.keyboard.press("Enter");
     await active(["summary"]);
     await placement();
