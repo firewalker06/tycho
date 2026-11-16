@@ -234,3 +234,18 @@ Add `TYCHO_REMOTE_UI_PANEL_PLACEMENT_WEBKIT=1` for installed Playwright WebKit.
 Set `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the checkout to retain screenshots and
 geometry measurements. PR 372 remains separate; its polling reconciliation
 changes overlap this preview renderer and need explicit integration.
+
+### Collapse Focus sections
+
+Each section heading is a keyboard-accessible button with an expanded state and
+an explicit item-list target. Collapse hides only that section's items; the
+heading, subtitle, icon and count stay visible. Enter and Space toggle a section.
+The Focus header offers **Collapse all** if any section is open, including a
+mixed state, and **Expand all** when every section is closed.
+
+Choices are local to the agent in the current browser session and survive
+polling, panel replacement and navigation. Section title and duplicate-title
+occurrence identify each choice, so item edits do not reset it. New or renamed
+sections start expanded. Focus data and other browsers are not changed.
+The panel-placement smoke checks section and bulk actions, keyboard states,
+polling, attachment opening and desktop/mobile geometry in Chrome and WebKit.

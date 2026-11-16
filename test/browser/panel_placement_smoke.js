@@ -18,7 +18,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir, metadataFixtur
   const updated = await api.request.put(`${baseUrl}/agents/${agentKey}/focus`, { data: { revision: focus.revision, sections: [{ title: "Panel work", items: [{ title: "Keep this source", attachments: [
     { type: "file", title: "Panel evidence", path: file.path },
     { type: "link", title: "Ordinary external link", url: "https://example.com/panel" },
-  ] }] }] } });
+  ] }] }, { title: "Next actions", items: [{ title: "Review the result" }] }, { title: "Notes", items: [{ title: "Keep the context" }] }] } });
   assert(updated.ok(), await updated.text());
   const facts = [];
   for (const width of [1800, 1440, 1024, 390, 320]) for (const theme of ["dark", "light"]) {
@@ -55,6 +55,47 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir, metadataFixtur
         header: rect(document.querySelector(".app-header")), workspace: rect(document.querySelector("[data-agent-workspace]")),
         panes: [...document.querySelectorAll(".agent-conversation-pane,[data-side-kind]")].filter(e => e.getClientRects().length && getComputedStyle(e).display !== "none").map(e => ({ kind: e.dataset.sideKind || "conversation", ...rect(e) })) };
     });
+    await setPanels(["focus"]);
+    const headings = page.locator("[data-focus-section]");
+    assert.equal(await headings.count(), 3);
+    const bulk = page.locator("[data-focus-bulk]");
+    const expanded = () => headings.evaluateAll(es => es.map(e => e.getAttribute("aria-expanded") === "true"));
+    const assertDisclosure = async (expected, visible = true) => {
+      assert.deepEqual(await expanded(), expected);
+      assert.equal(await bulk.innerText(), expected.some(Boolean) ? "Collapse all" : "Expand all");
+      assert.deepEqual(await headings.evaluateAll((es, visible) => es.map(e => {
+        const items = document.getElementById(e.getAttribute("aria-controls"));
+        return e.querySelector(".agent-focus-chevron svg") && items && items.hidden === (e.getAttribute("aria-expanded") === "false") && (!visible || e.getBoundingClientRect().height > 0);
+      }), visible), [true, true, true]);
+    };
+    await assertDisclosure([true, true, true]);
+    await headings.nth(0).click();
+    await assertDisclosure([false, true, true]);
+    await headings.nth(0).focus();
+    await page.evaluate(() => refresh({ force: true }));
+    await assertDisclosure([false, true, true]);
+    assert.equal(await headings.nth(0).evaluate(e => e === document.activeElement), true, "section focus survives polling");
+    await headings.nth(0).press("Space");
+    await assertDisclosure([true, true, true]);
+    await headings.nth(0).press("Enter");
+    await assertDisclosure([false, true, true]);
+    if (captureDir && [1800, 390].includes(width)) {
+      fs.mkdirSync(captureDir, { recursive: true });
+      await page.screenshot({ path: path.join(captureDir, `focus-mixed-${width}-${theme}.png`) });
+    }
+    await bulk.click();
+    await assertDisclosure([false, false, false]);
+    await page.evaluate(() => refresh({ force: true }));
+    await assertDisclosure([false, false, false]);
+    if (captureDir && [1800, 390].includes(width)) await page.screenshot({ path: path.join(captureDir, `focus-collapsed-${width}-${theme}.png`) });
+    await bulk.press("Enter");
+    await assertDisclosure([true, true, true]);
+    await headings.nth(1).click();
+    await bulk.click();
+    await assertDisclosure([false, false, false]);
+    await bulk.press("Space");
+    await assertDisclosure([true, true, true]);
+    await headings.nth(1).click();
     const widths = [];
     for (const open of [["focus"], ["summary"], ["focus", "summary"], ["summary", "focus"], ["focus", "pull-requests"], ["pull-requests", "focus"]]) {
       await setPanels(open);
@@ -94,6 +135,17 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir, metadataFixtur
       await page.locator('.summary-attachment-preview-scroll[aria-busy="false"]').waitFor({ state: "visible" });
       assert.deepEqual(await page.locator('[data-side-kind]').evaluateAll(es => es.map(e => e.dataset.sideKind)), [source, "attachment"]);
       assert.equal(await page.locator(".agent-conversation-pane").count(), 1);
+      if (source === "focus") await assertDisclosure([true, false, true], width >= 1440);
+      if (source === "focus" && open.length === 1 && width >= 1440) {
+        await bulk.click();
+        await assertDisclosure([false, false, false]);
+        assert.equal(await page.locator(".summary-attachment-preview-pane").isVisible(), true, "collapsing the source must keep the attachment open");
+        if (captureDir && width === 1800) await page.screenshot({ path: path.join(captureDir, `focus-attachment-collapsed-${width}-${theme}.png`) });
+        await bulk.click();
+        await assertDisclosure([true, true, true]);
+        await headings.nth(1).click();
+        await assertDisclosure([true, false, true]);
+      }
       const g = await geometry();
       assert(!g.overflow && g.page <= g.height + 1, JSON.stringify(g));
       if (width >= 1440) assert.deepEqual(g.panes.map(p => p.kind), ["conversation", source, "attachment"]);

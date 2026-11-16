@@ -11286,3 +11286,26 @@ body:has(#confirmation-dialog[open]) [data-project-deletion-status] {
   border: 0;
 }
 .side-conversation-attachment .summary-attachment-preview-scroll { overflow: auto; min-height: 0; }
+
+/* Focus disclosure controls retain each section heading and item count. */
+.agent-focus-heading h3 { flex: 1; min-width: 0; }
+.agent-focus-section-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.agent-focus-section-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 2px; }
+.agent-focus-section-copy { min-width: 0; overflow-wrap: anywhere; }
+.agent-focus-section-subtitle { display: block; margin-top: 4px; color: var(--muted); font-size: 13px; font-weight: normal; white-space: pre-wrap; }
+.agent-focus-chevron svg { width: 16px; height: 16px; }
+.agent-focus-section-toggle[aria-expanded="false"] .agent-focus-chevron svg { transform: rotate(-90deg); }
+.agent-focus-bulk { flex-shrink: 0; font-size: 12px; padding: 6px 8px; white-space: nowrap; }
+.agent-focus-section:has([aria-expanded="false"]) .agent-focus-heading { margin-bottom: 0; }

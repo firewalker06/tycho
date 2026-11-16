@@ -26,6 +26,9 @@ integration with this shared peer renderer.
 Fixed-header size changes update content clearance and pane height. Side panels close through grouped toggles at every width. Focus fills the
 remaining viewport; only its body scrolls. Mobile tabs scroll within one
 constrained row while Stop stays fixed at the right.
+Each Focus section has an accessible heading toggle. A header button collapses
+all sections when any are open, or expands all when all are closed. Per-agent
+choices survive polling and panel navigation in the current browser session.
 See [Agent Focus](AGENT_FOCUS.md#side-conversations).
 
 ## Custom Remote UI themes
