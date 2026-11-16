@@ -607,11 +607,13 @@ def run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_
                       "null"
                     end
   File.write(script, <<~JS)
-    const { chromium } = require("playwright");
+    const { chromium, webkit } = require("playwright");
     const smoke = require(#{File.join(ROOT, "test", "browser", "#{test_name}.js").inspect});
     const inquiryFixture = #{inquiry_fixture.strip};
     (async () => {
-      const browser = await chromium.launch({ executablePath: #{browser.inspect}, headless: true });
+      const browser = #{test_name == "side_conversation_top_smoke"} && process.env.TYCHO_REMOTE_UI_SIDE_TOP_WEBKIT === "1"
+        ? await webkit.launch({ headless: true })
+        : await chromium.launch({ executablePath: #{browser.inspect}, headless: true });
       try {
         await smoke({ browser, baseUrl: #{base_url.inspect}, agentKey: #{agent_key.inspect}, captureDir: process.env.TYCHO_REMOTE_UI_CAPTURE_DIR || "", advanceInquiry: inquiryFixture ? key => inquiryFixture("--advance", key) : null, waitForInquiryRuns: inquiryFixture ? () => inquiryFixture("--wait") : null, metadataFixture: #{JSON.generate(metadata_fixture)} });
       } finally { await browser.close(); }
@@ -720,6 +722,20 @@ def write_delegated_summary_fixture(fixture)
   raise "Failed to seed delegated Summary fixture: #{out}" unless status.success?
 
   agent_key
+end
+
+def write_side_conversation_top_fixture(logs_dir, agent_key)
+  path = File.join(logs_dir, "managed_agents.json")
+  agents = JSON.parse(File.read(path))
+  agent = agents.find { |item| item["key"] == agent_key }
+  at = Time.now.utc
+  content = "# Mobile review\n\n" + (1..60).map { |index| "Review item #{index}. Synthetic content for scrolling to the first controls." }.join("\n\n")
+  agent.merge!("name" => "Tycho Card Work", "pid" => nil, "last_exit_code" => 0, "summary" => "Mobile review", "total_run_count" => 1, "started_at" => (at - 60).iso8601, "finished_at" => at.iso8601,
+               "runs" => [{ "run_id" => "mobile-top", "status" => "success", "command" => "synthetic-wrapper", "metadata" => {}, "started_at" => (at - 60).iso8601, "finished_at" => at.iso8601, "exit_code" => 0, "log_path" => agent.fetch("log_path") }])
+  event = { "type" => "run_summary", "content" => content, "status" => "success", "created_at" => at.iso8601,
+            "metadata" => { "run_id" => "mobile-top", "summary_id" => "mobile-top", "run_number" => 1 } }
+  File.write(path, JSON.pretty_generate(agents))
+  File.open(agent.fetch("log_path").sub(/\.raw\.log\z/, ".memory.jsonl"), "a") { |file| file.puts(JSON.generate(event)) }
 end
 
 def write_summary_idle_stop_fixture(logs_dir, agent_key)
@@ -11290,7 +11306,8 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     if ENV["TYCHO_REMOTE_UI_SIDE_CONVERSATIONS_ONLY"] == "1"
       associate_agent_pull_request(fixture.fetch(:logs_dir), agent_key)
       seed_conversation_tail_fixture(env, agent_key, 20)
-      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "side_conversations_smoke")
+      write_side_conversation_top_fixture(fixture.fetch(:logs_dir), agent_key) if ENV["TYCHO_REMOTE_UI_SIDE_TOP_ONLY"] == "1"
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: ENV["TYCHO_REMOTE_UI_SIDE_TOP_ONLY"] == "1" ? "side_conversation_top_smoke" : "side_conversations_smoke")
       next
     end
     if ENV["TYCHO_REMOTE_UI_FOCUS_ONLY"] == "1"

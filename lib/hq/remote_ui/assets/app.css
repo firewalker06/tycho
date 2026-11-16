@@ -11231,3 +11231,8 @@ body:has(#confirmation-dialog[open]) [data-project-deletion-status] {
   .agent-workspace.has-attachment-preview .agent-detail-pane { grid-row: 1; min-height: 0; overflow-y: auto; }
   .agent-workspace.has-attachment-preview .agent-dock { position: relative; inset: auto; transform: none; grid-row: 2; width: 100%; max-height: 60dvh; overflow-y: auto; }
 }
+
+@media (max-width: 899px) {
+  .side-conversation-close,
+  [data-agent-workspace] [data-close-agent-focus] { display: none; }
+}

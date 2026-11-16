@@ -101,9 +101,9 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     await placement();
     assert.equal(await page.locator("#prompt-input").inputValue(), "Keep this draft while switching panels.");
     await capture("three-open");
-    await page.getByRole("button", { name: "Close Focus panel", exact: true }).click();
+    await (width < 900 ? toggle("focus") : page.getByRole("button", { name: "Close Focus panel", exact: true })).click();
     await active(["summary"]);
-    await page.getByRole("button", { name: "Close Summary panel", exact: true }).click();
+    await (width < 900 ? toggle("summary") : page.getByRole("button", { name: "Close Summary panel", exact: true })).click();
     await active([]);
     await placement();
     assert.equal(await page.locator("#prompt-input").inputValue(), "Keep this draft while switching panels.");
@@ -186,7 +186,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       await page.locator("[data-side-workspace]").waitFor({ state: "detached" });
       assert.equal(await page.locator("[data-side-workspace]").count(), 0, "header Close must clear shared panel state");
     } else {
-      await page.getByRole("button", { name: "Close Summary panel", exact: true }).click();
+      await (width < 900 ? toggle("summary") : page.getByRole("button", { name: "Close Summary panel", exact: true })).click();
       await active([]);
     }
     await page.locator("#prompt-input").waitFor({ state: "visible" });

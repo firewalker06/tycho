@@ -22,8 +22,9 @@ the most recently requested panel. The composer remains below a Focus-only
 view, including narrow desktops. Closing Focus restores Conversation.
 
 Below 900 px, Focus starts closed. The Focus shortcut explicitly opens it as
-the visible panel, with the composer retained below it. Close Focus returns to
-Conversation and its saved scroll position. Wide opening does not
+the visible panel, with the composer retained below it. Toggle Focus off to return to
+Conversation and its saved scroll position. Mobile panels have no Close buttons;
+use the grouped toggles. Desktop Close buttons remain available. Wide opening does not
 request the mobile panel. A manual mobile open remains open through
 polling and viewport changes until the operator closes it.
 
@@ -151,7 +152,9 @@ a side view is visible.
 
 Polling preserves open panels and drafts. A Summary attachment preview uses
 the existing attachment panel layout; closing it restores the open Side
-Conversations. The shared toggles remain outside the attachment pane.
+Conversations. The shared toggles remain outside the attachment pane. Header clearance tracks
+the actual header size, including wrapped metadata, font changes, and safe insets.
+At scroll top, the first content and its controls remain below the header.
 
 ## Verification
 
@@ -174,3 +177,23 @@ Check the Side Conversations switcher and responsive layout with:
 ```sh
 TYCHO_REMOTE_UI_SIDE_CONVERSATIONS_ONLY=1 bin/remote-ui-smoke
 ```
+
+Check wrapped mobile headers, safe-inset changes, first-content hit testing,
+scrolling, polling, navigation, resize, and drafts with:
+
+```sh
+TYCHO_REMOTE_UI_SIDE_CONVERSATIONS_ONLY=1 TYCHO_REMOTE_UI_SIDE_TOP_ONLY=1 bin/remote-ui-smoke
+```
+
+For the same checks in Playwright WebKit, install its browser and add the
+WebKit flag:
+
+```sh
+npx --yes playwright install webkit
+TYCHO_REMOTE_UI_SIDE_CONVERSATIONS_ONLY=1 TYCHO_REMOTE_UI_SIDE_TOP_ONLY=1 TYCHO_REMOTE_UI_SIDE_TOP_WEBKIT=1 bin/remote-ui-smoke
+```
+
+`PLAYWRIGHT_BROWSERS_PATH` can select a custom browser cache. Use the same
+absolute cache directory for installation and the test. These checks simulate
+mobile viewports, larger text, and safe insets. They do not test physical iOS
+browser chrome or its software keyboard.
