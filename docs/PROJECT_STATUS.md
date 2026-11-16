@@ -29,6 +29,10 @@ constrained row while Stop stays fixed at the right.
 Each Focus section has an accessible heading toggle. A header button collapses
 all sections when any are open, or expands all when all are closed. Per-agent
 choices survive polling and panel navigation in the current browser session.
+Focus attachments reuse Summary type icons and supported panel-open/download
+actions. Container queries select three, two or one attachment columns from the
+actual Focus width; external links keep their navigation and have no invented
+download actions.
 See [Agent Focus](AGENT_FOCUS.md#side-conversations).
 
 ## Custom Remote UI themes

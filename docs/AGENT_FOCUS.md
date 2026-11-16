@@ -249,3 +249,28 @@ occurrence identify each choice, so item edits do not reset it. New or renamed
 sections start expanded. Focus data and other browsers are not changed.
 The panel-placement smoke checks section and bulk actions, keyboard states,
 polling, attachment opening and desktop/mobile geometry in Chrome and WebKit.
+
+### Focus attachment cards
+
+Focus reuses Summary attachment rows and type icons, including image and link
+icons. Registered files have the same panel-open and Download controls. The
+panel-open action keeps Focus in panel two and replaces panel three. Download
+uses the registered original filename, including when Focus has a custom title.
+Ordinary external links retain their external navigation and have no unsupported
+download or preview action. Removed files show as unavailable without actions.
+
+Attachment grids use the Focus panel as an inline-size container. They show one
+column below 640 pixels of container content width, two columns from 640 pixels,
+and three from 960 pixels. They respond to opening another panel at the same
+viewport width. Long labels wrap to three lines; accessible labels and title
+attributes keep their complete text. Action controls retain their standard size.
+
+```sh
+TYCHO_REMOTE_UI_SIDE_CONVERSATIONS_ONLY=1 TYCHO_REMOTE_UI_FOCUS_ATTACHMENTS_ONLY=1 bin/remote-ui-smoke
+```
+
+Add `TYCHO_REMOTE_UI_FOCUS_ATTACHMENTS_WEBKIT=1` for installed Playwright WebKit.
+Set `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the checkout for current screenshots
+and measured panel/grid geometry. The fixture checks actual downloads and bytes,
+external navigation, type icons, unavailable files, keyboard actions, long
+labels, same-viewport panel changes, polling, drafts and desktop/mobile bounds.

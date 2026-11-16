@@ -33,7 +33,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir, metadataFixtur
     await page.waitForFunction(() => document.querySelector("[data-agent-workspace]")?.clientWidth > 0);
     const initial = await page.locator("[data-agent-workspace]").evaluate(e => ({ width: e.clientWidth, focus: e.querySelector(".agent-detail-pane").clientWidth }));
     if (width >= 1440) {
-      await page.locator('.agent-focus-attachments [data-preview-summary-attachment]').click();
+      await page.locator('.agent-focus-attachments a[data-preview-summary-attachment]').click();
       await page.locator('.summary-attachment-preview-scroll[aria-busy="false"]').waitFor({ state: "visible" });
       assert.deepEqual(await page.locator('[data-side-kind]').evaluateAll(es => es.map(e => e.dataset.sideKind)), ["focus", "attachment"]);
     }
@@ -128,7 +128,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir, metadataFixtur
       if (source === "focus") {
         const external = page.locator('.agent-focus-attachments a[target="_blank"]');
         assert.equal(await external.getAttribute("href"), "https://example.com/panel");
-        await page.locator('.agent-focus-attachments [data-preview-summary-attachment]').click();
+        await page.locator('.agent-focus-attachments a[data-preview-summary-attachment]').click();
       } else {
         await page.locator('[data-side-kind="summary"] .summary-attachment-row').click();
       }
