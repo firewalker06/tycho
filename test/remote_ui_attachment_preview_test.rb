@@ -24,10 +24,11 @@ module RemoteUIAttachmentPreviewTest
         let navigation;
         let summary = { id: "summary-1", runNumber: 1, createdAt: "today" };
         const context = {
-          state: { summaryAttachmentPreview: null, attachmentDetails: {} },
+          state: { summaryAttachmentPreview: null, attachmentDetails: {}, agentSidePanels: new Map([[agent.key, { open: ["focus", "summary"] }]]), prDiffFullViewMode: {} },
           window: { matchMedia: () => ({ matches: wide }) },
           document: { querySelector: () => null, querySelectorAll: () => [] },
           parseRoute: () => route,
+          sideConversationState: (value) => context.state.agentSidePanels.get(value.key),
           findAgent: (key) => key === agent.key ? agent : null,
           agentAttachments: (value) => value.attachments,
           attachmentId: (value) => value.id,
@@ -67,6 +68,7 @@ module RemoteUIAttachmentPreviewTest
 
           const first = context.openSummaryAttachmentPreview("one", "a");
           const second = context.openSummaryAttachmentPreview("two", "a");
+          assert(context.state.agentSidePanels.get("a").open.join(" ") === "summary attachment", "Attachment must replace the third peer and retain its source");
           const beforeStale = renders;
           complete(pending[0], { id: "one", agent_key: "a" });
           await first;
@@ -102,15 +104,19 @@ module RemoteUIAttachmentPreviewTest
           context.reconcileSummaryAttachmentPreview();
           assert(context.state.summaryAttachmentPreview.id === "two", "Resize cleared the selected preview");
           context.state.summaryAttachmentPreview = null;
-          await context.openSummaryAttachmentPreview("two", "a");
-          assert(navigation.type === "agentAttachment" && navigation.attachmentId === "two" && context.state.summaryAttachmentPreview === null, "Narrow screen bypassed existing detail route");
+          const narrow = context.openSummaryAttachmentPreview("two", "a", "focus");
+          complete(pending[5], { id: "two", agent_key: "a" });
+          await narrow;
+          assert(!navigation && context.state.summaryAttachmentPreview.id === "two", "Narrow screen must keep the source and attachment in the workspace");
+          assert(context.state.agentSidePanels.get("a").open.join(" ") === "focus attachment", "Focus must occupy panel two on narrow screens");
           wide = true;
           route = { type: "agentSummary", key: "a", summaryId: "summary-2" };
           const navigating = context.openSummaryAttachmentPreview("two", "a");
           route = { type: "agentSummary", key: "b" };
           context.reconcileSummaryAttachmentPreview();
           const beforeNavigation = renders;
-          complete(pending[5], { id: "two", agent_key: "a" });
+          assert(context.state.agentSidePanels.get("a").open.join(" ") === "summary", "Agent navigation must remove the retired preview peer");
+          complete(pending[6], { id: "two", agent_key: "a" });
           await navigating;
           assert(context.state.summaryAttachmentPreview === null && renders === beforeNavigation, "A completed request reopened a preview after agent navigation");
         }
