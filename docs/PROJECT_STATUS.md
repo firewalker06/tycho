@@ -17,7 +17,12 @@ type: project
 Focus, Summary, and PR Diffs share persistent Side Conversation toggles in
 the existing desktop agent header and directly above the mobile prompt form. Two Side Conversations can stay open beside Conversation. The most
 recent view stays visible at narrow widths; polling keeps the selected views.
-Summary attachment previews retain the existing attachment panel controls.
+Focus and side panels use the Summary/Attachment sizing reference: equal flexible
+columns with 380-pixel Conversation and 440-pixel peer minimums. File attachments
+opened from Focus or Summary replace panel three, with the source in panel two;
+Conversation remains available. Ordinary external links keep their navigation.
+PR 372 remains a separate polling fix; its preview reconciliation changes need
+integration with this shared peer renderer.
 Fixed-header size changes update content clearance and pane height. Side panels close through grouped toggles at every width. Focus fills the
 remaining viewport; only its body scrolls. Mobile tabs scroll within one
 constrained row while Stop stays fixed at the right.

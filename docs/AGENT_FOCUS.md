@@ -150,13 +150,12 @@ squeeze multiple columns into the screen. The Conversation control returns
 to chat without closing the side views. Prompt drafts remain available while
 a side view is visible.
 
-Polling preserves open panels and drafts. A Summary attachment preview uses
-the existing attachment panel layout; closing it restores the open Side
-Conversations. The shared toggles remain outside the attachment pane. Header clearance tracks
+Polling preserves open panels and drafts. File attachments from Focus or Summary
+replace the third panel while the source stays in the second panel. The shared toggles remain outside the attachment pane. Header clearance tracks
 the actual header size, including wrapped metadata, font changes, and safe insets.
 At scroll top, the first content and its controls remain below the header.
 Panel X buttons are removed at all widths; grouped toggles close and reopen
-side views. Attachment and modal dismiss controls remain available. The outer
+side views. Modal dismiss controls remain available. The outer
 workspace stays within the viewport, and only the Focus body scrolls. On mobile,
 the tabs and Stop share one width-constrained row. Only the tabs scroll
 horizontally; Stop stays fixed at the right when a run starts or stops.
@@ -214,3 +213,24 @@ Add `TYCHO_REMOTE_UI_SIDE_BOUNDS_WEBKIT=1` to run these checks in installed
 Playwright WebKit. The test checks document/form bounds, independent Focus
 scrolling, last-tab reachability, fixed Stop geometry, touch/keyboard toggles,
 and retained drafts. It uses a synthetic local harness process without a provider.
+
+### Panel width and attachment placement
+
+Initial Focus and shared Side Conversations use the same outer width limit.
+Columns follow the Summary plus Attachment reference: equal flexible widths,
+with 380 pixels for Conversation and 440 pixels for each peer when space permits.
+At constrained widths the newest peer remains visible.
+
+A file opened from Focus or Summary keeps Conversation and its source. The source
+moves to panel two if necessary, and the attachment replaces panel three.
+External links keep their existing navigation. The attachment uses internal
+scrolling and the shared tabs; it has no panel close button.
+
+```sh
+TYCHO_REMOTE_UI_SIDE_CONVERSATIONS_ONLY=1 TYCHO_REMOTE_UI_PANEL_PLACEMENT_ONLY=1 bin/remote-ui-smoke
+```
+
+Add `TYCHO_REMOTE_UI_PANEL_PLACEMENT_WEBKIT=1` for installed Playwright WebKit.
+Set `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the checkout to retain screenshots and
+geometry measurements. PR 372 remains separate; its polling reconciliation
+changes overlap this preview renderer and need explicit integration.

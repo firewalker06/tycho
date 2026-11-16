@@ -11147,15 +11147,16 @@ body:has(#confirmation-dialog[open]) [data-project-deletion-status] {
 .side-conversation-workspace .side-conversation-hidden { display: none !important; }
 .side-conversation-workspace .agent-floating-actions:has(.agent-action-track:empty) { display: none; }
 @media (min-width: 900px) {
-  body:has(.side-conversation-workspace) .app-shell,
-  body:has(.side-conversation-workspace) .app-header.detail-header { max-width: 2200px; }
+  .app-shell:has(> .bottom-nav:not(.hidden)):has(.agent-workspace:is(.side-conversation-workspace, .has-focus-panel)),
+  body:has(.agent-workspace:is(.side-conversation-workspace, .has-focus-panel)) .app-shell,
+  body:has(.agent-workspace:is(.side-conversation-workspace, .has-focus-panel)) .app-header.detail-header { max-width: 2200px; }
   .agent-workspace.side-conversation-workspace.has-detail {
-    grid-template-columns: minmax(340px, 1fr) minmax(420px, 1fr);
+    grid-template-columns: minmax(380px, 1fr) minmax(440px, 1fr);
     grid-template-rows: minmax(0, 1fr) auto;
     max-width: none;
   }
   .agent-workspace.side-conversation-workspace.side-conversation-three {
-    grid-template-columns: minmax(340px, 1fr) repeat(2, minmax(420px, 1fr));
+    grid-template-columns: minmax(380px, 1fr) repeat(2, minmax(440px, 1fr));
   }
   .agent-workspace.side-conversation-workspace .side-conversation-pane { grid-column: 2; grid-row: 1 / -1; }
   .agent-workspace.side-conversation-workspace.side-conversation-three .side-conversation-pane + .side-conversation-pane { grid-column: 3; }
@@ -11190,8 +11191,8 @@ body:has(#confirmation-dialog[open]) [data-project-deletion-status] {
 
 @media (min-width: 900px) {
   .agent-workspace.side-conversation-workspace.has-detail[data-side-count="1"]:not(.agent-workspace-full-view) {
-    grid-template-columns: minmax(340px, 0.85fr) minmax(420px, 1.15fr);
-    max-width: 1400px;
+    grid-template-columns: minmax(380px, 1fr) minmax(440px, 1fr);
+    max-width: none;
   }
 }
 
@@ -11271,3 +11272,17 @@ body:has(#confirmation-dialog[open]) [data-project-deletion-status] {
   .agent-panel-controls-row > .side-conversation-controls { width: 100%; min-height: 42px; margin: 0; }
   .agent-dock:has(.agent-panel-controls-row) #composer { min-width: 0; max-width: 100%; }
 }
+
+/* Attachment previews use the same peer slots as Focus, Summary and PRs. */
+.side-conversation-attachment > .side-conversation-body { display: flex; overflow: hidden; }
+.side-conversation-attachment .summary-attachment-preview-pane {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.side-conversation-attachment .summary-attachment-preview-scroll { overflow: auto; min-height: 0; }

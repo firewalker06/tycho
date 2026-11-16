@@ -114,10 +114,11 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     if (width >= 1440) {
       await page.evaluate(({ id, key }) => openSummaryAttachmentPreview(id, key), { id: attachment.id, key: agentKey });
       await page.locator(".summary-attachment-preview-pane").waitFor({ state: "visible" });
-      await active(["summary", "focus"]);
-      await page.locator("[data-close-summary-attachment-preview]").click();
+      await active(["summary"]);
+      await page.evaluate(() => closeSummaryAttachmentPreview());
       await page.locator("[data-side-workspace]").waitFor();
-      await active(["summary", "focus"]);
+      await active(["summary"]);
+      await toggle("focus").click();
       await toggle("focus").focus();
       await page.setViewportSize({ width: 390, height: 900 });
       await frames();
