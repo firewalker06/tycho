@@ -140,16 +140,20 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     assert(geometry.width <= geometry.viewport + 1, JSON.stringify(geometry));
     assert(geometry.focus.right <= geometry.viewport + 1 && geometry.focus.y >= 60 && geometry.focus.bottom <= 901, JSON.stringify(geometry));
     assert(geometry.dock.height > 0 && geometry.dock.bottom <= 901 && geometry.dock.x >= 0 && geometry.dock.right <= geometry.viewport + 1, JSON.stringify(geometry));
-    // Existing Summary/attachment panels remain separate from Focus state.
+    // Summary retains an explicitly open Focus; attachment preview keeps its own panels.
     await page.goto(`${baseUrl}/ui#agent/${agentKey}/summary`, { waitUntil: "networkidle" });
-    assert.equal(await page.locator("[data-agent-focus]").count(), 0);
+    assert.equal(await page.locator("[data-agent-focus]").count(), 1);
     if (width === 1440) {
       await page.evaluate(({ id, key }) => openSummaryAttachmentPreview(id, key), { id: file.id, key: agentKey });
       await page.getByRole("heading", { name: "Review notes", exact: true }).waitFor();
       assert.equal(await page.locator("[data-content-panel-heading]").count(), 3);
     }
     await page.goto(`${baseUrl}/ui#agent/${agentKey}`, { waitUntil: "networkidle" }); await frames();
-    assert((await visible()).includes("focus"), "navigation lost explicit open");
+    assert(await page.evaluate(key => state.agentSidePanels.get(key)?.open.includes("focus"), agentKey), "navigation lost explicit open");
+    if (!(await focus.isVisible())) {
+      await page.locator('.side-conversation-controls [data-side-conversation="focus"]').click();
+      await page.locator('.side-conversation-controls [data-side-conversation="focus"]').click();
+    }
     await focus.getByRole("link", { name: "Read review notes" }).click();
     await page.getByRole("heading", { name: "Review notes", exact: true }).waitFor();
     assert.deepEqual(errors, []);

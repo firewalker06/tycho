@@ -8,7 +8,8 @@ The Remote UI shows non-empty Focus in its own peer panel on Conversation.
 Focus is outside the message list and has its own scroll area. Each section has
 a title, optional subtitle, icon, and ordered items. Each item has a title,
 optional subtitle, and attachment links. Empty sections show “No items”. There
-is no Focus panel or shortcut when the document is absent or empty.
+is no default Focus panel or shortcut when the document is absent or empty.
+The Side Conversations switcher can still open an empty Focus panel.
 
 ## Panel behavior
 
@@ -132,6 +133,22 @@ through configured peers:
 Agent detail responses also include `focus` with resolved file preview links.
 The dedicated Focus read endpoint returns the saved document for editing.
 
+## Side Conversations
+
+Conversation is the first panel. Focus, Summary, and PR Diffs are Side
+Conversations. Opening Summary or PR Diffs shows a shared switcher in the
+second panel. Its buttons stay visible and highlight each open Side
+Conversation. A second Side Conversation opens in a third panel. Opening a
+third replaces the oldest open Side Conversation.
+
+When the width cannot fit three panels, the newest Side Conversation stays
+visible. Both open buttons remain highlighted. Below 900 px, the switcher has
+a Conversation button to return to the composer. Side panel toggles, Close
+buttons, and the header Close control can close the views. Polling preserves
+open panels and drafts. A Summary attachment preview temporarily uses the
+existing attachment panel controls; closing it restores the open Side
+Conversations.
+
 ## Verification
 
 `bin/test` includes store validation, concurrent-write, persistence, CLI/API,
@@ -147,3 +164,9 @@ the bottom, desktop fit defaults, narrow/mobile defaults and explicit opening,
 independent scrolling, keyboard controls, polling, updates, resize/navigation
 choices, drafts, Summary/attachment compatibility, empty/late Focus, invalid
 URLs, conflicts, and viewport overflow in Dark and Light.
+
+Check the Side Conversations switcher and responsive layout with:
+
+```sh
+TYCHO_REMOTE_UI_SIDE_CONVERSATIONS_ONLY=1 bin/remote-ui-smoke
+```

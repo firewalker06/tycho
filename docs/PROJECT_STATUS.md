@@ -10,7 +10,15 @@ type: project
 
 ## Last Updated
 
-2026-11-15
+2026-11-16
+
+## Conversation side panels
+
+Focus, Summary, and PR Diffs share Side Conversation toggles in the second
+panel. Two Side Conversations can stay open beside Conversation. The most
+recent view stays visible at narrow widths; polling keeps the selected views.
+Summary attachment previews retain the existing attachment panel controls.
+See [Agent Focus](AGENT_FOCUS.md#side-conversations).
 
 ## Custom Remote UI themes
 
