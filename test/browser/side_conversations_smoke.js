@@ -98,6 +98,13 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     await page.evaluate(() => refresh({ force: true, preserveFocusedWorkspace: true }));
     await active(["summary", "pull-requests"]);
     assert.equal(await page.locator(".agent-floating-actions [data-open-agent-summary]").count(), 0, "polling must keep the shared switcher");
+    if (width >= 1440) {
+      await page.locator("[data-toggle-pr-diff-full-view]").click();
+      assert.equal(await page.locator(".agent-conversation-pane").isVisible(), false, "PR Full view must work beside Summary");
+      await active(["summary", "pull-requests"]);
+      await page.locator("[data-toggle-pr-diff-full-view]").click();
+      assert.equal(await page.locator(".agent-conversation-pane").isVisible(), true);
+    }
     await capture("pr-summary");
     if (width === 390) {
       await toggle("conversation").click();
@@ -122,9 +129,15 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     await active(["summary"]);
     await page.evaluate(key => navigate({ type: "agentSummary", key }), agentKey);
     await page.waitForFunction(() => parseRoute().type === "agentSummary");
-    await page.locator("#header-detail-close").click();
-    await page.waitForFunction(key => parseRoute().type === "agent" && !state.agentSidePanels.has(key), agentKey);
-    assert.equal(await page.locator("[data-side-workspace]").count(), 0, "header Close must clear shared panel state");
+    if (width >= 900) {
+      await page.locator("#header-detail-close").click();
+      await page.waitForFunction(key => parseRoute().type === "agent" && !state.agentSidePanels.has(key), agentKey);
+      await page.locator("[data-side-workspace]").waitFor({ state: "detached" });
+      assert.equal(await page.locator("[data-side-workspace]").count(), 0, "header Close must clear shared panel state");
+    } else {
+      await page.getByRole("button", { name: "Close Summary panel", exact: true }).click();
+      await active([]);
+    }
     await page.locator("#prompt-input").waitFor({ state: "visible" });
     assert.deepEqual(errors, []);
     await context.close();
