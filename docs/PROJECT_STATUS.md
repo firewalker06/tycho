@@ -10,7 +10,18 @@ type: project
 
 ## Last Updated
 
-2026-11-15
+2026-11-16
+
+## Conversation side panels
+
+Focus, Summary, and PR Diffs share persistent Side Conversation toggles in
+the existing desktop agent header and directly above the mobile prompt form. Two Side Conversations can stay open beside Conversation. The most
+recent view stays visible at narrow widths; polling keeps the selected views.
+Summary attachment previews retain the existing attachment panel controls.
+Fixed-header size changes update content clearance and pane height. Side panels close through grouped toggles at every width. Focus fills the
+remaining viewport; only its body scrolls. Mobile tabs scroll within one
+constrained row while Stop stays fixed at the right.
+See [Agent Focus](AGENT_FOCUS.md#side-conversations).
 
 ## Custom Remote UI themes
 

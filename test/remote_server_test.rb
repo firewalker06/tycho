@@ -10464,7 +10464,8 @@ module RemoteServerTest
     assert(!js[:body].include?("function renderAgentViewToggle") &&
            js[:body].include?("panelRightClose:") &&
            js[:body].include?('"agentSummary", "agentAttachment", "agentPullRequests"') &&
-           js[:body].include?('if (agentKey) navigate({ type: "agent", key: agentKey });'),
+           js[:body].include?("state.agentSidePanels.delete(agentKey);") &&
+           js[:body].include?('navigate({ type: "agent", key: agentKey });'),
            "expected focused Summary, PR diff, and Attachment views to close from their desktop header")
     assert(!js[:body].include?("function renderAgentAttachmentToggle"),
            "expected attachment views to omit the old Conversation header")

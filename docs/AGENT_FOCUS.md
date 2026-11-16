@@ -8,7 +8,8 @@ The Remote UI shows non-empty Focus in its own peer panel on Conversation.
 Focus is outside the message list and has its own scroll area. Each section has
 a title, optional subtitle, icon, and ordered items. Each item has a title,
 optional subtitle, and attachment links. Empty sections show “No items”. There
-is no Focus panel or shortcut when the document is absent or empty.
+is no default Focus panel or shortcut when the document is absent or empty.
+The Side Conversations switcher can still open an empty Focus panel.
 
 ## Panel behavior
 
@@ -21,8 +22,9 @@ the most recently requested panel. The composer remains below a Focus-only
 view, including narrow desktops. Closing Focus restores Conversation.
 
 Below 900 px, Focus starts closed. The Focus shortcut explicitly opens it as
-the visible panel, with the composer retained below it. Close Focus returns to
-Conversation and its saved scroll position. Wide opening does not
+the visible panel, with the composer retained below it. Toggle Focus off to return to
+Conversation and its saved scroll position. Mobile panels have no Close buttons;
+use the grouped toggles. Desktop Close buttons remain available. Wide opening does not
 request the mobile panel. A manual mobile open remains open through
 polling and viewport changes until the operator closes it.
 
@@ -132,6 +134,33 @@ through configured peers:
 Agent detail responses also include `focus` with resolved file preview links.
 The dedicated Focus read endpoint returns the saved document for editing.
 
+## Side Conversations
+
+Conversation is the first panel. Focus, Summary, and PR Diffs are Side
+Conversations. Their shared toggles stay in the existing agent header on
+desktop. On mobile, the controls stay directly above the prompt form in a
+persistent composer region. Closing all Side Conversations keeps the controls
+available so any view can be reopened.
+
+A second Side Conversation opens in a third panel. Opening a third replaces
+the oldest open Side Conversation. When the width cannot fit three panels,
+the newest Side Conversation stays visible. Both open buttons remain
+highlighted. Mobile shows one content view above the composer; it does not
+squeeze multiple columns into the screen. The Conversation control returns
+to chat without closing the side views. Prompt drafts remain available while
+a side view is visible.
+
+Polling preserves open panels and drafts. A Summary attachment preview uses
+the existing attachment panel layout; closing it restores the open Side
+Conversations. The shared toggles remain outside the attachment pane. Header clearance tracks
+the actual header size, including wrapped metadata, font changes, and safe insets.
+At scroll top, the first content and its controls remain below the header.
+Panel X buttons are removed at all widths; grouped toggles close and reopen
+side views. Attachment and modal dismiss controls remain available. The outer
+workspace stays within the viewport, and only the Focus body scrolls. On mobile,
+the tabs and Stop share one width-constrained row. Only the tabs scroll
+horizontally; Stop stays fixed at the right when a run starts or stops.
+
 ## Verification
 
 `bin/test` includes store validation, concurrent-write, persistence, CLI/API,
@@ -147,3 +176,41 @@ the bottom, desktop fit defaults, narrow/mobile defaults and explicit opening,
 independent scrolling, keyboard controls, polling, updates, resize/navigation
 choices, drafts, Summary/attachment compatibility, empty/late Focus, invalid
 URLs, conflicts, and viewport overflow in Dark and Light.
+
+Check the Side Conversations switcher and responsive layout with:
+
+```sh
+TYCHO_REMOTE_UI_SIDE_CONVERSATIONS_ONLY=1 bin/remote-ui-smoke
+```
+
+Check wrapped mobile headers, safe-inset changes, first-content hit testing,
+scrolling, polling, navigation, resize, and drafts with:
+
+```sh
+TYCHO_REMOTE_UI_SIDE_CONVERSATIONS_ONLY=1 TYCHO_REMOTE_UI_SIDE_TOP_ONLY=1 bin/remote-ui-smoke
+```
+
+For the same checks in Playwright WebKit, install its browser and add the
+WebKit flag:
+
+```sh
+npx --yes playwright install webkit
+TYCHO_REMOTE_UI_SIDE_CONVERSATIONS_ONLY=1 TYCHO_REMOTE_UI_SIDE_TOP_ONLY=1 TYCHO_REMOTE_UI_SIDE_TOP_WEBKIT=1 bin/remote-ui-smoke
+```
+
+`PLAYWRIGHT_BROWSERS_PATH` can select a custom browser cache. Use the same
+absolute cache directory for installation and the test. These checks simulate
+mobile viewports, larger text, and safe insets. They do not test physical iOS
+browser chrome or its software keyboard.
+
+Check desktop short/long Focus scroll ownership and real isolated running/idle
+Stop transitions at 320, 390, and landscape widths with:
+
+```sh
+TYCHO_REMOTE_UI_SIDE_CONVERSATIONS_ONLY=1 TYCHO_REMOTE_UI_SIDE_BOUNDS_ONLY=1 bin/remote-ui-smoke
+```
+
+Add `TYCHO_REMOTE_UI_SIDE_BOUNDS_WEBKIT=1` to run these checks in installed
+Playwright WebKit. The test checks document/form bounds, independent Focus
+scrolling, last-tab reachability, fixed Stop geometry, touch/keyboard toggles,
+and retained drafts. It uses a synthetic local harness process without a provider.
