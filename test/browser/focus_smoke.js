@@ -43,7 +43,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     const visible = () => page.locator(".agent-workspace").getAttribute("data-visible-panels");
     const focus = page.locator("[data-agent-focus]");
     const open = page.locator('.side-conversation-controls [data-side-conversation="focus"]');
-    const close = width < 900 ? open : page.getByRole("button", { name: "Close Focus panel", exact: true });
+    const close = open;
     const composer = page.locator("#prompt-input");
     const capture = async name => {
       if (!captureDir) return;
@@ -87,11 +87,11 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       return { borders: [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth], width: rect.width, height: rect.height, name: el.getAttribute("aria-label"), outline: style.outlineStyle, outlineWidth: style.outlineWidth, focusVisible: el.matches(":focus-visible") };
     });
     const closeNormal = await closeStyle();
-    assert(closeNormal.borders.every(value => parseFloat(value) <= (width < 900 ? 1 : 0)));
-    assert(closeNormal.width >= 44 && closeNormal.height >= (width < 900 ? 40 : 44), JSON.stringify(closeNormal));
-    assert.equal(closeNormal.name, width < 900 ? null : "Close Focus panel");
+    assert(closeNormal.borders.every(value => parseFloat(value) <= 1));
+    assert(closeNormal.width >= 44 && closeNormal.height >= (width < 900 ? 40 : 36), JSON.stringify(closeNormal));
+    assert.equal(closeNormal.name, null);
     await close.hover();
-    assert((await closeStyle()).borders.every(value => parseFloat(value) <= (width < 900 ? 1 : 0)), "hover must keep thin borders");
+    assert((await closeStyle()).borders.every(value => parseFloat(value) <= 1), "hover must keep thin borders");
     assert.equal(await focus.locator(".agent-focus-section").count(), 3);
     assert.equal(await focus.locator(".agent-focus-icon svg").count(), 3);
     assert.equal(await focus.getByRole("link", { name: "Review PR #12" }).getAttribute("href"), "https://github.com/example/web/pull/12");
@@ -111,7 +111,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     assert(await close.evaluate(el => document.activeElement === el));
     const closeKeyboard = await closeStyle();
     assert(closeKeyboard.focusVisible && closeKeyboard.outline !== "none" && parseFloat(closeKeyboard.outlineWidth) >= 2, JSON.stringify(closeKeyboard));
-    assert(closeKeyboard.borders.every(value => parseFloat(value) <= (width < 900 ? 1 : 0)));
+    assert(closeKeyboard.borders.every(value => parseFloat(value) <= 1));
     await capture("keyboard-focus");
     await page.keyboard.press("Enter"); await frames();
     assert((await visible()).includes("conversation"));

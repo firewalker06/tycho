@@ -10928,7 +10928,6 @@ body:has(.agent-workspace.has-focus-panel) { overflow: hidden; }
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
 }
-.agent-focus-panel [data-close-agent-focus] { border: 0; }
 .agent-focus-panel-heading > div { display: flex; align-items: baseline; gap: 12px; }
 .agent-focus-panel-heading h2 { margin: 0; font-size: 16px; }
 .agent-focus-panel-heading span { color: var(--muted); font-size: 12px; }
@@ -11145,8 +11144,6 @@ body:has(#confirmation-dialog[open]) [data-project-deletion-status] {
   overflow-anchor: none;
 }
 .side-conversation-body > .agent-attachment-shell { height: auto; min-height: 100%; }
-.side-conversation-close { position: absolute; top: 8px; right: 0; z-index: 2; }
-.side-conversation-focus .agent-focus-panel-heading > button { display: none; }
 .side-conversation-workspace .side-conversation-hidden { display: none !important; }
 .side-conversation-workspace .agent-floating-actions:has(.agent-action-track:empty) { display: none; }
 @media (min-width: 900px) {
@@ -11207,11 +11204,11 @@ body:has(#confirmation-dialog[open]) [data-project-deletion-status] {
 #header-side-conversations:empty { display: none; }
 #header-side-conversations .side-conversation-controls { margin: 0; }
 @media (min-width: 900px) {
-  [data-agent-dock] > .side-conversation-controls { display: none; }
+  [data-agent-dock] .side-conversation-controls { display: none; }
 }
 @media (max-width: 899px) {
   #header-side-conversations { display: none; }
-  [data-agent-dock] > .side-conversation-controls { display: flex; }
+  [data-agent-dock] .side-conversation-controls { display: flex; }
   .side-conversation-controls .ui-button { min-height: 40px; padding-inline: 6px; font-size: 14px; }
   .side-conversation-controls [data-side-conversation="conversation"] { border-radius: 7px 0 0 7px; }
   .side-conversation-controls [data-side-conversation="focus"] { border-inline-start: 1px solid var(--border); border-radius: 0; }
@@ -11232,7 +11229,45 @@ body:has(#confirmation-dialog[open]) [data-project-deletion-status] {
   .agent-workspace.has-attachment-preview .agent-dock { position: relative; inset: auto; transform: none; grid-row: 2; width: 100%; max-height: 60dvh; overflow-y: auto; }
 }
 
+
+/* The workspace already consumes the space below the header. The shell must
+   not add document height; Focus owns scrolling inside its body. */
+.app-shell:has(.agent-workspace:is(.has-focus-panel, .side-conversation-workspace)) {
+  height: 100dvh;
+  min-height: 0;
+  padding-bottom: 0;
+  overflow: hidden;
+}
+.content.agent-detail:has(.agent-workspace:is(.has-focus-panel, .side-conversation-workspace)) {
+  height: auto;
+  min-height: 0;
+  padding-bottom: 0;
+  overflow: hidden;
+}
+.side-conversation-focus > .side-conversation-body { display: flex; overflow: hidden; }
+.side-conversation-focus .agent-focus-panel { flex: 1; min-width: 0; min-height: 0; }
+
+.agent-dock:has(.agent-panel-controls-row) { grid-template-columns: minmax(0, 1fr); min-width: 0; }
+.agent-panel-controls-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+.agent-panel-controls-row:empty { display: none; }
+.agent-panel-controls-row > .side-conversation-controls { grid-column: 1; min-width: 0; }
+.agent-panel-controls-row > .agent-floating-actions {
+  grid-column: 2;
+  width: auto;
+  max-width: none;
+  min-width: 0;
+  overflow: visible;
+  flex-wrap: nowrap;
+}
 @media (max-width: 899px) {
-  .side-conversation-close,
-  [data-agent-workspace] [data-close-agent-focus] { display: none; }
+  .agent-panel-controls-row { min-height: 54px; }
+  .agent-panel-controls-row > .side-conversation-controls { width: 100%; min-height: 42px; margin: 0; }
+  .agent-dock:has(.agent-panel-controls-row) #composer { min-width: 0; max-width: 100%; }
 }

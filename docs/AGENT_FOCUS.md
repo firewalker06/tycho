@@ -155,6 +155,11 @@ the existing attachment panel layout; closing it restores the open Side
 Conversations. The shared toggles remain outside the attachment pane. Header clearance tracks
 the actual header size, including wrapped metadata, font changes, and safe insets.
 At scroll top, the first content and its controls remain below the header.
+Panel X buttons are removed at all widths; grouped toggles close and reopen
+side views. Attachment and modal dismiss controls remain available. The outer
+workspace stays within the viewport, and only the Focus body scrolls. On mobile,
+the tabs and Stop share one width-constrained row. Only the tabs scroll
+horizontally; Stop stays fixed at the right when a run starts or stops.
 
 ## Verification
 
@@ -197,3 +202,15 @@ TYCHO_REMOTE_UI_SIDE_CONVERSATIONS_ONLY=1 TYCHO_REMOTE_UI_SIDE_TOP_ONLY=1 TYCHO_
 absolute cache directory for installation and the test. These checks simulate
 mobile viewports, larger text, and safe insets. They do not test physical iOS
 browser chrome or its software keyboard.
+
+Check desktop short/long Focus scroll ownership and real isolated running/idle
+Stop transitions at 320, 390, and landscape widths with:
+
+```sh
+TYCHO_REMOTE_UI_SIDE_CONVERSATIONS_ONLY=1 TYCHO_REMOTE_UI_SIDE_BOUNDS_ONLY=1 bin/remote-ui-smoke
+```
+
+Add `TYCHO_REMOTE_UI_SIDE_BOUNDS_WEBKIT=1` to run these checks in installed
+Playwright WebKit. The test checks document/form bounds, independent Focus
+scrolling, last-tab reachability, fixed Stop geometry, touch/keyboard toggles,
+and retained drafts. It uses a synthetic local harness process without a provider.

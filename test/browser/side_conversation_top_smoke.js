@@ -94,7 +94,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       await show(kind); await wrapped(); await inspect(kind,"navigation");
     }
     await page.setViewportSize({width:1440,height:900}); await frames();
-    assert(await page.locator(".side-conversation-close").first().isVisible(),"desktop Close controls remain available");
+    assert.equal(await page.locator(".side-conversation-close,[data-close-agent-focus]").count(),0,"panel toggles replace Close controls on desktop too");
     await page.setViewportSize({width,height}); await wrapped(); await inspect("pull-requests","return-to-mobile");
     for (const kind of ["summary","focus","pull-requests"]) if (await toggle(kind).getAttribute("aria-pressed")==="true") await toggle(kind).click();
     await page.locator("#prompt-input").waitFor({state:"visible"});
