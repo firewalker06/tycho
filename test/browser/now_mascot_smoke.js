@@ -94,10 +94,35 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       await page.evaluate(() => { state.connection = "Offline: synthetic failure"; render(); });
       assert.equal(await page.locator("[data-now-mascot]").count(), 0, "errors cannot show success");
       assert(await page.getByText("Cannot confirm all clear", {exact: true}).isVisible());
+      await page.evaluate(() => { state.connection = "Token required"; render(); });
+      assert.equal(await page.locator("[data-now-mascot]").count(), 0, "auth errors cannot show success");
+      assert(await page.getByText("Cannot confirm all clear", {exact: true}).isVisible());
       await page.evaluate(() => { state.lastUpdatedAt = null; state.connection = "Connecting"; render(); });
       assert.equal(await page.locator("[data-now-mascot]").count(), 0, "loading cannot show success");
-      await page.evaluate(() => { state.lastUpdatedAt = new Date(); state.connection = "Connected"; state.servers.forEach(s => s.stale = false); render(); });
+      assert(await page.getByText("Loading agents", {exact: true}).isVisible());
+      await page.evaluate(() => {
+        state.lastUpdatedAt = new Date();
+        state.connection = "Connected";
+        state.servers = [
+          {key: "local", name: "Local", local: true, status: "online", agents: []},
+          {key: "stale-peer", name: "Stale peer", status: "online", stale: true, agents: [
+            {key: "stale-waiting", name: "Stale waiting agent", awaiting_input: true},
+          ]},
+          {key: "offline-peer", name: "Offline peer", status: "offline", agents: [
+            {key: "offline-waiting", name: "Offline waiting agent", awaiting_input: true},
+          ]},
+        ];
+        state.agents = state.servers.flatMap(server => server.agents.map(agent => ({...agent, server_key: server.key})));
+        render();
+      });
       await checkPair();
+      assert.equal(await page.getByText("Cannot confirm all clear", {exact: true}).count(), 0,
+        "unavailable peers do not block a confirmed all-clear state");
+      assert.equal(await page.getByText("Stale waiting agent", {exact: true}).count(), 0,
+        "stale cached agents do not leak into the Now list");
+      assert.equal(await page.getByText("Offline waiting agent", {exact: true}).count(), 0,
+        "disconnected cached agents do not leak into the Now list");
+      await page.evaluate(() => { state.servers = [{key: "local", name: "Local", local: true, status: "online", agents: []}]; state.agents = []; render(); });
       await page.evaluate(() => { state.agents = [{key: "fixture-running", running: true, name: "Working", status: "running"}]; render(); });
       assert.equal(await page.locator("[data-now-mascot]").count(), 0, "work removes empty state");
       await page.clock.runFor(30000);
