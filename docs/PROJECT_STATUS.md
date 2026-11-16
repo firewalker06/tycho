@@ -14,8 +14,8 @@ type: project
 
 ## Conversation side panels
 
-Focus, Summary, and PR Diffs share Side Conversation toggles in the second
-panel. Two Side Conversations can stay open beside Conversation. The most
+Focus, Summary, and PR Diffs share persistent Side Conversation toggles in
+the existing desktop agent header and directly above the mobile prompt form. Two Side Conversations can stay open beside Conversation. The most
 recent view stays visible at narrow widths; polling keeps the selected views.
 Summary attachment previews retain the existing attachment panel controls.
 See [Agent Focus](AGENT_FOCUS.md#side-conversations).

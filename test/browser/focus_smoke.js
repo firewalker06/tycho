@@ -43,7 +43,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     const visible = () => page.locator(".agent-workspace").getAttribute("data-visible-panels");
     const focus = page.locator("[data-agent-focus]");
     const close = page.getByRole("button", { name: "Close Focus panel", exact: true });
-    const open = page.locator("[data-show-agent-focus]");
+    const open = page.locator('.side-conversation-controls [data-side-conversation="focus"]');
     const composer = page.locator("#prompt-input");
     const capture = async name => {
       if (!captureDir) return;
@@ -169,7 +169,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
   await save(sections);
   await page.evaluate(() => refresh({ force: true }));
   assert.equal(await page.locator(".agent-workspace").getAttribute("data-visible-panels"), "conversation");
-  await page.locator("[data-show-agent-focus]").click();
+  await page.locator('.side-conversation-controls [data-side-conversation="focus"]').click();
   await page.locator("[data-agent-focus]").waitFor({ state: "visible" });
   const unsafe = await request.request.put(api, { data: { revision, sections: [{ title: "Unsafe", items: [{ title: "Bad", attachments: [{ type: "link", title: "Bad", url: "javascript:alert(1)" }] }] }] } });
   assert.equal(unsafe.status(), 422);

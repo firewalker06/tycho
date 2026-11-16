@@ -11083,7 +11083,7 @@ body:has(#confirmation-dialog[open]) [data-project-deletion-status] {
   }
 }
 
-/* Two Side Conversations share the switcher in the second panel. */
+/* Persistent agent controls live in the header or above the mobile composer. */
 .side-conversation-workspace .side-conversation-pane {
   position: relative;
   display: flex;
@@ -11098,8 +11098,7 @@ body:has(#confirmation-dialog[open]) [data-project-deletion-status] {
   flex-wrap: wrap;
   gap: 6px;
   flex-shrink: 0;
-  padding: 8px 36px 8px 8px;
-  border-bottom: 1px solid var(--border);
+  padding: 6px 0;
 }
 .side-conversation-controls button { min-height: 36px; }
 .side-conversation-controls [aria-pressed="true"] {
@@ -11150,7 +11149,7 @@ body:has(#confirmation-dialog[open]) [data-project-deletion-status] {
   .side-conversation-workspace .agent-conversation-scroll { min-height: 0; overflow: auto; }
   .side-conversation-workspace .side-conversation-pane { grid-column: 1; grid-row: 1; }
   .side-conversation-workspace .agent-dock { position: relative; inset: auto; transform: none; width: 100%; grid-row: 2; padding: 6px; }
-  .side-conversation-workspace:not(.side-conversation-show-chat) .agent-dock { display: none; }
+  .side-conversation-workspace .agent-dock { display: grid; min-height: 0; }
   .side-conversation-workspace.side-conversation-show-chat .agent-conversation-pane { display: grid; }
   .side-conversation-workspace.side-conversation-show-chat .side-conversation-pane { display: none; }
   .side-conversation-controls .side-conversation-back { display: inline-flex; }
@@ -11175,4 +11174,31 @@ body:has(#confirmation-dialog[open]) [data-project-deletion-status] {
   .agent-workspace.side-conversation-workspace.agent-workspace-detail-wide.has-detail[data-side-count="1"]:not(.agent-workspace-full-view) {
     grid-template-columns: minmax(300px, 0.65fr) minmax(500px, 1.35fr);
   }
+}
+
+#header-side-conversations:empty { display: none; }
+#header-side-conversations .side-conversation-controls { flex-wrap: nowrap; padding: 0; }
+@media (min-width: 900px) {
+  [data-agent-dock] > .side-conversation-controls { display: none; }
+}
+@media (max-width: 899px) {
+  #header-side-conversations { display: none; }
+  [data-agent-dock] > .side-conversation-controls { display: flex; }
+  .side-conversation-controls { gap: 5px; }
+  .side-conversation-controls button { min-height: 40px; padding-inline: 8px; }
+  .side-conversation-workspace .agent-dock { max-height: 60dvh; overflow-y: auto; }
+}
+
+@media (max-width: 899px) {
+  body:has(.agent-workspace.has-attachment-preview) { overflow: hidden; }
+  .content.agent-detail:has(.has-attachment-preview) { min-height: 0; overflow: hidden; padding-bottom: 0; }
+  .agent-workspace.has-attachment-preview {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    min-height: 0;
+  }
+  .agent-workspace.has-attachment-preview .agent-conversation-pane { display: none; }
+  .agent-workspace.has-attachment-preview .agent-detail-pane { grid-row: 1; min-height: 0; overflow-y: auto; }
+  .agent-workspace.has-attachment-preview .agent-dock { position: relative; inset: auto; transform: none; grid-row: 2; width: 100%; max-height: 60dvh; overflow-y: auto; }
 }

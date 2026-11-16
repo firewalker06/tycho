@@ -32,16 +32,34 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         assert.equal(await toggle(kind).getAttribute("aria-pressed"), String(kinds.includes(kind)), `${kind} active state`);
       }
     };
+    const placement = async () => {
+      const facts = await page.locator(".side-conversation-controls").evaluate(e => {
+        const rect = e.getBoundingClientRect();
+        const form = document.querySelector("#composer");
+        const header = document.querySelector(".header-row").getBoundingClientRect();
+        return { mobile: innerWidth < 900, inHeader: !!e.closest(".header-row"), inDock: !!e.closest("[data-agent-dock]"), inSide: !!e.closest("[data-side-kind]"), top: rect.top, bottom: rect.bottom,
+          headerBottom: header.bottom, formTop: form?.getBoundingClientRect().top, formBottom: form?.getBoundingClientRect().bottom, viewport: innerHeight };
+      });
+      assert.equal(facts.inSide, false, JSON.stringify(facts));
+      if (facts.mobile) {
+        assert(facts.inDock && !facts.inHeader && facts.bottom <= facts.formTop && facts.formTop - facts.bottom < 16, JSON.stringify(facts));
+        assert(facts.top >= 0 && facts.formBottom <= facts.viewport + 1, JSON.stringify(facts));
+      } else assert(facts.inHeader && facts.bottom <= facts.headerBottom + 1, JSON.stringify(facts));
+    };
     const capture = async name => {
       if (!captureDir) return;
       fs.mkdirSync(captureDir, { recursive: true });
-      await page.screenshot({ path: path.join(captureDir, `side-conversations-${name}-${theme}-${width}.png`) });
+      await page.evaluate(() => document.fonts.ready);
+      await page.screenshot({ animations: "disabled", path: path.join(captureDir, `side-conversations-${name}-${theme}-${width}.png`) });
     };
     await page.goto(`${baseUrl}/ui#settings`, { waitUntil: "networkidle" });
     await page.locator("[data-appearance-preference]").selectOption(theme);
     await page.goto(`${baseUrl}/ui#agent/${agentKey}/summary`, { waitUntil: "networkidle" });
     await page.locator("[data-side-workspace]").waitFor();
     await active(["summary"]);
+    await page.locator("#prompt-input").fill("Keep this draft while switching panels.");
+    await placement();
+    await capture("two-open");
     if (width >= 1440) {
       const initialWidth = await page.locator('[data-side-kind="summary"]').evaluate(e => e.clientWidth);
       await page.evaluate(key => setAgentDetailViewMode(`${key}:summary`, "wide"), agentKey);
@@ -65,7 +83,19 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       assert(geometry.conversation.visible && geometry.summary.visible && geometry.focus.visible, JSON.stringify(geometry));
       assert(geometry.conversation.right <= geometry.summary.x && geometry.summary.right <= geometry.focus.x, JSON.stringify(geometry));
     } else assert.equal(geometry.summary.visible, false, "newest side stays visible at narrow widths");
-    await capture("summary-focus");
+    await placement();
+    assert.equal(await page.locator("#prompt-input").inputValue(), "Keep this draft while switching panels.");
+    await capture("three-open");
+    await page.getByRole("button", { name: "Close Focus panel", exact: true }).click();
+    await active(["summary"]);
+    await page.getByRole("button", { name: "Close Summary panel", exact: true }).click();
+    await active([]);
+    await placement();
+    assert.equal(await page.locator("#prompt-input").inputValue(), "Keep this draft while switching panels.");
+    await toggle("summary").click();
+    await active(["summary"]);
+    await toggle("focus").click();
+    await active(["summary", "focus"]);
     if (width >= 1440) {
       await page.evaluate(({ id, key }) => openSummaryAttachmentPreview(id, key), { id: attachment.id, key: agentKey });
       await page.locator(".summary-attachment-preview-pane").waitFor({ state: "visible" });
@@ -77,7 +107,8 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       await page.setViewportSize({ width: 390, height: 900 });
       await frames();
       await active(["summary", "focus"]);
-      assert.equal(await page.evaluate(() => document.activeElement?.dataset.sideConversation), "focus", "switcher focus must survive responsive relocation");
+      await placement();
+      assert.equal(await page.evaluate(() => document.activeElement?.dataset.sideConversation), "focus", "switcher focus must survive responsive relocation: " + JSON.stringify(await page.evaluate(() => ({ active: document.activeElement?.outerHTML.slice(0,200), memory: state.sideConversationControlFocus }))));
       await page.setViewportSize({ width, height: 900 });
       await frames();
     }
@@ -118,10 +149,12 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     await toggle("pull-requests").click();
     await toggle("summary").click();
     await active([]);
+    await placement();
     await page.locator("#prompt-input").waitFor({ state: "visible" });
     await toggle("summary").focus();
     await page.keyboard.press("Enter");
     await active(["summary"]);
+    await placement();
     await page.evaluate(() => navigate({ type: "tab", tab: "settings" }));
     await page.locator("[data-appearance-preference]").waitFor();
     await page.evaluate(key => navigate({ type: "agent", key }), agentKey);

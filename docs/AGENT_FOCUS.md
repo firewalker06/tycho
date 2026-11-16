@@ -136,18 +136,22 @@ The dedicated Focus read endpoint returns the saved document for editing.
 ## Side Conversations
 
 Conversation is the first panel. Focus, Summary, and PR Diffs are Side
-Conversations. Opening Summary or PR Diffs shows a shared switcher in the
-second panel. Its buttons stay visible and highlight each open Side
-Conversation. A second Side Conversation opens in a third panel. Opening a
-third replaces the oldest open Side Conversation.
+Conversations. Their shared toggles stay in the existing agent header on
+desktop. On mobile, the controls stay directly above the prompt form in a
+persistent composer region. Closing all Side Conversations keeps the controls
+available so any view can be reopened.
 
-When the width cannot fit three panels, the newest Side Conversation stays
-visible. Both open buttons remain highlighted. Below 900 px, the switcher has
-a Conversation button to return to the composer. Side panel toggles, Close
-buttons, and the header Close control can close the views. Polling preserves
-open panels and drafts. A Summary attachment preview temporarily uses the
-existing attachment panel controls; closing it restores the open Side
-Conversations.
+A second Side Conversation opens in a third panel. Opening a third replaces
+the oldest open Side Conversation. When the width cannot fit three panels,
+the newest Side Conversation stays visible. Both open buttons remain
+highlighted. Mobile shows one content view above the composer; it does not
+squeeze multiple columns into the screen. The Conversation control returns
+to chat without closing the side views. Prompt drafts remain available while
+a side view is visible.
+
+Polling preserves open panels and drafts. A Summary attachment preview uses
+the existing attachment panel layout; closing it restores the open Side
+Conversations. The shared toggles remain outside the attachment pane.
 
 ## Verification
 
