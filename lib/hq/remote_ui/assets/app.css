@@ -11170,3 +11170,9 @@ body:has(#confirmation-dialog[open]) [data-project-deletion-status] {
     max-width: 1400px;
   }
 }
+
+@media (min-width: 900px) {
+  .agent-workspace.side-conversation-workspace.agent-workspace-detail-wide.has-detail[data-side-count="1"]:not(.agent-workspace-full-view) {
+    grid-template-columns: minmax(300px, 0.65fr) minmax(500px, 1.35fr);
+  }
+}

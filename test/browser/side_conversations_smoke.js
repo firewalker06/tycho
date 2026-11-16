@@ -42,6 +42,16 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     await page.goto(`${baseUrl}/ui#agent/${agentKey}/summary`, { waitUntil: "networkidle" });
     await page.locator("[data-side-workspace]").waitFor();
     await active(["summary"]);
+    if (width >= 1440) {
+      const initialWidth = await page.locator('[data-side-kind="summary"]').evaluate(e => e.clientWidth);
+      await page.evaluate(key => setAgentDetailViewMode(`${key}:summary`, "wide"), agentKey);
+      await frames();
+      assert(await page.locator('[data-side-kind="summary"]').evaluate(e => e.clientWidth) > initialWidth, "Wide detail view must increase the Summary width");
+      await page.evaluate(key => setAgentDetailViewMode(`${key}:summary`, "full"), agentKey);
+      assert.equal(await page.locator(".agent-conversation-pane").isVisible(), false, "Full view hides Conversation");
+      await page.evaluate(key => setAgentDetailViewMode(`${key}:summary`, "balanced"), agentKey);
+      assert.equal(await page.locator(".agent-conversation-pane").isVisible(), true);
+    }
     await toggle("focus").click();
     await frames();
     await active(["summary", "focus"]);
@@ -63,9 +73,11 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       await page.locator("[data-close-summary-attachment-preview]").click();
       await page.locator("[data-side-workspace]").waitFor();
       await active(["summary", "focus"]);
+      await toggle("focus").focus();
       await page.setViewportSize({ width: 390, height: 900 });
       await frames();
       await active(["summary", "focus"]);
+      assert.equal(await page.evaluate(() => document.activeElement?.dataset.sideConversation), "focus", "switcher focus must survive responsive relocation");
       await page.setViewportSize({ width, height: 900 });
       await frames();
     }
