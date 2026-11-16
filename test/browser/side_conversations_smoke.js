@@ -31,12 +31,12 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         assert.equal(await toggle(kind).isVisible(), true, `${kind} toggle visible at ${width}`);
         assert.equal(await toggle(kind).getAttribute("aria-pressed"), String(kinds.includes(kind)), `${kind} active state`);
         assert.equal(await toggle(kind).locator("svg").count(), 1, `${kind} keeps its icon`);
-        const style = await toggle(kind).evaluate(e => {
-          const s = getComputedStyle(e);
-          return { borders: [s.borderTopWidth, s.borderRightWidth, s.borderBottomWidth, s.borderLeftWidth].map(parseFloat), shadow: s.boxShadow };
-        });
-        assert(style.borders.every(value => value <= 1), `thin borders in every state: ${JSON.stringify(style)}`);
-        assert.equal(style.shadow, "none", "no thick one-sided shadow accent");
+        await page.waitForFunction(key => {
+          const button = document.querySelector(`.side-conversation-controls [data-side-conversation="${key}"]`);
+          if (!button?.isConnected) return false;
+          const style = getComputedStyle(button);
+          return [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth].every(value => parseFloat(value) <= 1) && style.boxShadow === "none";
+        }, kind);
       }
     };
     const placement = async () => {
