@@ -193,7 +193,9 @@ module RemoteUIAssetSnapshotTest
       '"agentSummary", "agentAttachment", "agentPullRequests"',
       "dataset.closeAgentDetail",
       'els.headerDetailClose.addEventListener("click", () => {',
-      'if (agentKey) navigate({ type: "agent", key: agentKey });',
+      "state.agentSidePanels.delete(agentKey);",
+      "state.summaryAttachmentPreview = null;",
+      'navigate({ type: "agent", key: agentKey });',
     ]
     missing = required_javascript.reject { |fragment| javascript.include?(fragment) }
     raise "missing focused detail close behavior: #{missing.join(", ")}" unless missing.empty?

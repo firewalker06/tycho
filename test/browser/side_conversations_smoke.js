@@ -120,6 +120,10 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     await page.evaluate(key => navigate({ type: "agent", key }), agentKey);
     await page.locator("[data-side-workspace]").waitFor();
     await active(["summary"]);
+    await page.locator("#header-detail-close").click();
+    await page.waitForFunction(key => parseRoute().type === "agent" && !state.agentSidePanels.has(key), agentKey);
+    assert.equal(await page.locator("[data-side-workspace]").count(), 0, "header Close must clear shared panel state");
+    await page.locator("#prompt-input").waitFor({ state: "visible" });
     assert.deepEqual(errors, []);
     await context.close();
   }
