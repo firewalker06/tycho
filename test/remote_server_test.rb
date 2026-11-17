@@ -5016,7 +5016,6 @@ module RemoteServerTest
       end
       missing_record = JSON.parse(File.read(by_key.fetch(children.last[:key])))
       FileUtils.rm_rf(File.dirname(by_key.fetch(children.last[:key])))
-      # An older duplicate must not override the last record selected by all.to_h.
       duplicate = File.join(HQ::AGENT_ARCHIVE_DIR, "20000101-000000-#{children.first[:key]}")
       FileUtils.mkdir_p(duplicate)
       record = JSON.parse(File.read(by_key.fetch(children.first[:key])))
@@ -5059,7 +5058,6 @@ module RemoteServerTest
       assert(next_service.agent(target[:key])[:delegation] == payload[:delegation] && loaded.empty?,
              "expected selective references to stay warm across service instances without a full scan")
 
-      # Saving an archive must invalidate both caches even when the root timestamp is unchanged.
       path = by_key.fetch(children.first[:key])
       original = JSON.parse(File.read(path))
       root_time = File.mtime(HQ::AGENT_ARCHIVE_DIR)
@@ -5075,7 +5073,6 @@ module RemoteServerTest
                "expected archive save to invalidate selective reference visibility")
       end
 
-      # Request-local memoization includes misses, but a later request sees archive changes.
       context = service.send(:delegation_reference_context)
       reference = { "agent_key" => children.last[:key], "name" => "Missing" }
       before_miss = lookups.length
@@ -5095,7 +5092,6 @@ module RemoteServerTest
       assert(restored[:state] == "archived",
              "expected a later request to see a restored archive after snapshot invalidation")
 
-      # A live agent takes precedence over an archive with the same key.
       active = service.agent(target[:key])
       standalone = create.call("Standalone")
       empty_service = HQ::RemoteService.new(registry: registry)

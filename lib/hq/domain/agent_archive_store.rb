@@ -52,7 +52,6 @@ module HQ
       end
     end
 
-    # Reference maps previously used all.to_h, where the last sorted archive wins.
     def find(key, latest: false)
       target = key.to_s
       signature = root_signature
