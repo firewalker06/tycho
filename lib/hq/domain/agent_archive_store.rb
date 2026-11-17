@@ -49,15 +49,18 @@ module HQ
       end
     end
 
-    def find(key)
+    # Reference maps previously used all.to_h, where the last sorted archive wins.
+    def find(key, latest: false)
       target = key.to_s
       signature = root_signature
       cached = self.class.cache_mutex.synchronize { self.class.snapshot_cache[@root] }
       if cached && cached.fetch(:signature) == signature
-        return cached.fetch(:records).find { |record| record.agent.key == target }
+        records = cached.fetch(:records)
+        records = records.reverse_each if latest
+        return records.find { |record| record.agent.key == target }
       end
 
-      direct_manifest_paths(target).filter_map { |path| load_record(path) }
+      direct_manifest_paths(target).lazy.filter_map { |path| load_record(path) }
                                    .find { |record| record.agent.key == target }
     end
 

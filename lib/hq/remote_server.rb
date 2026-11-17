@@ -5800,7 +5800,10 @@ module HQ
     def delegation_reference_context(active_agents = nil)
       active_agents ||= cached_all_agents
       active = active_agents.to_h { |agent| [agent.key, agent] }
-      archived = @agent_archive_store.all.to_h { |record| [record.agent.key, record.agent] }
+      # Resolve only absent live references, once per response (including misses).
+      archived = Hash.new do |references, key|
+        references[key] = @agent_archive_store.find(key, latest: true)&.agent
+      end
       {
         active:,
         archived:,
