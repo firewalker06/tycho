@@ -8,6 +8,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     const context = await browser.newContext({ viewport: { width, height: 900 }, isMobile: width < 500, hasTouch: width < 500 });
     const page = await context.newPage();
     const errors = [];
+    let automatic = null;
     page.on("pageerror", error => errors.push(error.message));
     await page.addInitScript(() => { document.hasFocus = () => true; });
     page.setDefaultTimeout(15000);
@@ -23,7 +24,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       const all = page.locator('[data-queue-action="process-all"]');
       assert.equal(await all.innerText(), "Process queue once");
       assert(await all.isEnabled());
-      assert((await queue.innerText()).includes(`The schedule stays ${status}. Automatic dispatch stays off.`));
+      assert((await queue.innerText()).includes(`The schedule stays ${status}. ${status === "stopped" ? "Due queued work continues automatically." : "Automatic dispatch stays off."}`));
       await page.locator('[data-select-queue-entry="first"]').focus();
       await page.keyboard.press("Space");
       await page.evaluate(async () => refresh({ force: true }));
@@ -67,7 +68,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       assert.equal(agent.running, false);
       await page.waitForTimeout(5500);
       agent = (await (await page.request.get(`${baseUrl}/agents/${key}`)).json()).agent;
-      assert.equal(agent.run_count, 2, "automatic processing must stay suppressed");
+      assert.equal(agent.run_count, 2, status === "paused" ? "paused processing must stay suppressed" : "future work must not run early");
       assert.deepEqual(agent.prompt_queue.entries.map(entry => entry.id), ["later"]);
       const scheduleAfter = await (await page.request.get(`${baseUrl}/schedules/${key}`)).json();
       // session_run_count is a derived agent metric, not persisted schedule state.
@@ -82,10 +83,25 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       await page.evaluate(async () => refresh({ force: true }));
       assert(await page.locator('[data-queue-action="process-all"]').isDisabled());
       if (captureDir && status === "stopped") await page.screenshot({ path: path.join(captureDir, `manual-queue-inquiry-${width}-${theme}.png`) });
+      if (status === "stopped") {
+        const autoKey = `automatic-stopped-${width}-${theme}`;
+        const auto = (await (await page.request.get(`${baseUrl}/agents/${autoKey}`)).json()).agent;
+        assert.equal(auto.run_count, 2, "due work must start automatically on a stopped schedule");
+        assert.equal(auto.running, false);
+        assert.equal(auto.prompt_queue.entries.length, 0);
+        const stopped = (await (await page.request.get(`${baseUrl}/schedules/${autoKey}`)).json()).schedule;
+        assert.equal(stopped.status, "stopped");
+        assert.equal(stopped.run_count, 0, "automatic queue work must not count as a scheduled tick");
+        assert.equal(stopped.stopped_reason, "operator");
+        automatic = { runCount: auto.run_count, remaining: auto.prompt_queue.entries.length, scheduleStatus: stopped.status, scheduledRuns: stopped.run_count };
+        await page.goto(`${baseUrl}/ui#agent/${autoKey}`, { waitUntil: "networkidle" });
+        await page.locator(".message-list").waitFor();
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, `stopped-automatic-${width}-${theme}.png`) });
+      }
       assert.deepEqual(errors, []);
-      results.push({ width, theme, status, writes, runCount: agent.run_count, remaining: ["later"] });
+      results.push({ width, theme, status, writes, runCount: agent.run_count, remaining: ["later"], automatic });
     } finally { await context.close(); }
   }
   if (captureDir) fs.writeFileSync(path.join(captureDir, "manual-queue-results.json"), JSON.stringify(results, null, 2));
-  console.log(`manual_schedule_queue_smoke: ${results.length} real API/fake-harness desktop/mobile cases passed`);
+  console.log(`manual_schedule_queue_smoke: ${results.length} manual cases and ${results.filter(result => result.automatic).length} automatic stopped-schedule cases passed`);
 };
