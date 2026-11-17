@@ -17,7 +17,7 @@ module.exports = async ({browser,baseUrl,captureDir,metadataFixture}) => {
   }
   fs.writeFileSync(`${storePath}.grid-fixture`,JSON.stringify(stored));fs.renameSync(`${storePath}.grid-fixture`,storePath);
   const results=[];
-  const widths=[320,390,899,900,901,1099,1100,1101,1439,1440,1441,1920];
+  const widths=[1920,320,390,899,900,901,1099,1100,1101,1439,1440,1441];
   const expected=width=>width>=1440?3:width>=900?2:1;
   const routes=[{name:'now',hash:'now'},{name:'agents-flat',hash:'agents',sort:'agent_name_asc'},{name:'agents-grouped',hash:'agents',sort:'project_asc'},{name:'schedules',hash:'schedules'}];
   for(const width of widths) for(const theme of ['dark','light']) {
@@ -33,6 +33,24 @@ module.exports = async ({browser,baseUrl,captureDir,metadataFixture}) => {
         const family=page.locator(`.agent-delegation-tree:has([data-open-agent="${created[2].key}"])`);
         assert.equal(await family.count(),1,'delegated family stays in one grid cell');
         assert.deepEqual(await family.locator('[data-open-agent]').evaluateAll(es=>es.map(e=>e.dataset.openAgent)),[created[0].key,created[2].key]);
+        const corners=await family.evaluate(e=>{
+          const parent=getComputedStyle(e),first=getComputedStyle(e.firstElementChild),last=getComputedStyle(e.lastElementChild);
+          return {outer:parseFloat(parent.borderTopLeftRadius),border:parseFloat(parent.borderTopWidth),firstLeft:parseFloat(first.borderTopLeftRadius),firstRight:parseFloat(first.borderTopRightRadius),lastRight:parseFloat(last.borderBottomRightRadius),overflow:parent.overflow};
+        });
+        if(captureDir&&[390,1100,1920].includes(width)) {
+          fs.mkdirSync(captureDir,{recursive:true});await family.screenshot({path:path.join(captureDir,`family-corners-${width}-${theme}-${browser.browserType().name()}.png`)});
+        }
+        assert.equal(corners.firstLeft,corners.outer-corners.border,'root background follows inner top-left border curve');
+        assert.equal(corners.firstRight,corners.outer-corners.border,'root background follows inner top-right border curve');
+        assert.equal(corners.lastRight,corners.outer-corners.border,'last background follows inner bottom-right curve');
+        assert.equal(corners.overflow,'visible','family must not clip focus outlines or overlays');
+        await page.keyboard.press('Tab');
+        const focus=await family.locator('[data-open-agent]').first().evaluate(e=>{
+          e.focus();const result={active:e===document.activeElement,visible:e.matches(':focus-visible'),outline:getComputedStyle(e).outlineStyle};e.blur();return result;
+        });
+        assert(focus.active&&focus.visible&&focus.outline!=='none','keyboard focus outline remains visible');
+
+
       }
       for(const rail of width>=1100?['expanded','absent']:['responsive']) {
         await page.evaluate(rail=>{

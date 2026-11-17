@@ -20,7 +20,10 @@ Now section labels remain outside each card grid. Agent project headings span
 all columns. Delegated families remain together as one cell, with the parent
 before its descendants and the existing depth cues. Sorting, filtering, search,
 status and unread indicators keep their behavior. Grid order follows DOM order
-from left to right, then top to bottom.
+from left to right, then top to bottom. Family containers use an 8-pixel border
+radius. The first row follows the 7-pixel inner top curve; the final indented
+row follows the outer bottom-right curve. Overflow stays visible for focus
+outlines and overlays, rather than clipping the family.
 
 Long labels wrap inside their card. Schedule actions use a separate row so the
 schedule name and status have room. Pause/Resume, menus, edit and agent-opening

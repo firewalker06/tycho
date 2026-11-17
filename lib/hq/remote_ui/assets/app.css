@@ -11437,7 +11437,8 @@ body:has(.resource-block-grid, .resource-grid-page) .app-header { max-width: non
 }
 .resource-block-grid > .agent-row:last-child { border-bottom-width: 1px; }
 .resource-block-grid .agent-delegation-tree .agent-row { border-radius: 0; }
-.resource-block-grid .agent-delegation-tree .agent-row:last-child { border-bottom-width: 0; }
+.resource-block-grid .agent-delegation-tree .agent-row:first-child { border-top-left-radius: 7px; border-top-right-radius: 7px; }
+.resource-block-grid .agent-delegation-tree .agent-row:last-child { border-bottom-width: 0; border-bottom-right-radius: 7px; }
 .resource-block-grid :is(.card-title strong, .row-title strong, .schedule-row-title strong) {
   white-space: normal;
   overflow-wrap: anywhere;
