@@ -9253,10 +9253,10 @@ module RemoteServerTest
            js[:body].include?("data-set-agent-detail-view") &&
            js[:body].include?('role="menuitemradio"'),
            "expected focused Summary and Attachment layouts to use one exclusive view menu")
-    assert(js[:body].include?('{ value: "balanced", label: "Balanced", icon: "columns2" }') &&
-           js[:body].include?('{ value: "wide", label: "Widen detail", icon: "panelRightOpen" }') &&
-           js[:body].include?('{ value: "full", label: "Full view", icon: "maximize2" }'),
-           "expected each focused view mode to expose its own active trigger icon")
+    assert(js[:body].include?('{ value: "balanced", label: fixed ? "Conversation and detail" : "Balanced", icon: "columns2" }') &&
+           js[:body].include?('...(!fixed ? [{ value: "wide", label: "Widen detail", icon: "panelRightOpen" }] : [])') &&
+           js[:body].include?('{ value: "full", label: fixed ? "Detail only" : "Full view", icon: "maximize2" }'),
+           "expected fixed detail modes to retain trigger icons without offering widened slots")
     assert(js[:body].include?('class="focused-composer"') && js[:body].include?("Continue conversation"),
            "expected mobile focused views to collapse the follow-up composer")
     assert(js[:body].include?('iconSvg("badgeQuestionMark")'),
@@ -9448,7 +9448,8 @@ module RemoteServerTest
            "expected local resource ownership to render as an accessible home icon without visible text")
     assert(js[:body].include?('return server.local ? "Host"'),
            "expected local ownership text to use Host")
-    assert(js[:body].include?('renderAgentRow(agent, { serverIcon: true, query, delegationDepth: depth })') &&
+    assert(js[:body].include?('function renderAgentTree({ root, entries }, query, options = { serverIcon: true })') &&
+           js[:body].include?('renderAgentRow(agent, { ...options, query, delegationDepth: depth })') &&
            js[:body].include?('class="agent-server-inline"') &&
            css[:body].include?(".agent-server-inline > .ui-icon"),
            "expected flat Agent rows to show the local or peer server icon")
@@ -9524,7 +9525,7 @@ module RemoteServerTest
            response[:body].include?("ui-detail-header__action") &&
            js[:body].include?('classList.toggle("ui-detail-header", subpage && !onboarding)'),
            "expected focused routes to activate the shared detail-header anatomy without changing shell behavior")
-    assert(js[:body].include?('class="ui-searchable-collection"') &&
+    assert(js[:body].include?('class="ui-searchable-collection resource-grid-page"') &&
            js[:body].include?('class="search-box ui-search-field"') &&
            js[:body].include?('id="agent-results-summary" role="status"') &&
            js[:body].include?('aria-describedby="agent-results-summary"') &&
@@ -9665,8 +9666,8 @@ module RemoteServerTest
            js[:body].include?('if (scheduleStatus === "paused"') &&
            js[:body].include?('status-mark ${escapeAttr(className)}'),
            "expected stopped and paused schedules to override associated agent icon colors")
-    assert(js[:body].include?("function renderSchedules()") && js[:body].include?('class="schedule-list"'),
-           "expected Remote UI schedule rows on a dedicated Schedules page")
+    assert(js[:body].include?("function renderSchedules()") && js[:body].include?('class="schedule-list resource-block-grid"'),
+           "expected responsive schedule blocks on a dedicated Schedules page")
     assert(js[:body].include?('class="schedule-card" aria-label="Schedules"') &&
            !js[:body].include?('class="detail-card schedule-card"') &&
            !js[:body].include?('class="schedule-summary-row"'),

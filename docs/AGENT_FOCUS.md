@@ -13,31 +13,25 @@ The Side Conversations switcher can still open an empty Focus panel.
 
 ## Panel behavior
 
-On entry to Conversation, an existing Focus opens by default if the measured
-workspace can fit Conversation (380 px), Focus (440 px), and the 12 px gap.
-The existing desktop content-panel controls manage fit from 900 px upward.
-At a narrower desktop width, Focus starts as a collapsed vertical strip. Use
-that strip or the Focus shortcut beside Summary to open it. Panel fit preserves
-the most recently requested panel. The composer remains below a Focus-only
-view, including narrow desktops. Closing Focus restores Conversation.
+On entry to Conversation, existing Focus opens beside Conversation from 900 pixels.
+Below 900 pixels it starts closed. The grouped Focus toggle opens it above the
+retained composer. Conversation returns to chat without closing the requested
+side views. A manual close stays closed through polling, resizing and navigation.
+A reload uses the viewport defaults. Focus created after an empty detail read
+stays closed until explicitly opened.
 
-Below 900 px, Focus starts closed. The Focus shortcut explicitly opens it as
-the visible panel, with the composer retained below it. Toggle Focus off to return to
-Conversation and its saved scroll position. Mobile panels have no Close buttons;
-use the grouped toggles. Desktop Close buttons remain available. Wide opening does not
-request the mobile panel. A manual mobile open remains open through
-polling and viewport changes until the operator closes it.
+Panels use fixed slots, independent of open count: one below 900 pixels, two
+from 900 through 1439 pixels, and three from 1440 pixels. Unused slots stay empty
+on the right. At medium widths the newest peer stays visible beside Conversation;
+small screens retain the selected single view. Requested peers remain available
+through their grouped toggles. Detail-only mode keeps the same slot width.
+There are no panel X buttons or width expansion controls.
 
-A manual close stays closed through polling, resizing, and navigation away and
-back to the same agent. A width-limited automatic collapse can expand again
-when space returns. Choices are kept per agent for the current browser page;
-a reload starts with the viewport defaults. A Focus document created after an
-empty agent detail read stays closed until explicitly opened. Polling never
-requests a new panel. Summary and attachment views keep their own panel state.
-
-Focus links use the standard attachment view. Their source files may also
-appear in a user message or run Summary because Focus references an existing
-attachment; that does not attach the Focus artifact to a message.
+Choices are local to each agent in the current browser page. Polling preserves
+panels, drafts and section disclosure. Focus links use the standard attachment
+view. Focus references existing files without adding them to a message. See
+[panel slots and mobile prompt behavior](REMOTE_UI_PANEL_SLOTS.md) for exact
+width calculations and browser verification.
 
 ## Read and replace
 
@@ -150,13 +144,12 @@ squeeze multiple columns into the screen. The Conversation control returns
 to chat without closing the side views. Prompt drafts remain available while
 a side view is visible.
 
-Polling preserves open panels and drafts. A Summary attachment preview uses
-the existing attachment panel layout; closing it restores the open Side
-Conversations. The shared toggles remain outside the attachment pane. Header clearance tracks
+Polling preserves open panels and drafts. File attachments from Focus or Summary
+replace the third panel while the source stays in the second panel. The shared toggles remain outside the attachment pane. Header clearance tracks
 the actual header size, including wrapped metadata, font changes, and safe insets.
 At scroll top, the first content and its controls remain below the header.
 Panel X buttons are removed at all widths; grouped toggles close and reopen
-side views. Attachment and modal dismiss controls remain available. The outer
+side views. Modal dismiss controls remain available. The outer
 workspace stays within the viewport, and only the Focus body scrolls. On mobile,
 the tabs and Stop share one width-constrained row. Only the tabs scroll
 horizontally; Stop stays fixed at the right when a run starts or stops.
@@ -172,10 +165,9 @@ TYCHO_REMOTE_UI_FOCUS_ONLY=1 bin/remote-ui-smoke
 
 Set `TYCHO_REMOTE_UI_CAPTURE_DIR` to a directory outside the checkout to retain
 screenshots and geometry evidence. The fixture checks long conversations near
-the bottom, desktop fit defaults, narrow/mobile defaults and explicit opening,
-independent scrolling, keyboard controls, polling, updates, resize/navigation
-choices, drafts, Summary/attachment compatibility, empty/late Focus, invalid
-URLs, conflicts, and viewport overflow in Dark and Light.
+the bottom, fixed-slot breakpoints, sidebar widths, narrow/mobile defaults and selection,
+reading position, drafts, Summary/attachment compatibility, empty/late Focus,
+invalid URLs, conflicts, and viewport overflow in Dark and Light.
 
 Check the Side Conversations switcher and responsive layout with:
 
@@ -214,3 +206,90 @@ Add `TYCHO_REMOTE_UI_SIDE_BOUNDS_WEBKIT=1` to run these checks in installed
 Playwright WebKit. The test checks document/form bounds, independent Focus
 scrolling, last-tab reachability, fixed Stop geometry, touch/keyboard toggles,
 and retained drafts. It uses a synthetic local harness process without a provider.
+
+### Panel width and attachment placement
+
+Initial Focus and shared Side Conversations use identical fixed slots. Slot count
+is based on viewport CSS width: one below 900, two from 900, three from 1440.
+Each slot is `(W - 12 * (N - 1)) / N` pixels, where W is the workspace grid content
+width after navigation and page padding, and N is the slot count. All gaps are
+reserved even when slots are empty. See [panel sizing](REMOTE_UI_PANEL_SLOTS.md).
+
+A file opened from Focus or Summary keeps Conversation and its source. The source
+moves to panel two if necessary, and the attachment replaces panel three.
+External links keep their existing navigation. The attachment uses internal
+scrolling and the shared tabs; it has no panel close button.
+
+```sh
+TYCHO_REMOTE_UI_SIDE_CONVERSATIONS_ONLY=1 TYCHO_REMOTE_UI_PANEL_PLACEMENT_ONLY=1 bin/remote-ui-smoke
+```
+
+Add `TYCHO_REMOTE_UI_PANEL_PLACEMENT_WEBKIT=1` for installed Playwright WebKit.
+Set `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the checkout to retain screenshots and
+geometry measurements. PR 372 remains separate; its polling reconciliation
+changes overlap this preview renderer and need explicit integration.
+
+Summary layout actions select Summary explicitly and remove a dismissed
+attachment peer. This prevents a stale Summary route from showing only Focus
+after Full View. See [Summary layout selection](REMOTE_UI_PANEL_SLOTS.md#summary-layout-selection).
+
+### Collapse Focus sections
+
+Each section heading is a keyboard-accessible button with an expanded state and
+an explicit item-list target. Collapse hides only that section's items; the
+heading, subtitle, icon and count stay visible. Enter and Space toggle a section.
+The Focus header offers **Collapse all** if any section is open, including a
+mixed state, and **Expand all** when every section is closed.
+
+Choices are local to the agent in the current browser session and survive
+polling, panel replacement and navigation. Section title and duplicate-title
+occurrence identify each choice, so item edits do not reset it. New or renamed
+sections start expanded. Focus data and other browsers are not changed.
+The panel-placement smoke checks section and bulk actions, keyboard states,
+polling, attachment opening and desktop/mobile geometry in Chrome and WebKit.
+
+### Focus attachment cards
+
+Focus reuses Summary attachment rows and type icons, including image and link
+icons. Registered files have the same panel-open and Download controls. The
+panel-open action keeps Focus in panel two and replaces panel three. Download
+uses the registered original filename, including when Focus has a custom title.
+Ordinary external links retain their external navigation and have no unsupported
+download or preview action. Removed files show as unavailable without actions.
+
+Attachment grids use the Focus panel as an inline-size container. They show one
+column below 640 pixels of container content width, two columns from 640 pixels,
+and three from 960 pixels. Opening another peer does not change slot width. Sidebar width changes can
+change the grid at the same viewport width. Long attachment titles stay on one line with an ellipsis; accessible labels and title
+attributes keep their complete text. Shared Focus/Summary file tiles and their
+panel-open/download actions form one joined group, with a thin outer border and
+internal dividers. Link-only tiles fill the same outer width without reserved
+action tracks or gaps. Controls remain separate siblings with standard hit sizes.
+
+```sh
+TYCHO_REMOTE_UI_SIDE_CONVERSATIONS_ONLY=1 TYCHO_REMOTE_UI_FOCUS_ATTACHMENTS_ONLY=1 bin/remote-ui-smoke
+```
+
+Add `TYCHO_REMOTE_UI_FOCUS_ATTACHMENTS_WEBKIT=1` for installed Playwright WebKit.
+Set `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the checkout for current screenshots
+and measured panel/grid geometry. The fixture checks actual downloads and bytes,
+external navigation, type icons, unavailable files, keyboard actions, long
+labels, same-viewport panel changes, polling, drafts and desktop/mobile bounds.
+
+## Manual refresh in the Remote UI
+
+Displayed Focus data is a per-agent snapshot. Global polling keeps the same
+Focus node, section choices, scroll and attachment selection. It does not fetch
+Focus or accept replacement Focus data from an agent-detail read. A document
+that first becomes available can still expose Focus without opening it.
+
+The icon-only Refresh Focus control retrieves current Focus directly. Explicit
+agent/message fetching, manual refresh controls and pull refresh also retrieve
+Focus. Background and mutation reconciliation do not. Busy state keeps keyboard
+focus and coalesces duplicate requests. A failed read leaves the old content
+visible with a retryable error. Older detail replies cannot overwrite a newer
+manual Focus result.
+
+Collapse all and Expand all are icon-only controls with accessible names and
+tooltips. Mixed state still means Collapse all; all closed means Expand all.
+See [Focus refresh verification](REMOTE_UI_FOCUS_REFRESH.md).

@@ -10,18 +10,54 @@ type: project
 
 ## Last Updated
 
-2026-11-16
+2026-11-17
 
 ## Conversation side panels
 
 Focus, Summary, and PR Diffs share persistent Side Conversation toggles in
 the existing desktop agent header and directly above the mobile prompt form. Two Side Conversations can stay open beside Conversation. The most
 recent view stays visible at narrow widths; polling keeps the selected views.
-Summary attachment previews retain the existing attachment panel controls.
+Focus and side panels use fixed, left-aligned slots regardless of open count:
+one below 900 viewport pixels, two from 900 through 1439, three from 1440.
+Each slot uses workspace content width minus all reserved 12-pixel gaps, divided
+by slot count. Unused slots remain empty to the right. File attachments
+opened from Focus or Summary replace panel three, with the source in panel two;
+Conversation remains available. Ordinary external links keep their navigation.
+PR 372 remains a separate polling fix; its preview reconciliation changes need
+integration with this shared peer renderer.
 Fixed-header size changes update content clearance and pane height. Side panels close through grouped toggles at every width. Focus fills the
 remaining viewport; only its body scrolls. Mobile tabs scroll within one
 constrained row while Stop stays fixed at the right.
-See [Agent Focus](AGENT_FOCUS.md#side-conversations).
+Each Focus section has an accessible heading toggle. A header button collapses
+all sections when any are open, or expands all when all are closed. Per-agent
+choices survive polling and panel navigation in the current browser session.
+Displayed Focus uses a snapshot and retains its DOM during global polling.
+Icon-only manual Refresh and bulk controls have accessible labels and tooltips.
+Explicit manual fetching retrieves Focus; background detail replies cannot replace
+it. See [Focus refresh](REMOTE_UI_FOCUS_REFRESH.md).
+Focus attachments reuse Summary type icons and supported panel-open/download
+actions. Container queries select three, two or one attachment columns from the
+actual Focus width; external links keep their navigation and have no invented
+download actions.
+Inline composer budgets use the visual viewport and actual control height. Long
+drafts scroll inside the textarea; prompt actions remain visible or reachable
+when the viewport shrinks. See [panel and mobile verification](REMOTE_UI_PANEL_SLOTS.md)
+and [Agent Focus](AGENT_FOCUS.md#side-conversations).
+
+Composer Attachments, Linked agents and Skills use a shared native popover layer
+to escape the scrolling dock clip. Position follows the trigger and visible
+viewport; the dock retains its scroll budget. Existing modal order and
+dismissal behavior remain. See [composer flyout layering](REMOTE_UI_COMPOSER_MENUS.md).
+
+Answer and prompt expansion uses the existing Conversation column from 900
+pixels, with vertical controls and retained peers/header. Inquiry warning copy
+keeps intrinsic height while fields own scrolling. Small screens retain modal
+editing. See [panel editors](REMOTE_UI_PANEL_EDITORS.md).
+
+Agent blocks on Now and Agents, plus schedule blocks, use a separate 3/2/1
+page grid at the existing 1440/900-pixel boundaries. Pages use their available
+width and left alignment. Group headings span all columns; delegated families
+stay together. See [resource block grids](REMOTE_UI_RESOURCE_GRIDS.md).
 
 ## Custom Remote UI themes
 
@@ -62,7 +98,7 @@ read and replace ordered sections through `tycho agent focus`, locally or with
 safe. Focus stays separate from run results and transcripts, persists across
 runs, and moves into read-only archive history. New clones start empty. The
 Remote UI gives Focus its own peer content panel, outside the Conversation
-message list. Existing Focus opens by default when the desktop panels fit;
+message list. Existing Focus opens by default from 900 viewport pixels;
 narrow/mobile views start closed. Explicit choices survive polling, resizing,
 and navigation. Focus and Conversation scroll independently. Summary and
 attachment panels keep their existing state. See

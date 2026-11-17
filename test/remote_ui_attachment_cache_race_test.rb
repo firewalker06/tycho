@@ -24,7 +24,7 @@ module RemoteUIAttachmentCacheRaceTest
         const agent = { key: "agent", run_count: 1, attachments: [{ id: "A" }, { id: "B" }, { id: "image" }] };
         let route = { type: "agentSummary", key: "agent", summaryId: "summary" };
         let visible;
-        const state = { attachmentDetails: {}, attachmentRequestGenerations: {}, attachmentImageRequestGenerations: {}, attachmentImageUrls: {}, attachmentImageErrors: {}, openedAttachmentLinks: {} };
+        const state = { agentSidePanels: new Map([[agent.key, { open: ["summary", "focus"] }]]), prDiffFullViewMode: {}, attachmentDetails: {}, attachmentRequestGenerations: {}, attachmentImageRequestGenerations: {}, attachmentImageUrls: {}, attachmentImageErrors: {}, openedAttachmentLinks: {} };
         function request(kind, id) { return new Promise((resolve, reject) => requests.push({ kind, id, resolve, reject })); }
         const context = {
           state,
@@ -35,6 +35,7 @@ module RemoteUIAttachmentCacheRaceTest
           window: { matchMedia: () => ({ matches: true }) },
           document: { querySelector: () => null, querySelectorAll: () => [] },
           parseRoute: () => route,
+          sideConversationState: (value) => state.agentSidePanels.get(value.key),
           findAgent: (key) => key === agent.key ? agent : null,
           agentAttachments: (value) => value.attachments,
           attachmentId: (value) => value.id,

@@ -46,7 +46,7 @@ if ARGV.first == "--advance"
     agent = agents.find { |candidate| candidate.key == key } || raise("Synthetic agent missing")
     run = HQ::ManagedAgent::AgentRun.new(started_at: Time.now - 2, finished_at: Time.now - 1, status: "input_required", log_path: agent.raw_log_path)
     agent.runs << run
-    question = { "message" => "Newer inquiry B", "fields" => [{ "key" => "choice", "label" => "Your answer", "input_type" => "text", "required" => true }] }
+    question = { "message" => "Newer inquiry B", "fields" => [{ "key" => "choice", "label" => "Your answer", "input_type" => ENV["TYCHO_REMOTE_UI_INQUIRY_PANEL_ONLY"] == "1" ? "multiline" : "text", "required" => true }] }
     agent.structured_result = { "status" => "input_required", "summary" => "Synthetic newer inquiry", "inquiry" => question }
     inquiry_id = agent.send(:inquiry_identity, question, run:)
     HQ::AgentMemory.new(agent).append_inquiry_request!(question, created_at: run.finished_at, inquiry_id:)
@@ -56,7 +56,9 @@ if ARGV.first == "--advance"
   exit
 end
 
-review_fields = if ENV["TYCHO_REMOTE_UI_INQUIRY_BLOCKER_CASE"] == "blocker-multiselect-comma"
+review_fields = if ENV["TYCHO_REMOTE_UI_INQUIRY_PANEL_ONLY"] == "1"
+                  [{ "key" => "choice", "label" => "Your answer", "input_type" => "multiline", "required" => true }]
+                elsif ENV["TYCHO_REMOTE_UI_INQUIRY_BLOCKER_CASE"] == "blocker-multiselect-comma"
                   [{ "key" => "regions", "label" => "Regions", "input_type" => "multi_select", "options" => ["Jakarta, Indonesia", "Tokyo"], "required" => true }]
                 elsif ["blocker-schema-correction", "blocker-attachment-correction"].include?(ENV["TYCHO_REMOTE_UI_INQUIRY_BLOCKER_CASE"])
                   [
@@ -94,7 +96,12 @@ agents = 64.times.map do |index|
                                log_path: File.join(HQ::AGENT_LOGS_DIR, "#{key}.raw.log"))
   run = HQ::ManagedAgent::AgentRun.new(started_at: Time.now - 2, finished_at: Time.now - 1, status: "input_required", log_path: agent.raw_log_path)
   agent.runs << run
-  question = { "message" => "Which synthetic option?", "fields" => review_fields }
+  message = if ENV["TYCHO_REMOTE_UI_INQUIRY_PANEL_ONLY"] == "1"
+              index.odd? ? "Please review the available evidence before choosing the next step. " * 12 : "These questions remain open. Answer the items you can; the others will stay pending."
+            else
+              "Which synthetic option?"
+            end
+  question = { "message" => message, "fields" => review_fields }
   agent.structured_result = { "status" => "input_required", "summary" => "Synthetic inquiry", "inquiry" => question }
   id = agent.send(:inquiry_identity, question, run:)
   HQ::AgentMemory.new(agent).append_inquiry_request!(question, created_at: run.finished_at, inquiry_id: id)

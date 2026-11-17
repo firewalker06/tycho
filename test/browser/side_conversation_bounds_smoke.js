@@ -24,7 +24,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     });
     geometry.count=count;results.push({desktop:geometry});
     await capture(page,`desktop-focus-${count===3?"short":"long"}`);
-    check(geometry.nav.width===144 && geometry.strips===2,"match expanded navigation and panel strips",geometry);
+    check(geometry.nav.width===56 && geometry.strips===0,"match split navigation without obsolete accordion strips",geometry);
     check(geometry.documentHeight<=geometry.documentClient+1 && geometry.bodyHeight<=geometry.viewport+1,"outer document must fit the viewport",geometry);
     check(geometry.focus.bottom<=geometry.viewport+1 && Math.abs(geometry.focus.bottom-geometry.workspace.bottom)<2,"Focus outer container must fill its available height",geometry);
     check(geometry.dock.bottom<=geometry.viewport+1,"composer stays in viewport",geometry);

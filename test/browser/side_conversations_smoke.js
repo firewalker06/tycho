@@ -79,7 +79,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       const initialWidth = await page.locator('[data-side-kind="summary"]').evaluate(e => e.clientWidth);
       await page.evaluate(key => setAgentDetailViewMode(`${key}:summary`, "wide"), agentKey);
       await frames();
-      assert(await page.locator('[data-side-kind="summary"]').evaluate(e => e.clientWidth) > initialWidth, "Wide detail view must increase the Summary width");
+      assert.equal(await page.locator('[data-side-kind="summary"]').evaluate(e => e.clientWidth), initialWidth, "saved wide mode cannot change the fixed slot width");
       await page.evaluate(key => setAgentDetailViewMode(`${key}:summary`, "full"), agentKey);
       assert.equal(await page.locator(".agent-conversation-pane").isVisible(), false, "Full view hides Conversation");
       await page.evaluate(key => setAgentDetailViewMode(`${key}:summary`, "balanced"), agentKey);
@@ -114,10 +114,11 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     if (width >= 1440) {
       await page.evaluate(({ id, key }) => openSummaryAttachmentPreview(id, key), { id: attachment.id, key: agentKey });
       await page.locator(".summary-attachment-preview-pane").waitFor({ state: "visible" });
-      await active(["summary", "focus"]);
-      await page.locator("[data-close-summary-attachment-preview]").click();
+      await active(["summary"]);
+      await page.evaluate(() => closeSummaryAttachmentPreview());
       await page.locator("[data-side-workspace]").waitFor();
-      await active(["summary", "focus"]);
+      await active(["summary"]);
+      await toggle("focus").click();
       await toggle("focus").focus();
       await page.setViewportSize({ width: 390, height: 900 });
       await frames();
