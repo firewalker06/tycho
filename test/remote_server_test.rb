@@ -9525,7 +9525,7 @@ module RemoteServerTest
            response[:body].include?("ui-detail-header__action") &&
            js[:body].include?('classList.toggle("ui-detail-header", subpage && !onboarding)'),
            "expected focused routes to activate the shared detail-header anatomy without changing shell behavior")
-    assert(js[:body].include?('class="ui-searchable-collection"') &&
+    assert(js[:body].include?('class="ui-searchable-collection resource-grid-page"') &&
            js[:body].include?('class="search-box ui-search-field"') &&
            js[:body].include?('id="agent-results-summary" role="status"') &&
            js[:body].include?('aria-describedby="agent-results-summary"') &&
