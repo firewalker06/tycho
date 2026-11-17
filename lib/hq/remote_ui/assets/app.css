@@ -11452,3 +11452,12 @@ body:has(.resource-block-grid, .resource-grid-page) .app-header { max-width: non
 .resource-block-grid .schedule-row-main > span { overflow-wrap: anywhere; }
 .resource-block-grid .agent-name-label { white-space: normal; overflow-wrap: anywhere; }
 .resource-block-grid .agent-card-excerpt { overflow-wrap: anywhere; }
+
+/* Composer flyouts use the top layer; the dock must retain its own scrolling. */
+:is(.attachment-flyout, .skill-flyout)[popover] {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  min-block-size: 0;
+  z-index: auto;
+}

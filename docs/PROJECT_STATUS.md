@@ -40,6 +40,11 @@ drafts scroll inside the textarea; prompt actions remain visible or reachable
 when the viewport shrinks. See [panel and mobile verification](REMOTE_UI_PANEL_SLOTS.md)
 and [Agent Focus](AGENT_FOCUS.md#side-conversations).
 
+Composer Attachments, Linked agents and Skills use a shared native popover layer
+to escape the scrolling dock clip. Position follows the trigger and visible
+viewport; the dock retains its scroll budget. Existing modal order and
+dismissal behavior remain. See [composer flyout layering](REMOTE_UI_COMPOSER_MENUS.md).
+
 Answer and prompt expansion uses the existing Conversation column from 900
 pixels, with vertical controls and retained peers/header. Inquiry warning copy
 keeps intrinsic height while fields own scrolling. Small screens retain modal
