@@ -95,7 +95,10 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
         assert.equal(stopped.stopped_reason, "operator");
         automatic = { runCount: auto.run_count, remaining: auto.prompt_queue.entries.length, scheduleStatus: stopped.status, scheduledRuns: stopped.run_count };
         await page.goto(`${baseUrl}/ui#agent/${autoKey}`, { waitUntil: "networkidle" });
-        await page.locator(".message-list").waitFor();
+        await page.locator("[data-queue-read-block] > summary").waitFor();
+        assert.equal(await page.locator("[data-queue-read-block]").count(), 1, "automatic batch must have one visible receipt");
+        await page.locator("[data-queue-read-block] > summary").click();
+        assert((await page.locator("[data-queue-read-block]").innerText()).includes("Process due delegated reply"));
         if (captureDir) await page.screenshot({ path: path.join(captureDir, `stopped-automatic-${width}-${theme}.png`) });
       }
       assert.deepEqual(errors, []);
