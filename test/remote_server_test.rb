@@ -9253,10 +9253,10 @@ module RemoteServerTest
            js[:body].include?("data-set-agent-detail-view") &&
            js[:body].include?('role="menuitemradio"'),
            "expected focused Summary and Attachment layouts to use one exclusive view menu")
-    assert(js[:body].include?('{ value: "balanced", label: "Balanced", icon: "columns2" }') &&
-           js[:body].include?('{ value: "wide", label: "Widen detail", icon: "panelRightOpen" }') &&
-           js[:body].include?('{ value: "full", label: "Full view", icon: "maximize2" }'),
-           "expected each focused view mode to expose its own active trigger icon")
+    assert(js[:body].include?('{ value: "balanced", label: fixed ? "Conversation and detail" : "Balanced", icon: "columns2" }') &&
+           js[:body].include?('...(!fixed ? [{ value: "wide", label: "Widen detail", icon: "panelRightOpen" }] : [])') &&
+           js[:body].include?('{ value: "full", label: fixed ? "Detail only" : "Full view", icon: "maximize2" }'),
+           "expected fixed detail modes to retain trigger icons without offering widened slots")
     assert(js[:body].include?('class="focused-composer"') && js[:body].include?("Continue conversation"),
            "expected mobile focused views to collapse the follow-up composer")
     assert(js[:body].include?('iconSvg("badgeQuestionMark")'),
