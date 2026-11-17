@@ -1095,8 +1095,10 @@ curl -X POST http://127.0.0.1:7373/agents/web-charlie-agent-8/prompt-queue/proce
 
 For a linked paused or stopped schedule, this is an explicit one-time action.
 The agent UI shows **Process queue once** and **Process selected**. Neither action
-resumes the schedule or changes its saved state. Later automatic queue dispatch
-stays suppressed. Running agents, active or suspended inquiries, busy workspaces,
+resumes the schedule or changes its saved state. Paused schedules continue to
+suppress automatic queue dispatch. A stopped schedule blocks new scheduled ticks,
+but due queued work continues automatically when the agent is eligible. Running
+agents, active or suspended inquiries, busy workspaces,
 unavailable workspaces, and context or claim recovery block this action before
 queue selection is saved. The response gives the blocker as a conflict (409).
 Failed claims retain the existing guarded **Retry** action.

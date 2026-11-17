@@ -1854,7 +1854,7 @@ module HQ
       return false unless agent.prompt_queue_dispatchable?
 
       schedule = schedule_states[agent.schedule_key.to_s] if agent.scheduled?
-      !schedule || schedule.scheduled?
+      !schedule || schedule.scheduled? || schedule.stopped?
     rescue ArgumentError
       false
     end

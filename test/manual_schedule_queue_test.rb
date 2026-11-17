@@ -20,7 +20,7 @@ module ManualScheduleQueueTest
       store.save([agent])
       state = HQ::ScheduleState.new(key: "manual-schedule", status:, enabled: status != "paused",
                                     last_target_key: agent.key, stop_id: "operator-stop", stopped_reason: "operator",
-                                    acknowledged_target_stop: "unchanged-stop", run_count: 7)
+                                    acknowledged_target_stop: "unchanged-stop", next_due_at: Time.now - 3600, run_count: 7)
       HQ::ScheduleStore.new.save(state.key => state)
       schedule_bytes = File.binread(HQ::SCHEDULES_STATE_FILE)
       service = HQ::RemoteService.new(registry:)
@@ -38,12 +38,12 @@ module ManualScheduleQueueTest
     service.process_prompt_queue(agent.key, "entry_ids" => ["first"], "expected_entry_ids" => %w[first later])
   end
 
-  def assert_one_delivery_and_automatic_suppression
+  def assert_manual_delivery_preserves_schedule_policy
     %w[paused stopped].each do |status|
       fixture(status) do |store, service, agent, _workspace|
         prompts = []
         PromptQueueTest.with_stubbed_start(prompts:) do
-          2.times { store.load }
+          2.times { store.load } if status == "paused"
           assert(prompts.empty?, "#{status}: automatic poll started queued work")
           payload = service.send(:prompt_queue_payload, current(store))
           assert(payload.dig("processing", "manual_once") == { "schedule_status" => status, "blocker" => nil },
@@ -58,9 +58,14 @@ module ManualScheduleQueueTest
           store.complete_queue_work!(agent.key, batch_id: batch["id"], dispositions: [{ "entry_id" => "first", "outcome" => "completed" }])
           3.times { store.load }
           loaded = current(store)
-          assert(prompts.length == 1 && loaded.visible_prompt_queue_entries.map { |entry| entry["id"] } == ["later"],
-                 "#{status}: later automatic dispatch was not suppressed")
-          assert(loaded.run_count == 2, "#{status}: manual delivery changed more than one run")
+          expected = status == "paused" ? 1 : 2
+          assert(prompts.length == expected && loaded.run_count == expected + 1, "#{status}: wrong automatic policy after manual completion")
+          if status == "paused"
+            assert(loaded.visible_prompt_queue_entries.map { |entry| entry["id"] } == ["later"], "paused work was consumed")
+          else
+            assert(loaded.prompt_queue.empty? && loaded.last_run.metadata["prompt_queue_entry_ids"] == ["later"],
+                   "stopped schedule did not claim later work exactly once")
+          end
         end
       end
     end
@@ -158,7 +163,7 @@ module ManualScheduleQueueTest
     end
   end
 
-  def assert_ownership_is_preserved
+  def assert_ownership_is_preserved(automatic: false)
     %w[parent user].each do |owner|
       fixture("stopped") do |store, service, agent, workspace|
         parent_workspace = File.join(workspace, "parent")
@@ -172,7 +177,12 @@ module ManualScheduleQueueTest
         store.enqueue_prompt_from!(agent.key, prompt: "Owned work", actor:, id: "owned", require_running: false)
         before = HQ::DelegationStore.new.ownership_stamp(agent.key)
         PromptQueueTest.with_stubbed_running_start do
-          result = service.process_prompt_queue(agent.key, "entry_ids" => ["owned"], "expected_entry_ids" => %w[first later owned])
+          result = if automatic
+                     store.load
+                     { "status" => "started" }
+                   else
+                     service.process_prompt_queue(agent.key, "entry_ids" => ["owned"], "expected_entry_ids" => %w[first later owned])
+                   end
           loaded = current(store)
           assert(result["status"] == "started" &&
                  [loaded.last_run.delegation_owner, loaded.last_run.delegation_generation] == [owner, before["generation"]] &&
@@ -199,7 +209,7 @@ module ManualScheduleQueueTest
   end
 
   def run!
-    assert_one_delivery_and_automatic_suppression
+    assert_manual_delivery_preserves_schedule_policy
     assert_concurrent_clicks_and_failure_recovery
     assert_blockers_preserve_queue_and_inquiry
     assert_ownership_is_preserved

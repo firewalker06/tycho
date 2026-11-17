@@ -66,6 +66,9 @@ Dispatcher availability does not make every entry eligible. Schedule state,
 workspace contention, inquiry state, delayed eligibility, ownership generations,
 native-start acknowledgement, prior failure, and recovery gates still apply.
 Neither storage migration nor the server timer resumes a stopped schedule.
+A stopped schedule blocks scheduled ticks, but its linked agent can process due
+queued prompts and delegated replies automatically. Paused schedules still
+suppress automatic queue dispatch; explicit manual processing remains available.
 CLI, Remote API, UI controls, and native runner completion use the same store
 and the same dispatcher rules. No provider or live service is needed for tests.
 

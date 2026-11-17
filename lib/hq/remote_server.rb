@@ -6251,7 +6251,7 @@ module HQ
       end
       if agent.scheduled?
         schedule = ScheduleStore.new.load[agent.schedule_key.to_s]
-        return ["schedule", "Waiting for the schedule to resume"] if schedule && !schedule.scheduled?
+        return ["schedule", "Waiting for the schedule to resume"] if schedule && !schedule.scheduled? && !schedule.stopped?
       end
       resume_pending = agent.active_queue_work&.fetch("resume_pending", false)
       if agent.active_queue_work && !resume_pending
