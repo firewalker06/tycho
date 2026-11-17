@@ -191,7 +191,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir, metadataFixtur
         const control = clippedControls.nth(i);
         if (!(await control.isVisible())) continue;
         const bounds = await control.boundingBox();
-        if (bounds.x >= -1 && bounds.x + bounds.width <= width + 1) continue;
+        if (!bounds || (bounds.x >= -1 && bounds.x + bounds.width <= width + 1)) continue;
         // Settings navigation intentionally scrolls horizontally. Prove each offscreen tab is reachable.
         await control.scrollIntoViewIfNeeded();
         const reachable = await control.evaluate(e => {
