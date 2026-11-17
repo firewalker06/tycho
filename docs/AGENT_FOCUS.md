@@ -260,7 +260,7 @@ download or preview action. Removed files show as unavailable without actions.
 Attachment grids use the Focus panel as an inline-size container. They show one
 column below 640 pixels of container content width, two columns from 640 pixels,
 and three from 960 pixels. Opening another peer does not change slot width. Sidebar width changes can
-change the grid at the same viewport width. Long labels wrap to three lines; accessible labels and title
+change the grid at the same viewport width. Long attachment titles stay on one line with an ellipsis; accessible labels and title
 attributes keep their complete text. Action controls retain their standard size.
 
 ```sh

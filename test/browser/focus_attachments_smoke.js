@@ -4,6 +4,7 @@ const path = require("node:path");
 
 module.exports = async ({ browser, baseUrl, agentKey, captureDir, metadataFixture }) => {
   const api = await browser.newContext();
+  const longTitle = "Long attachment label " + "long_label_without_spaces_".repeat(9);
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64");
   const files = [
     { filename: "original report 日本語.md", content_type: "text/markdown", bytes: Buffer.from("# Focus attachment\n\nKeep the source beside this file.\n") },
@@ -17,14 +18,13 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir, metadataFixtur
   for (let offset = 0; offset < files.length; offset += 4) {
     const added = await api.request.post(`${baseUrl}/agents/${agentKey}/messages`, { data: {
       prompt: "Synthetic Focus attachment grid", start: false,
-      attachments: files.slice(offset, offset + 4).map(file => ({ filename: file.filename, title: file.filename, content_type: file.content_type, content_base64: file.bytes.toString("base64") })),
+      attachments: files.slice(offset, offset + 4).map(file => ({ filename: file.filename, title: file === files[0] ? longTitle : file.filename, content_type: file.content_type, content_base64: file.bytes.toString("base64") })),
     } });
     assert(added.ok(), await added.text());
   }
   const agent = (await (await api.request.get(`${baseUrl}/agents/${agentKey}`)).json()).agent;
   const records = files.map(file => agent.attachments.find(a => a.filename === file.filename || a.title === file.filename));
   assert(records.every(Boolean));
-  const longTitle = "Long attachment label " + "long_label_without_spaces_".repeat(9);
   const link = { type: "link", title: "External reference with a long descriptive label", url: "https://example.test/focus-reference" };
   const focus = (await (await api.request.get(`${baseUrl}/agents/${agentKey}/focus`)).json()).focus;
   const saved = await api.request.put(`${baseUrl}/agents/${agentKey}/focus`, { data: { revision: focus.revision, sections: [
@@ -46,6 +46,32 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir, metadataFixtur
     await page.goto(`${baseUrl}/ui#agent/${agentKey}/summary`, { waitUntil: "networkidle" });
     await page.evaluate(theme => window.TychoAppearance.setPreference(theme), theme);
     await page.locator("[data-side-workspace]").waitFor();
+    const titleFacts = async selector => {
+      const facts = await page.locator(selector).first().evaluate(e => {
+        const title = e.querySelector(".attachment-copy strong");
+        const style = getComputedStyle(title);
+        const row = e.getBoundingClientRect();
+        const text = title.getBoundingClientRect();
+        return { fullTitle: title.textContent, disclosure: e.title, name: e.getAttribute("aria-label"),
+          whiteSpace: style.whiteSpace, overflow: style.overflow, ellipsis: style.textOverflow,
+          clipped: title.scrollWidth > title.clientWidth, height: text.height, lineHeight: parseFloat(style.lineHeight),
+          fits: text.right <= row.right + 1 && e.scrollWidth <= e.clientWidth + 1 };
+      });
+      assert.equal(facts.fullTitle, longTitle);
+      assert.equal(facts.disclosure, longTitle);
+      assert(facts.name.includes(longTitle));
+      assert.equal(facts.whiteSpace, "nowrap");
+      assert.equal(facts.overflow, "hidden");
+      assert.equal(facts.ellipsis, "ellipsis");
+      assert(facts.clipped && facts.fits, JSON.stringify(facts));
+      if (Number.isFinite(facts.lineHeight)) assert(facts.height <= facts.lineHeight + 1);
+      return facts;
+    };
+    await titleFacts('[data-side-kind="summary"] .summary-attachment-row');
+    if (captureDir) {
+      fs.mkdirSync(captureDir, { recursive: true });
+      await page.screenshot({ path: path.join(captureDir, `summary-title-${width}-${theme}.png`) });
+    }
     const summaryIcons = await page.locator('[data-side-kind="summary"] .summary-attachment-row .attachment-icon').evaluateAll(es => es.map(e => e.innerHTML));
     const toggle = kind => page.locator(`.side-conversation-controls [data-side-conversation="${kind}"]`);
     await page.locator("#prompt-input").fill("Keep this grid draft");
@@ -81,6 +107,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir, metadataFixtur
       });
       assert.equal(facts.columns, expected, JSON.stringify(facts));
       assert(!facts.gridOverflow && !facts.pageOverflow && facts.cardsFit && facts.actionsFit && facts.documentHeight <= facts.height + 1, JSON.stringify(facts));
+      await titleFacts(".agent-focus-attachments .summary-attachment-row");
       results.push({ theme, ...facts });
       return facts;
     };
