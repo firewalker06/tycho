@@ -11,12 +11,15 @@ module HQ
     ReceiptLookupError = Class.new(StandardError)
     # Start of the first receipt-capable source day (0429119, +07:00).
     RECEIPT_CAPABILITY_BOUNDARY = Time.iso8601("2026-10-29T00:00:00+07:00").freeze
+    REFERENCE_CACHE_LIMIT = 128
+    REFERENCE_ROOT_LIMIT = 8
     Record = Struct.new(:agent, :directory, :manifest_path, keyword_init: true)
     @cache_mutex = Mutex.new
     @snapshot_cache = {}
+    @reference_cache = {}
 
     class << self
-      attr_reader :cache_mutex, :snapshot_cache
+      attr_reader :cache_mutex, :snapshot_cache, :reference_cache
     end
 
     attr_reader :receipt_scan_health
@@ -60,8 +63,19 @@ module HQ
         return records.find { |record| record.agent.key == target }
       end
 
-      direct_manifest_paths(target).lazy.filter_map { |path| load_record(path) }
-                                   .find { |record| record.agent.key == target }
+      if latest
+        hit, record = self.class.cache_mutex.synchronize do
+          entry = self.class.reference_cache[@root]
+          references = entry[:records] if entry && entry[:signature] == signature
+          [references&.key?(target), references&.[](target)]
+        end
+        return record if hit
+      end
+
+      record = direct_manifest_paths(target).lazy.filter_map { |path| load_record(path) }
+                                           .find { |candidate| candidate.agent.key == target }
+      cache_reference(target, record, signature) if latest && signature == root_signature
+      record
     end
 
     # Creation needs proven absence, not the best-effort browsing snapshot.
@@ -154,7 +168,23 @@ module HQ
     end
 
     def invalidate!
-      self.class.cache_mutex.synchronize { self.class.snapshot_cache.delete(@root) }
+      self.class.cache_mutex.synchronize do
+        self.class.snapshot_cache.delete(@root)
+        self.class.reference_cache.delete(@root)
+      end
+    end
+
+    def cache_reference(key, record, signature)
+      self.class.cache_mutex.synchronize do
+        entry = self.class.reference_cache[@root]
+        unless entry && entry[:signature] == signature
+          entry = { signature:, records: {} }
+          self.class.reference_cache[@root] = entry
+        end
+        entry[:records][key] = record
+        entry[:records].shift while entry[:records].length > REFERENCE_CACHE_LIMIT
+        self.class.reference_cache.shift while self.class.reference_cache.length > REFERENCE_ROOT_LIMIT
+      end
     end
 
     def direct_manifest_paths(key)

@@ -5053,6 +5053,27 @@ module RemoteServerTest
              "expected missing archive to retain historical reference metadata")
       assert(loaded.sort == ([parent] + children.first(3)).map { |agent| by_key.fetch(agent[:key]) }.sort,
              "expected only needed valid manifests, without unrelated or older duplicate hydration")
+      loaded.clear
+      next_service = HQ::RemoteService.new(registry: registry)
+      next_service.instance_variable_set(:@agent_archive_store, store)
+      assert(next_service.agent(target[:key])[:delegation] == payload[:delegation] && loaded.empty?,
+             "expected selective references to stay warm across service instances without a full scan")
+
+      # Saving an archive must invalidate both caches even when the root timestamp is unchanged.
+      path = by_key.fetch(children.first[:key])
+      original = JSON.parse(File.read(path))
+      root_time = File.mtime(HQ::AGENT_ARCHIVE_DIR)
+      [true, false].each do |hidden_state|
+        saved = HQ::AgentArchiveStore::Record.new(
+          agent: HQ::ManagedAgent.from_hash(original.merge("project_hidden_at_archive" => hidden_state)),
+          directory: File.dirname(path), manifest_path: path
+        )
+        store.save(saved)
+        File.utime(root_time, root_time, HQ::AGENT_ARCHIVE_DIR)
+        updated = service.agent(target[:key]).dig(:delegation, :children).find { |ref| ref[:agent_key] == children.first[:key] }
+        assert(updated[:state] == (hidden_state ? "hidden" : "archived"),
+               "expected archive save to invalidate selective reference visibility")
+      end
 
       # Request-local memoization includes misses, but a later request sees archive changes.
       context = service.send(:delegation_reference_context)
@@ -5092,6 +5113,15 @@ module RemoteServerTest
              archived_child.dig(:delegation, :parent, :agent_key) == active[:key],
              "expected archived detail to retain its live parent link")
       assert(loaded.none? { |path| File.dirname(path) == shadow }, "expected active reference to take precedence without reading its archive")
+      (HQ::AgentArchiveStore::REFERENCE_CACHE_LIMIT + 1).times { |i| store.find("absent-#{i}", latest: true) }
+      references = HQ::AgentArchiveStore.reference_cache.fetch(HQ::AGENT_ARCHIVE_DIR).fetch(:records)
+      assert(references.length == HQ::AgentArchiveStore::REFERENCE_CACHE_LIMIT && !references.key?("absent-0"),
+             "expected selective hit/miss retention to stay bounded")
+      (HQ::AgentArchiveStore::REFERENCE_ROOT_LIMIT + 1).times do |i|
+        HQ::AgentArchiveStore.new(root: File.join(dir, "other-#{i}")).find("absent", latest: true)
+      end
+      assert(HQ::AgentArchiveStore.reference_cache.length == HQ::AgentArchiveStore::REFERENCE_ROOT_LIMIT,
+             "expected selective cache roots to stay bounded")
     end
   end
 
