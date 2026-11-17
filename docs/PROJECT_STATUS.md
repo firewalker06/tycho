@@ -31,6 +31,10 @@ constrained row while Stop stays fixed at the right.
 Each Focus section has an accessible heading toggle. A header button collapses
 all sections when any are open, or expands all when all are closed. Per-agent
 choices survive polling and panel navigation in the current browser session.
+Displayed Focus uses a snapshot and retains its DOM during global polling.
+Icon-only manual Refresh and bulk controls have accessible labels and tooltips.
+Explicit manual fetching retrieves Focus; background detail replies cannot replace
+it. See [Focus refresh](REMOTE_UI_FOCUS_REFRESH.md).
 Focus attachments reuse Summary type icons and supported panel-open/download
 actions. Container queries select three, two or one attachment columns from the
 actual Focus width; external links keep their navigation and have no invented

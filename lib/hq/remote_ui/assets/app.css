@@ -11479,3 +11479,7 @@ body:has(.resource-block-grid, .resource-grid-page) .app-header { max-width: non
   min-block-size: 0;
   z-index: auto;
 }
+
+.agent-focus-panel-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.agent-focus-panel > .agent-focus-refresh-error { padding: 8px 16px; margin: 0; color: var(--danger); }
+.agent-focus-panel:has(> .agent-focus-refresh-error) { grid-template-rows: auto auto minmax(0, 1fr); }

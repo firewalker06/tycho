@@ -63,7 +63,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir, metadataFixtur
     const expanded = () => headings.evaluateAll(es => es.map(e => e.getAttribute("aria-expanded") === "true"));
     const assertDisclosure = async (expected, visible = true) => {
       assert.deepEqual(await expanded(), expected);
-      assert.equal(await bulk.innerText(), expected.some(Boolean) ? "Collapse all" : "Expand all");
+      assert.equal(await bulk.getAttribute("aria-label"), expected.some(Boolean) ? "Collapse all" : "Expand all");
       assert.deepEqual(await headings.evaluateAll((es, visible) => es.map(e => {
         const items = document.getElementById(e.getAttribute("aria-controls"));
         return e.querySelector(".agent-focus-chevron svg") && items && items.hidden === (e.getAttribute("aria-expanded") === "false") && (!visible || e.getBoundingClientRect().height > 0);

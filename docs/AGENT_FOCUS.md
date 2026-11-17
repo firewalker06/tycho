@@ -275,3 +275,21 @@ Set `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the checkout for current screenshots
 and measured panel/grid geometry. The fixture checks actual downloads and bytes,
 external navigation, type icons, unavailable files, keyboard actions, long
 labels, same-viewport panel changes, polling, drafts and desktop/mobile bounds.
+
+## Manual refresh in the Remote UI
+
+Displayed Focus data is a per-agent snapshot. Global polling keeps the same
+Focus node, section choices, scroll and attachment selection. It does not fetch
+Focus or accept replacement Focus data from an agent-detail read. A document
+that first becomes available can still expose Focus without opening it.
+
+The icon-only Refresh Focus control retrieves current Focus directly. Explicit
+agent/message fetching, manual refresh controls and pull refresh also retrieve
+Focus. Background and mutation reconciliation do not. Busy state keeps keyboard
+focus and coalesces duplicate requests. A failed read leaves the old content
+visible with a retryable error. Older detail replies cannot overwrite a newer
+manual Focus result.
+
+Collapse all and Expand all are icon-only controls with accessible names and
+tooltips. Mixed state still means Collapse all; all closed means Expand all.
+See [Focus refresh verification](REMOTE_UI_FOCUS_REFRESH.md).
