@@ -63,7 +63,7 @@ bundle exec bin/tycho schedule daemon
 ```
 
 Dispatcher availability does not make every entry eligible. Schedule state,
-workspace contention, inquiry state, delayed eligibility, ownership generations,
+per-agent process exclusion, inquiry state, delayed eligibility, ownership generations,
 native-start acknowledgement, prior failure, and recovery gates still apply.
 Neither storage migration nor the server timer resumes a stopped schedule.
 A stopped schedule blocks scheduled ticks, but its linked agent can process due

@@ -6197,7 +6197,7 @@ module HQ
     def prompt_queue_payload(agent)
       entries = agent.visible_prompt_queue_entries
       processing = prompt_queue_processing_payload(agent, entries)
-      stopped_reason = agent.prompt_queue_stopped_reason unless %w[delayed ready workspace running schedule].include?(processing["state"])
+      stopped_reason = agent.prompt_queue_stopped_reason unless %w[delayed ready running schedule].include?(processing["state"])
       {
         "entries" => entries.each_with_index.map do |entry, index|
           prompt_queue_entry_payload(agent, entry).merge("position" => index + 1)
@@ -6227,7 +6227,7 @@ module HQ
                   else "Waiting for the next Tycho agent check"
                   end
       end
-      manual_once = @agent_store.manual_schedule_queue_action(agent, agents: cached_all_agents) if agent.scheduled? && !entries.empty?
+      manual_once = @agent_store.manual_schedule_queue_action(agent) if agent.scheduled? && !entries.empty?
       {
         "processor" => processor,
         "state" => state,
@@ -6270,14 +6270,7 @@ module HQ
       unless agent.prompt_queue_dispatchable?
         return ["stopped", agent.prompt_queue_stopped_reason || "Automatic queue processing is stopped"]
       end
-      agents = cached_all_agents
-      workspace = File.realpath(agent.workspace)
-      busy = agents.any? do |candidate|
-        candidate.key != agent.key && candidate.running? && File.realpath(candidate.workspace) == workspace
-      rescue Errno::ENOENT, Errno::EACCES
-        File.expand_path(candidate.workspace) == File.expand_path(agent.workspace) && candidate.running? && candidate.key != agent.key
-      end
-      return ["workspace", "Waiting for another agent in this workspace to finish"] if busy
+      return ["stopped", "Queue workspace is unavailable"] unless File.directory?(agent.workspace) && File.readable?(agent.workspace)
 
       ["ready", nil]
     rescue Errno::ENOENT, Errno::EACCES

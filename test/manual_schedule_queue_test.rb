@@ -113,7 +113,7 @@ module ManualScheduleQueueTest
   end
 
   def assert_blockers_preserve_queue_and_inquiry
-    %w[paused stopped].product(%w[inquiry suspended workspace recovery missing]).each do |status, condition|
+    %w[paused stopped].product(%w[inquiry suspended recovery missing]).each do |status, condition|
       fixture(status) do |store, service, agent, workspace|
         agents = [agent]
         expected = case condition
@@ -125,11 +125,6 @@ module ManualScheduleQueueTest
                      agent.last_run.status = "input_required"
                      agent.suspend_inquiry!("keep-inquiry") if condition == "suspended"
                      "Answer the inquiry"
-                   when "workspace"
-                     busy, pid = PromptQueueTest.running_agent(workspace)
-                     busy.instance_variable_set(:@key, "busy-agent")
-                     agents << busy
-                     "Another agent is running"
                    when "recovery"
                      agent.instance_variable_set(:@context_replacement_recovery, { "stage" => "pending" })
                      "Context replacement recovery"
@@ -157,8 +152,6 @@ module ManualScheduleQueueTest
                  HQ::AgentMemory.new(loaded).events.none? { |event| event["type"] == "inquiry_cancelled" },
                  "blocked manual request cancelled the inquiry")
         end
-      ensure
-        PromptQueueTest.stop_process(pid) if pid
       end
     end
   end
@@ -208,7 +201,31 @@ module ManualScheduleQueueTest
     end
   end
 
+  def assert_shared_workspace_allows_manual_delivery
+    %w[paused stopped].each do |status|
+      fixture(status) do |store, service, agent, workspace|
+        busy, pid = PromptQueueTest.running_agent(workspace)
+        busy.instance_variable_set(:@key, "busy-agent")
+        store.save([agent, busy])
+        PromptQueueTest.with_stubbed_running_start do
+          payload = service.send(:prompt_queue_payload, current(store))
+          assert(payload.dig("processing", "manual_once", "blocker").nil?,
+                 "#{status}: another agent in the workspace blocked manual delivery")
+          result = process(service, agent)
+          loaded = store.load_with_poll_events(process_delegations: false, dispatch_prompt_queues: false).first
+          assert(result["status"] == "started" && loaded.all?(&:running?),
+                 "#{status}: distinct agents must run together")
+          assert(loaded.find { |item| item.key == agent.key }.run_count == 2,
+                 "#{status}: selected delivery must start once")
+        end
+      ensure
+        PromptQueueTest.stop_process(pid) if pid
+      end
+    end
+  end
+
   def run!
+    assert_shared_workspace_allows_manual_delivery
     assert_manual_delivery_preserves_schedule_policy
     assert_concurrent_clicks_and_failure_recovery
     assert_blockers_preserve_queue_and_inquiry

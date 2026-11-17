@@ -9,6 +9,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     const page = await context.newPage();
     const errors = [];
     let automatic = null;
+    let busyKey = null;
     page.on("pageerror", error => errors.push(error.message));
     await page.addInitScript(() => { document.hasFocus = () => true; });
     page.setDefaultTimeout(15000);
@@ -17,6 +18,14 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     try {
       await page.goto(`${baseUrl}/ui#settings`, { waitUntil: "networkidle" });
       await page.locator("[data-appearance-preference]").selectOption(theme);
+      const created = await page.request.post(`${baseUrl}/agents`, { data: {
+        project_key: "web", name: "Concurrent workspace fixture", prompt: "QUEUE_SMOKE_HOLD", template_key: "custom"
+      } });
+      assert(created.ok(), "busy sibling creation failed");
+      busyKey = (await created.json()).agent.key;
+      assert((await page.request.post(`${baseUrl}/agents/${busyKey}/start`, { data: {} })).ok());
+      assert((await (await page.request.get(`${baseUrl}/agents/${busyKey}`)).json()).agent.running,
+        "same-workspace sibling must be running during queue controls check");
       const scheduleBefore = await (await page.request.get(`${baseUrl}/schedules/${key}`)).json();
       await page.goto(`${baseUrl}/ui#agent/${key}`, { waitUntil: "networkidle" });
       await page.locator("[data-prompt-queue] > summary").click();
@@ -66,6 +75,8 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       }
       assert.equal(agent.run_count, 2);
       assert.equal(agent.running, false);
+      assert((await (await page.request.get(`${baseUrl}/agents/${busyKey}`)).json()).agent.running,
+        "queue delivery must complete while the same-workspace sibling is still running");
       await page.waitForTimeout(5500);
       agent = (await (await page.request.get(`${baseUrl}/agents/${key}`)).json()).agent;
       assert.equal(agent.run_count, 2, status === "paused" ? "paused processing must stay suppressed" : "future work must not run early");
@@ -103,7 +114,13 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       }
       assert.deepEqual(errors, []);
       results.push({ width, theme, status, writes, runCount: agent.run_count, remaining: ["later"], automatic });
-    } finally { await context.close(); }
+    } finally {
+      if (busyKey) {
+        await page.request.post(`${baseUrl}/agents/${busyKey}/stop`, { data: {} });
+        await page.request.post(`${baseUrl}/agents/${busyKey}/archive`, { data: {} });
+      }
+      await context.close();
+    }
   }
   if (captureDir) fs.writeFileSync(path.join(captureDir, "manual-queue-results.json"), JSON.stringify(results, null, 2));
   console.log(`manual_schedule_queue_smoke: ${results.length} manual cases and ${results.filter(result => result.automatic).length} automatic stopped-schedule cases passed`);

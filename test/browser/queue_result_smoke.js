@@ -20,7 +20,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       let canonical;
       const raw = () => ({ ...structuredClone(original), name: "Queue messages", running: false,
         prompt_queue: { entries: ["a", "b", "protected"].map(id => ({ id, prompt: ({a:"Prepare the summary",b:"Check the result",protected:"Reply from another agent"})[id], source: id === "protected" ? "delegation_callback" : "user", state: "queued" })),
-          processing_stopped: true, unprocessed_reason: "debug-state-sentinel", processing: { state: "workspace", message: "Waiting for the workspace." } } });
+          processing_stopped: true, unprocessed_reason: "debug-state-sentinel", processing: { state: "running", message: "Waiting for this run to finish." } } });
       canonical = raw();
       await page.route(/\/servers\/(resources|activity)(\?.*)?$/, async route => {
         const response = await route.fetch();
@@ -114,7 +114,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         }
         const text = after.growl;
         if (scenario === "started") assert(text.includes("Started 2 queued messages"));
-        if (scenario === "busy") assert(text.includes("Accepted 2 queued messages") && text.includes("Waiting for the workspace") && !text.includes("Started"));
+        if (scenario === "busy") assert(text.includes("Accepted 2 queued messages") && text.includes("Waiting for this run to finish") && !text.includes("Started"));
         if (scenario === "refusal") assert(text.includes("Could not process the queue") && !text.includes("Started"));
         if (scenario === "partial") assert(text.includes("1 of 2 selected") && !text.includes("Removed 2") && !text.includes("Started 2"));
         if (scenario === "stale") assert(text.includes("Queue changed"));

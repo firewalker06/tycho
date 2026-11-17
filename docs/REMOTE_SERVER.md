@@ -916,7 +916,7 @@ A successful receipt returns `accepted: true`, `queued`, `resumed_schedules`
 HTTP 202 identifies queued acceptance; immediate and processed replays use 200.
 Neither status alone is a validated receipt. The browser checks the explicit
 shape and intent/agent/server binding before it confirms the message. Queued
-work can still wait for its eligibility time, the agent, or the workspace.
+work can still wait for its eligibility time or the target agent. Distinct agents can run in the same workspace.
 
 The store persists a private `prompt_receipts` map in the agent record, in the
 same transaction as acceptance. Each record has a request fingerprint and
@@ -1098,7 +1098,7 @@ The agent UI shows **Process queue once** and **Process selected**. Neither acti
 resumes the schedule or changes its saved state. Paused schedules continue to
 suppress automatic queue dispatch. A stopped schedule blocks new scheduled ticks,
 but due queued work continues automatically when the agent is eligible. Running
-agents, active or suspended inquiries, busy workspaces,
+agents, active or suspended inquiries,
 unavailable workspaces, and context or claim recovery block this action before
 queue selection is saved. The response gives the blocker as a conflict (409).
 Failed claims retain the existing guarded **Retry** action.
