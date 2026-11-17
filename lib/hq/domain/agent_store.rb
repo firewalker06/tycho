@@ -1123,7 +1123,7 @@ module HQ
 
     # This capability authorizes one immediate delivery, never a deferred resume.
     # Recheck it under the store lock before changing queue or inquiry state.
-    def manual_schedule_queue_action(agent, agents:, schedule_states: nil)
+    def manual_schedule_queue_action(agent, schedule_states: nil)
       return nil unless agent.scheduled?
 
       schedule = (schedule_states || ScheduleStore.new.load)[agent.schedule_key.to_s]
@@ -1143,9 +1143,6 @@ module HQ
                   "Queue dispatch recovery is pending"
                 elsif !File.directory?(agent.workspace) || !File.readable?(agent.workspace)
                   "Queue workspace is unavailable"
-                elsif agents.any? { |candidate| candidate.key != agent.key && candidate.running? &&
-                      canonical_workspace(candidate.workspace) == canonical_workspace(agent.workspace) }
-                  "Another agent is running in this workspace"
                 end
       { "schedule_status" => schedule.status, "blocker" => blocker }
     end
@@ -1162,7 +1159,7 @@ module HQ
                  "processed_entry_ids" => [], "agent" => target })
         end
         selected_ids = target.validate_queue_entry_ids!(entry_ids)
-        manual = manual_schedule_queue_action(target, agents:)
+        manual = manual_schedule_queue_action(target)
         raise ArgumentError, manual["blocker"] if manual && manual["blocker"]
 
         target.cancel_pending_inquiry! if target.inquiry_blocking_prompt_queue?
@@ -1860,11 +1857,6 @@ module HQ
     end
 
     def dispatch_prompt_queue!(agent, agents)
-      return false if agents.any? do |candidate|
-        candidate.key != agent.key && canonical_workspace(candidate.workspace) == canonical_workspace(agent.workspace) &&
-          candidate.running?
-      end
-
       claim = agent.claim_pending_prompts!
       return false unless claim
 
@@ -1926,12 +1918,6 @@ module HQ
       result = target.include_pending_queue_work_with_user_input!
       mark_claim_reports_resumed!("entries" => result[:entries]) if result && !result[:idempotent]
       result
-    end
-
-    def canonical_workspace(path)
-      File.realpath(path.to_s)
-    rescue StandardError
-      File.expand_path(path.to_s)
     end
 
     # Yields one active agent under the store lock for memory-journal changes.

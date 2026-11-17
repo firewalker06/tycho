@@ -11,7 +11,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     if (width === 1440 && theme === "dark") {
       const served = await context.request.get(`${baseUrl}/ui.js`);
       const bundle = await served.text();
-      const expected = ["prompt_submissions.js","inquiry_submissions.js","app.js"].map(name=>fs.readFileSync(path.join(__dirname,"../../lib/hq/remote_ui/assets",name),"utf8")).join("\n");
+      const expected = ["prompt_submissions.js","inquiry_submissions.js","now_mascot.js","app.js"].map(name=>fs.readFileSync(path.join(__dirname,"../../lib/hq/remote_ui/assets",name),"utf8")).join("\n");
       assert(served.ok());assert.equal(bundle,expected,"browser must use the current complete UI bundle");
       if (captureDir) fs.writeFileSync(path.join(captureDir,"queue-recovery-source.json"),JSON.stringify({
         servedBundleSha256:crypto.createHash("sha256").update(bundle).digest("hex"),

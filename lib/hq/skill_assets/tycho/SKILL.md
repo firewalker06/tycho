@@ -111,7 +111,7 @@ The declaration is not cryptographic authentication. Use it only with the actual
 - Let only a prompt declared with the recorded parent key restore Delegation. Parent reclaim advances the generation and cancels any unresolved child inquiry before storing the prompt.
 - Once queued work reaches an agent, let that receiver process the complete pending queue as one native input. The newest entry supplies the batch owner and generation; earlier per-entry stamps do not split the batch.
 - Expect every terminal delegated run to create one deduplicated report when callbacks are connected. Tycho stamps ownership at launch and rejects stale generations.
-- Let Tycho accumulate eligible terminal reports for the same parent into one deterministic callback and resume. It waits while the parent or another agent in the same workspace is running.
+- Let Tycho accumulate eligible terminal reports for the same parent into one deterministic callback and resume. It waits while the parent is running. Distinct agents can run concurrently in the same workspace.
 - Treat callback disconnect as suppression, not deletion. Disconnected runs are not replayed after reconnect, and archived parents receive history without being resumed.
 - Read the UI conservatively: Tycho shows `Takeover` only while a delegated edge is user-owned. It does not show a normal `Delegation` badge.
 
@@ -228,7 +228,7 @@ tycho agent send my-project-agent-3 "Continue the delegated task" --parent-agent
 tycho agent send my-project-agent-3 "Check the external job again" --delay 60
 ```
 
-Without `--delay`, Tycho starts an idle agent or queues the message behind its current run. With `--delay`, Tycho persists the message immediately with an exact `not_before` time and starts it only after that time when the target and workspace are idle. Future entries remain visible and editable but do not block already-due work. Local and `--server` JSON responses expose the same stable queue ID, `accepted_at`, and `not_before` values.
+Without `--delay`, Tycho starts an idle agent or queues the message behind its current run. With `--delay`, Tycho persists the message immediately with an exact `not_before` time and starts it only after that time when the target is idle. Future entries remain visible and editable but do not block already-due work. Local and `--server` JSON responses expose the same stable queue ID, `accepted_at`, and `not_before` values.
 
 Inside a managed agent, sending a delayed message to its own `TYCHO_AGENT_KEY` is an internal continuation. This narrow self-send rule preserves delegation ownership and does not enter Takeover; it does not infer a parent for any other command. Prefer delayed self-send over sleeping while external state changes.
 

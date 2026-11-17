@@ -56,7 +56,7 @@ module StoppedScheduleQueueTest
   end
 
   def assert_stopped_queue_blockers
-    %w[inquiry suspended workspace recovery failed blocked].each do |condition|
+    %w[inquiry suspended recovery failed blocked].each do |condition|
       ManualScheduleQueueTest.fixture("stopped") do |store, _service, agent, workspace|
         agents = [agent]
         case condition
@@ -66,10 +66,6 @@ module StoppedScheduleQueueTest
           agent.structured_result = { "status" => "input_required", "inquiry" => inquiry }
           agent.last_run.status = "input_required"
           agent.suspend_inquiry!("keep") if condition == "suspended"
-        when "workspace"
-          busy, pid = PromptQueueTest.running_agent(workspace)
-          busy.instance_variable_set(:@key, "busy")
-          agents << busy
         when "recovery"
           agent.instance_variable_set(:@context_replacement_recovery, { "stage" => "pending" })
         else
@@ -82,9 +78,6 @@ module StoppedScheduleQueueTest
         assert(loaded.run_count == 1 && !loaded.prompt_queue_claim && !loaded.prompt_queue_dispatch_error &&
                loaded.prompt_queue.map { |entry| entry["id"] } == %w[first later], "#{condition}: automatic dispatch bypassed the blocker")
         assert(HQ::AgentMemory.new(loaded).events.none? { |event| event["type"] == "inquiry_cancelled" }, "automatic dispatch cancelled inquiry")
-      ensure
-        PromptQueueTest.stop_process(pid) if pid
-        pid = nil
       end
     end
   end

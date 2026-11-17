@@ -248,8 +248,8 @@ class DelegationTest
       coordinator.process!(agents)
       report = store.reports.find { |item| item["child_run_id"] == "run-child" }
       assert(report && report["delivered_at"], "expected durable callback delivery")
-      assert(report["resume_state"] == "workspace_busy", "expected same-workspace resume deferral")
-      assert(!parent.running?, "expected stopped parent to remain stopped while sibling runs")
+      assert(report["resume_state"] == "resumed", "expected same-workspace parent resume")
+      assert(parent.running? && sibling.running?, "expected parent and sibling to run together")
 
       sibling.stop!
       coordinator.process!(agents)
@@ -277,6 +277,22 @@ class DelegationTest
       assert(!waiting_parent.running?, "expected parent inquiry to block automatic callback resume")
       assert(waiting_report["resume_state"] == "awaiting_parent_input",
              "expected callback to remain pending until explicit parent input")
+
+      legacy_parent = FakeAgent.new(key: "legacy-parent", root: dir, running: true)
+      legacy_child = FakeAgent.new(key: "legacy-child", root: dir)
+      legacy_sibling = FakeAgent.new(key: "legacy-sibling", root: dir, running: true)
+      legacy_agents = [legacy_parent, legacy_child, legacy_sibling]
+      coordinator.attach!(agents: legacy_agents, child: legacy_child, parent_key: legacy_parent.key)
+      coordinator.process!(legacy_agents)
+      legacy_report = store.reports.find { |item| item["child_run_id"] == "run-legacy-child" }
+      store.update_report!(legacy_report.fetch("id"), resume_state: "workspace_busy")
+      legacy_parent.stop!
+      coordinator.process!(legacy_agents)
+      legacy_report = store.reports.find { |item| item["child_run_id"] == "run-legacy-child" }
+      assert(legacy_parent.running? && legacy_sibling.running? && legacy_report["resume_state"] == "resumed",
+             "expected a legacy workspace-busy report to resume beside a running sibling")
+      assert(File.readlines(legacy_parent.memory_path).count { |line| JSON.parse(line).dig("metadata", "delegation_callback") } == 1,
+             "expected legacy callback recovery without duplicate delivery")
 
       quiet_parent = FakeAgent.new(key: "quiet-parent", root: dir,
                                    workspace: File.join(dir, "quiet-parent-workspace"))

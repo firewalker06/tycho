@@ -2726,7 +2726,7 @@ module RemoteServerTest
       busy = HQ::ManagedAgent.new(key: "busy", name: "Busy", project_key: "web", template_key: "custom", workspace:, prompt: "Busy")
       busy.define_singleton_method(:running?) { true }
       service.define_singleton_method(:cached_all_agents) { [agent, busy] }
-      assert(payload.call["state"] == "workspace", "expected the workspace gate before any time estimate")
+      assert(payload.call["state"] == "ready", "expected another running agent in the workspace not to block queue processing")
       busy.define_singleton_method(:running?) { false }
       agent.define_singleton_method(:scheduled?) { true }
       agent.define_singleton_method(:schedule_key) { "queue-status-schedule" }

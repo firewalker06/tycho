@@ -204,14 +204,6 @@ module HQ
         end
 
         unless parent.respond_to?(:pending_prompts?)
-          workspace_busy = agents.any? do |agent|
-            agent.key != parent.key && canonical_workspace(agent.workspace) == canonical_workspace(parent.workspace) && agent.running?
-          end
-          if workspace_busy
-            reports.each { |report| delegation_store.update_report!(report.fetch("id"), resume_state: "workspace_busy") }
-            next
-          end
-
           stamp = ownership_stamp(parent.key)
           stamp ? parent.start!(delegation_stamp: stamp) : parent.start!
           state = parent.running? ? "resumed" : "resume_failed"
@@ -224,16 +216,7 @@ module HQ
           next
         end
 
-        workspace_busy = agents.any? do |agent|
-          agent.key != parent.key && canonical_workspace(agent.workspace) == canonical_workspace(parent.workspace) && agent.running?
-        end
-        state = if parent.running?
-                  "parent_running"
-                elsif workspace_busy
-                  "workspace_busy"
-                else
-                  "queued"
-                end
+        state = parent.running? ? "parent_running" : "queued"
         reports.each do |report|
           delegation_store.update_report!(report.fetch("id"), resume_state: state)
         end
@@ -281,12 +264,6 @@ module HQ
 
     def batch_id(reports)
       Digest::SHA256.hexdigest("delegation-report-batch-v1\0#{reports.map { |report| report.fetch("id") }.join("\0")}")
-    end
-
-    def canonical_workspace(path)
-      File.realpath(path.to_s)
-    rescue StandardError
-      File.expand_path(path.to_s)
     end
   end
 end
