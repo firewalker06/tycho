@@ -28,7 +28,9 @@ unsafe grid sizing rule without assuming that the font is too large.
 
 Inquiry layout now gives the banner its intrinsic height. A bounded field area
 owns the remaining height and scrolls; action controls retain a natural footer.
-Expanded editors fill their panel without stretching warning copy. A detail-only
+Expanded editors fill their panel without stretching warning copy. Multiline
+answer fields receive spare editing height; other field labels and feedback
+retain their natural sizes. A detail-only
 Summary view can still hide the Conversation editor; returning to the balanced
 view restores its saved expansion. Fonts are unchanged.
 

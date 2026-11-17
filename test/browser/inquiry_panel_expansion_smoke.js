@@ -12,7 +12,7 @@ module.exports = async ({ browser, baseUrl, captureDir, advanceInquiry, waitForI
     const form = document.querySelector('#inquiry-form,#composer');
     const banner = document.querySelector('.inquiry-banner');
     return { header: rect(document.querySelector('.app-header')), root: rect(root), dock: rect(document.querySelector('[data-agent-dock]')), form: rect(form),
-      banner: rect(banner), copy: rect(banner?.querySelector('p')), fields: rect(document.querySelector('.inquiry-fields')),
+      answer: rect(document.querySelector('textarea[data-inquiry-control]')), banner: rect(banner), copy: rect(banner?.querySelector('p')), fields: rect(document.querySelector('.inquiry-fields')),
       actions: rect(form.querySelector('.send-row')), modal: Boolean(form.dataset.editorModal !== undefined),
       inert: document.querySelector('.app-header').inert, overflow: document.documentElement.scrollWidth > innerWidth + 1,
       peers: [...document.querySelectorAll('[data-side-kind]')].filter(e => e.getClientRects().length).map(e => ({kind:e.dataset.sideKind, ...rect(e)})),
@@ -76,7 +76,10 @@ module.exports = async ({ browser, baseUrl, captureDir, advanceInquiry, waitForI
     }
     await toggle.click();await frame(page);
     const expanded=await measure(page);bannerFits(expanded);
-    if(width>=900) assertPanel(normal,expanded);
+    if(width>=900) {
+      assertPanel(normal,expanded);
+      if(!long && height>=768) assert(expanded.answer.height>normal.answer.height+40,"multiline answer gains usable editing height");
+    }
     else assert(expanded.modal&&expanded.inert,"small screens retain accessible modal editing");
     await actionsReachable(page,true);
     if (width===1260 && theme==='light' && !long) {
