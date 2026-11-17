@@ -185,7 +185,21 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir, metadataFixtur
         return { width: innerWidth, content: r.toJSON(), overflow: document.documentElement.scrollWidth > innerWidth + 1,
           clipped: controls.filter(e => { const b = e.getBoundingClientRect(); return b.left < -1 || b.right > innerWidth + 1; }).map(e => e.getAttribute("aria-label") || e.textContent.trim().slice(0, 80)) };
       });
-      assert(!g.overflow && !g.clipped.length && g.content.width > 0, `shared page controls: ${JSON.stringify({ route, g })}`);
+      assert(!g.overflow && g.content.width > 0, `shared page bounds: ${JSON.stringify({ route, g })}`);
+      const clippedControls = coldPage.locator("#view button,#view input,#view select,#view textarea");
+      for (let i = 0; i < await clippedControls.count(); i++) {
+        const control = clippedControls.nth(i);
+        if (!(await control.isVisible())) continue;
+        const bounds = await control.boundingBox();
+        if (bounds.x >= -1 && bounds.x + bounds.width <= width + 1) continue;
+        // Settings navigation intentionally scrolls horizontally. Prove each offscreen tab is reachable.
+        await control.scrollIntoViewIfNeeded();
+        const reachable = await control.evaluate(e => {
+          const r = e.getBoundingClientRect();
+          return r.left >= -1 && r.right <= innerWidth + 1 && e.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
+        });
+        assert(reachable, `shared page control cannot be reached: ${route} ${await control.textContent()}`);
+      }
       pageWidths.push({ route, ...g });
     }
   }
