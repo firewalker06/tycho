@@ -13,31 +13,25 @@ The Side Conversations switcher can still open an empty Focus panel.
 
 ## Panel behavior
 
-On entry to Conversation, an existing Focus opens by default if the measured
-workspace can fit Conversation (380 px), Focus (440 px), and the 12 px gap.
-The existing desktop content-panel controls manage fit from 900 px upward.
-At a narrower desktop width, Focus starts as a collapsed vertical strip. Use
-that strip or the Focus shortcut beside Summary to open it. Panel fit preserves
-the most recently requested panel. The composer remains below a Focus-only
-view, including narrow desktops. Closing Focus restores Conversation.
+On entry to Conversation, existing Focus opens beside Conversation from 900 pixels.
+Below 900 pixels it starts closed. The grouped Focus toggle opens it above the
+retained composer. Conversation returns to chat without closing the requested
+side views. A manual close stays closed through polling, resizing and navigation.
+A reload uses the viewport defaults. Focus created after an empty detail read
+stays closed until explicitly opened.
 
-Below 900 px, Focus starts closed. The Focus shortcut explicitly opens it as
-the visible panel, with the composer retained below it. Toggle Focus off to return to
-Conversation and its saved scroll position. Mobile panels have no Close buttons;
-use the grouped toggles. Desktop Close buttons remain available. Wide opening does not
-request the mobile panel. A manual mobile open remains open through
-polling and viewport changes until the operator closes it.
+Panels use fixed slots, independent of open count: one below 900 pixels, two
+from 900 through 1439 pixels, and three from 1440 pixels. Unused slots stay empty
+on the right. At medium widths the newest peer stays visible beside Conversation;
+small screens retain the selected single view. Requested peers remain available
+through their grouped toggles. Detail-only mode keeps the same slot width.
+There are no panel X buttons or width expansion controls.
 
-A manual close stays closed through polling, resizing, and navigation away and
-back to the same agent. A width-limited automatic collapse can expand again
-when space returns. Choices are kept per agent for the current browser page;
-a reload starts with the viewport defaults. A Focus document created after an
-empty agent detail read stays closed until explicitly opened. Polling never
-requests a new panel. Summary and attachment views keep their own panel state.
-
-Focus links use the standard attachment view. Their source files may also
-appear in a user message or run Summary because Focus references an existing
-attachment; that does not attach the Focus artifact to a message.
+Choices are local to each agent in the current browser page. Polling preserves
+panels, drafts and section disclosure. Focus links use the standard attachment
+view. Focus references existing files without adding them to a message. See
+[panel slots and mobile prompt behavior](REMOTE_UI_PANEL_SLOTS.md) for exact
+width calculations and browser verification.
 
 ## Read and replace
 
@@ -171,10 +165,9 @@ TYCHO_REMOTE_UI_FOCUS_ONLY=1 bin/remote-ui-smoke
 
 Set `TYCHO_REMOTE_UI_CAPTURE_DIR` to a directory outside the checkout to retain
 screenshots and geometry evidence. The fixture checks long conversations near
-the bottom, desktop fit defaults, narrow/mobile defaults and explicit opening,
-independent scrolling, keyboard controls, polling, updates, resize/navigation
-choices, drafts, Summary/attachment compatibility, empty/late Focus, invalid
-URLs, conflicts, and viewport overflow in Dark and Light.
+the bottom, fixed-slot breakpoints, sidebar widths, narrow/mobile defaults and selection,
+reading position, drafts, Summary/attachment compatibility, empty/late Focus,
+invalid URLs, conflicts, and viewport overflow in Dark and Light.
 
 Check the Side Conversations switcher and responsive layout with:
 
@@ -216,10 +209,11 @@ and retained drafts. It uses a synthetic local harness process without a provide
 
 ### Panel width and attachment placement
 
-Initial Focus and shared Side Conversations use the same outer width limit.
-Columns follow the Summary plus Attachment reference: equal flexible widths,
-with 380 pixels for Conversation and 440 pixels for each peer when space permits.
-At constrained widths the newest peer remains visible.
+Initial Focus and shared Side Conversations use identical fixed slots. Slot count
+is based on viewport CSS width: one below 900, two from 900, three from 1440.
+Each slot is `(W - 12 * (N - 1)) / N` pixels, where W is the workspace grid content
+width after navigation and page padding, and N is the slot count. All gaps are
+reserved even when slots are empty. See [panel sizing](REMOTE_UI_PANEL_SLOTS.md).
 
 A file opened from Focus or Summary keeps Conversation and its source. The source
 moves to panel two if necessary, and the attachment replaces panel three.
@@ -261,8 +255,8 @@ download or preview action. Removed files show as unavailable without actions.
 
 Attachment grids use the Focus panel as an inline-size container. They show one
 column below 640 pixels of container content width, two columns from 640 pixels,
-and three from 960 pixels. They respond to opening another panel at the same
-viewport width. Long labels wrap to three lines; accessible labels and title
+and three from 960 pixels. Opening another peer does not change slot width. Sidebar width changes can
+change the grid at the same viewport width. Long labels wrap to three lines; accessible labels and title
 attributes keep their complete text. Action controls retain their standard size.
 
 ```sh

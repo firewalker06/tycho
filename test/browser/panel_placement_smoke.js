@@ -29,9 +29,10 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir, metadataFixtur
     await page.goto(`${baseUrl}/ui#settings`, { waitUntil: "networkidle" });
     await page.locator("[data-appearance-preference]").selectOption(theme);
     await page.goto(`${baseUrl}/ui#agent/${agentKey}`, { waitUntil: "networkidle" });
-    await page.locator("[data-agent-focus]").waitFor({ state: width < 900 ? "attached" : "visible" });
+    if (width < 900) await page.locator('[data-side-conversation="focus"]:visible').click();
+    await page.locator("[data-agent-focus]").waitFor({ state: "visible" });
     await page.waitForFunction(() => document.querySelector("[data-agent-workspace]")?.clientWidth > 0);
-    const initial = await page.locator("[data-agent-workspace]").evaluate(e => ({ width: e.clientWidth, focus: e.querySelector(".agent-detail-pane").clientWidth }));
+    const initial = await (await page.waitForFunction(() => { const e = document.querySelector("[data-agent-workspace]"); const focus = e?.querySelector(".agent-detail-pane"); return focus?.clientWidth > 0 && e.dataset.panelSlots === String(innerWidth >= 1440 ? 3 : innerWidth >= 900 ? 2 : 1) && { width: e.clientWidth, focus: focus.clientWidth }; })).jsonValue();
     if (width >= 1440) {
       await page.locator('.agent-focus-attachments a[data-preview-summary-attachment]').click();
       await page.locator('.summary-attachment-preview-scroll[aria-busy="false"]').waitFor({ state: "visible" });

@@ -79,7 +79,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       const initialWidth = await page.locator('[data-side-kind="summary"]').evaluate(e => e.clientWidth);
       await page.evaluate(key => setAgentDetailViewMode(`${key}:summary`, "wide"), agentKey);
       await frames();
-      assert(await page.locator('[data-side-kind="summary"]').evaluate(e => e.clientWidth) > initialWidth, "Wide detail view must increase the Summary width");
+      assert.equal(await page.locator('[data-side-kind="summary"]').evaluate(e => e.clientWidth), initialWidth, "saved wide mode cannot change the fixed slot width");
       await page.evaluate(key => setAgentDetailViewMode(`${key}:summary`, "full"), agentKey);
       assert.equal(await page.locator(".agent-conversation-pane").isVisible(), false, "Full view hides Conversation");
       await page.evaluate(key => setAgentDetailViewMode(`${key}:summary`, "balanced"), agentKey);

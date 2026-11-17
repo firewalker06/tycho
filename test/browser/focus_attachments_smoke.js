@@ -37,7 +37,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir, metadataFixtur
   const stored = JSON.parse(fs.readFileSync(path.join(metadataFixture.logsDir, "managed_agents.json"))).find(a => a.key === agentKey);
   fs.appendFileSync(stored.log_path.replace(/\.raw\.log$/, ".memory.jsonl"), JSON.stringify({ type: "run_summary", content: "Review the Focus grid and standard attachment actions.", status: "success", created_at: new Date().toISOString(), metadata: { summary_id: "focus-grid", run_number: 1, attachments: [...records.slice(0, 6), link] } }) + "\n");
   const results = [];
-  for (const width of [2200, 1800, 390, 320]) for (const theme of ["dark", "light"]) {
+  for (const width of [3200, 2200, 2100, 1800, 390, 320]) for (const theme of ["dark", "light"]) {
     const context = await browser.newContext({ viewport: { width, height: 1000 }, isMobile: width < 900, hasTouch: width < 900 });
     await context.route("https://example.test/**", route => route.fulfill({ contentType: "text/html", body: "<h1>External reference</h1>" }));
     const page = await context.newPage();
@@ -66,7 +66,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir, metadataFixtur
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       await page.waitForFunction(expected => {
         const grid = document.querySelector(".agent-focus-attachments");
-        return grid?.getBoundingClientRect().width > 0 && getComputedStyle(grid).gridTemplateColumns.split(/\s+/).length === expected;
+        return grid?.getBoundingClientRect().width > 0;
       }, expected);
       const facts = await grid.evaluate(e => {
         const rect = e.getBoundingClientRect();
@@ -79,11 +79,12 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir, metadataFixtur
             const b = button.getBoundingClientRect(); return b.width >= 40 && b.height >= 40 && b.left >= rect.left - 1 && b.right <= rect.right + 1;
           }) };
       });
+      assert.equal(facts.columns, expected, JSON.stringify(facts));
       assert(!facts.gridOverflow && !facts.pageOverflow && facts.cardsFit && facts.actionsFit && facts.documentHeight <= facts.height + 1, JSON.stringify(facts));
       results.push({ theme, ...facts });
       return facts;
     };
-    const wide = await measure(width === 2200 ? 3 : width === 1800 ? 2 : 1);
+    const wide = await measure(width === 3200 ? 3 : width >= 2100 ? 2 : 1);
     assert.deepEqual(await cards.nth(0).locator(".attachment-icon").evaluate(e => e.innerHTML), summaryIcons[0]);
     assert.deepEqual(await cards.nth(1).locator(".attachment-icon").evaluate(e => e.innerHTML), summaryIcons[1]);
     assert.deepEqual(await cards.nth(7).locator(".attachment-icon").evaluate(e => e.innerHTML), summaryIcons[6]);
@@ -120,9 +121,17 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir, metadataFixtur
     await capture(`wide-${wide.columns}-columns`);
     if (width >= 1800) {
       await toggle("summary").click();
-      const narrow = await measure(width === 2200 ? 2 : 1);
+      const narrow = await measure(wide.columns);
       assert.equal(wide.viewport, narrow.viewport);
-      assert(wide.panelWidth > narrow.panelWidth && wide.columns > narrow.columns, "same viewport must change the grid when the Focus panel narrows");
+      assert(Math.abs(wide.panelWidth - narrow.panelWidth) < 1.1 && wide.columns === narrow.columns, "open count does not change the fixed panel slot or its grid");
+      if (width === 2100) {
+        await page.evaluate(() => { document.querySelector(".app-shell").style.gridTemplateColumns = "144px minmax(0, 1fr)"; syncAgentDockLayout(); });
+        const expandedRail = await measure(1);
+        assert(expandedRail.panelWidth < wide.panelWidth, "the grid still responds to actual panel width after sidebar changes at the same viewport");
+        await capture("expanded-sidebar-1-column");
+        await page.evaluate(() => { document.querySelector(".app-shell").style.removeProperty("grid-template-columns"); syncAgentDockLayout(); });
+        await measure(2);
+      }
       await capture(`narrow-${narrow.columns}-columns`);
     }
     const headings = page.locator("[data-focus-section]");

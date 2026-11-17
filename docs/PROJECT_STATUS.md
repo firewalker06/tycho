@@ -10,15 +10,17 @@ type: project
 
 ## Last Updated
 
-2026-11-16
+2026-11-17
 
 ## Conversation side panels
 
 Focus, Summary, and PR Diffs share persistent Side Conversation toggles in
 the existing desktop agent header and directly above the mobile prompt form. Two Side Conversations can stay open beside Conversation. The most
 recent view stays visible at narrow widths; polling keeps the selected views.
-Focus and side panels use the Summary/Attachment sizing reference: equal flexible
-columns with 380-pixel Conversation and 440-pixel peer minimums. File attachments
+Focus and side panels use fixed, left-aligned slots regardless of open count:
+one below 900 viewport pixels, two from 900 through 1439, three from 1440.
+Each slot uses workspace content width minus all reserved 12-pixel gaps, divided
+by slot count. Unused slots remain empty to the right. File attachments
 opened from Focus or Summary replace panel three, with the source in panel two;
 Conversation remains available. Ordinary external links keep their navigation.
 PR 372 remains a separate polling fix; its preview reconciliation changes need
@@ -33,7 +35,10 @@ Focus attachments reuse Summary type icons and supported panel-open/download
 actions. Container queries select three, two or one attachment columns from the
 actual Focus width; external links keep their navigation and have no invented
 download actions.
-See [Agent Focus](AGENT_FOCUS.md#side-conversations).
+Inline composer budgets use the visual viewport and actual control height. Long
+drafts scroll inside the textarea; prompt actions remain visible or reachable
+when the viewport shrinks. See [panel and mobile verification](REMOTE_UI_PANEL_SLOTS.md)
+and [Agent Focus](AGENT_FOCUS.md#side-conversations).
 
 ## Custom Remote UI themes
 
@@ -74,7 +79,7 @@ read and replace ordered sections through `tycho agent focus`, locally or with
 safe. Focus stays separate from run results and transcripts, persists across
 runs, and moves into read-only archive history. New clones start empty. The
 Remote UI gives Focus its own peer content panel, outside the Conversation
-message list. Existing Focus opens by default when the desktop panels fit;
+message list. Existing Focus opens by default from 900 viewport pixels;
 narrow/mobile views start closed. Explicit choices survive polling, resizing,
 and navigation. Focus and Conversation scroll independently. Summary and
 attachment panels keep their existing state. See
