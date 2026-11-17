@@ -46,6 +46,24 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir, metadataFixtur
     await page.goto(`${baseUrl}/ui#agent/${agentKey}/summary`, { waitUntil: "networkidle" });
     await page.evaluate(theme => window.TychoAppearance.setPreference(theme), theme);
     await page.locator("[data-side-workspace]").waitFor();
+    const joinedGroups = async selector => {
+      const facts = await page.locator(`${selector} .summary-attachment-item`).evaluateAll(groups => groups.map(e => {
+        const outer=e.getBoundingClientRect(),style=getComputedStyle(e),children=[...e.children];
+        const boxes=children.map(child=>{const r=child.getBoundingClientRect(),s=getComputedStyle(child);return {x:r.x,right:r.right,width:r.width,height:r.height,divider:parseFloat(s.borderInlineStartWidth),nested:child.querySelector('a,button')!==null,hit:e.closest('[data-side-kind]')?.getBoundingClientRect().width>0&&child.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2))};});
+        const cell=e.closest('li')?.getBoundingClientRect();
+        return {width:outer.width,cellWidth:cell?.width,border:parseFloat(style.borderLeftWidth),gap:parseFloat(style.columnGap),boxes,innerWidth:e.clientWidth,scroll:e.scrollWidth>e.clientWidth+1};
+      }));
+      assert(facts.length>=7);
+      for(const group of facts){
+        assert.equal(group.border,1,'one thin outer border');assert.equal(group.gap,0,'no unused action gaps');
+        if(group.cellWidth)assert(Math.abs(group.width-group.cellWidth)<1.1,'file and link groups fill their grid cell');
+        assert(!group.scroll&&group.boxes.every(b=>!b.nested),'no overflow or nested controls');
+        assert(Math.abs(group.boxes.reduce((n,b)=>n+b.width,0)-group.innerWidth)<1.1,'no unused link tracks or margin');
+        for(let i=1;i<group.boxes.length;i++){assert(Math.abs(group.boxes[i].x-group.boxes[i-1].right)<1.1,'actions are contiguous');assert.equal(group.boxes[i].divider,1,'thin action divider');assert(group.boxes[i].width>=40&&group.boxes[i].height>=40);}
+      }
+      assert(facts[0].boxes.every(b=>b.hit),'file tile and action centers receive pointer hits');
+      assert(Math.abs(facts[0].width-facts.at(-1).width)<1.1,'file and link total outer widths match');
+    };
     const titleFacts = async selector => {
       const facts = await page.locator(selector).first().evaluate(e => {
         const title = e.querySelector(".attachment-copy strong");
@@ -68,6 +86,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir, metadataFixtur
       return facts;
     };
     await titleFacts('[data-side-kind="summary"] .summary-attachment-row');
+    await joinedGroups('[data-side-kind="summary"]');
     if (captureDir) {
       fs.mkdirSync(captureDir, { recursive: true });
       await page.screenshot({ path: path.join(captureDir, `summary-title-${width}-${theme}.png`) });
@@ -90,11 +109,9 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir, metadataFixtur
     };
     const measure = async expected => {
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-      await page.waitForFunction(expected => {
-        const grid = document.querySelector(".agent-focus-attachments");
-        return grid?.getBoundingClientRect().width > 0;
-      }, expected);
-      const facts = await grid.evaluate(e => {
+      const facts = await (await page.waitForFunction(expected => {
+        const e = document.querySelector(".agent-focus-attachments");
+        if (!e || e.closest("[data-agent-focus]").getBoundingClientRect().width <= 0 || getComputedStyle(e).gridTemplateColumns.split(/\s+/).length !== expected) return false;
         const rect = e.getBoundingClientRect();
         const panel = e.closest("[data-agent-focus]").getBoundingClientRect();
         return { viewport: innerWidth, panelWidth: panel.width, columns: getComputedStyle(e).gridTemplateColumns.split(/\s+/).length,
@@ -104,10 +121,11 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir, metadataFixtur
           actionsFit: [...e.querySelectorAll(".ui-icon-button")].every(button => {
             const b = button.getBoundingClientRect(); return b.width >= 40 && b.height >= 40 && b.left >= rect.left - 1 && b.right <= rect.right + 1;
           }) };
-      });
+      }, expected)).jsonValue();
       assert.equal(facts.columns, expected, JSON.stringify(facts));
       assert(!facts.gridOverflow && !facts.pageOverflow && facts.cardsFit && facts.actionsFit && facts.documentHeight <= facts.height + 1, JSON.stringify(facts));
       await titleFacts(".agent-focus-attachments .summary-attachment-row");
+      await joinedGroups(".agent-focus-attachments");
       results.push({ theme, ...facts });
       return facts;
     };

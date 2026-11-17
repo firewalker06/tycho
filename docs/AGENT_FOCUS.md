@@ -261,7 +261,10 @@ Attachment grids use the Focus panel as an inline-size container. They show one
 column below 640 pixels of container content width, two columns from 640 pixels,
 and three from 960 pixels. Opening another peer does not change slot width. Sidebar width changes can
 change the grid at the same viewport width. Long attachment titles stay on one line with an ellipsis; accessible labels and title
-attributes keep their complete text. Action controls retain their standard size.
+attributes keep their complete text. Shared Focus/Summary file tiles and their
+panel-open/download actions form one joined group, with a thin outer border and
+internal dividers. Link-only tiles fill the same outer width without reserved
+action tracks or gaps. Controls remain separate siblings with standard hit sizes.
 
 ```sh
 TYCHO_REMOTE_UI_SIDE_CONVERSATIONS_ONLY=1 TYCHO_REMOTE_UI_FOCUS_ATTACHMENTS_ONLY=1 bin/remote-ui-smoke
