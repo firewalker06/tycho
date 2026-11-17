@@ -42,6 +42,7 @@ module RemoteServerTest
     assert_connection_limit_configuration
     assert_shutdown_closes_stalled_client_sockets
     assert_remote_agent_delegation_lifecycle
+    assert_detail_resolves_only_referenced_archives
     assert_remote_conversation_persists_agent_system_context_once
     assert_remote_conversation_persists_installed_tycho_skill_context
     assert_remote_user_message_auto_resumes_awaiting_schedule
@@ -4985,6 +4986,139 @@ module RemoteServerTest
       nil
     end
     assert(failing.fetch("agent", 1) { [:retry] } == [:retry], "expected a failed build not to block later reads")
+  end
+
+  def assert_detail_resolves_only_referenced_archives
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      FileUtils.mkdir_p(workspace)
+      registry = registry_for_project(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      create = lambda do |name, parent = nil|
+        attrs = { "project_key" => "web", "name" => name, "prompt" => "Work", "agent" => "codex" }
+        attrs["parent_agent_key"] = parent[:key] if parent
+        service.create_agent(attrs)
+      end
+      parent = create.call("Parent")
+      target = create.call("Target", parent)
+      children = %w[Visible Hidden Legacy Missing].map { |name| create.call(name, target) }
+      service.update_agent_delegation(children.first[:key], "connected" => false)
+      unrelated = create.call("Unrelated")
+      ([parent, unrelated] + children).each { |agent| service.archive_agent(agent[:key]) }
+
+      manifests = Dir.glob(File.join(HQ::AGENT_ARCHIVE_DIR, "*", "agent_manifest.json"))
+      by_key = manifests.to_h { |path| [JSON.parse(File.read(path)).fetch("key"), path] }
+      [true, nil].zip(children[1, 2]).each do |hidden, child|
+        path = by_key.fetch(child[:key])
+        record = JSON.parse(File.read(path))
+        record["project_hidden_at_archive"] = hidden
+        File.write(path, JSON.generate(record))
+      end
+      missing_record = JSON.parse(File.read(by_key.fetch(children.last[:key])))
+      FileUtils.rm_rf(File.dirname(by_key.fetch(children.last[:key])))
+      duplicate = File.join(HQ::AGENT_ARCHIVE_DIR, "20000101-000000-#{children.first[:key]}")
+      FileUtils.mkdir_p(duplicate)
+      record = JSON.parse(File.read(by_key.fetch(children.first[:key])))
+      record["project_hidden_at_archive"] = true
+      File.write(File.join(duplicate, "agent_manifest.json"), JSON.generate(record))
+      HQ::AgentArchiveStore.cache_mutex.synchronize { HQ::AgentArchiveStore.snapshot_cache.clear }
+
+      store = HQ::AgentArchiveStore.new
+      original_load = store.method(:load_record)
+      original_find = store.method(:find)
+      lookups = []
+      store.define_singleton_method(:find) do |key, **options|
+        lookups << key
+        original_find.call(key, **options)
+      end
+      loaded = []
+      store.define_singleton_method(:load_record) do |path, **options|
+        loaded << path
+        original_load.call(path, **options)
+      end
+      store.define_singleton_method(:all) { raise "agent detail must not load every archive" }
+      service = HQ::RemoteService.new(registry: registry)
+      service.instance_variable_set(:@agent_archive_store, store)
+      payload = service.agent(target[:key])
+      assert(payload.dig(:delegation, :parent, :state) == "archived", "expected archived parent link")
+      refs = payload.fetch(:delegation).fetch(:children).to_h { |ref| [ref[:agent_key], ref] }
+      visible, hidden, legacy, missing = children.map { |child| refs.fetch(child[:key]) }
+      assert(visible[:state] == "archived" && visible[:name] == "Visible" && !visible[:connected],
+             "expected visible archived child and disconnected edge to survive selective lookup")
+      assert(hidden[:state] == "hidden" && !hidden.key?(:name) && !hidden.key?(:project_key) && !hidden[:archived],
+             "expected hidden archive reference to stay redacted")
+      assert(legacy[:state] == "hidden" && !legacy.key?(:name), "expected unknown archive visibility to stay hidden")
+      assert(missing[:state] == "missing" && missing[:name] == "Missing" && !missing[:archived],
+             "expected missing archive to retain historical reference metadata")
+      assert(loaded.sort == ([parent] + children.first(3)).map { |agent| by_key.fetch(agent[:key]) }.sort,
+             "expected only needed valid manifests, without unrelated or older duplicate hydration")
+      loaded.clear
+      next_service = HQ::RemoteService.new(registry: registry)
+      next_service.instance_variable_set(:@agent_archive_store, store)
+      assert(next_service.agent(target[:key])[:delegation] == payload[:delegation] && loaded.empty?,
+             "expected selective references to stay warm across service instances without a full scan")
+
+      path = by_key.fetch(children.first[:key])
+      original = JSON.parse(File.read(path))
+      root_time = File.mtime(HQ::AGENT_ARCHIVE_DIR)
+      [true, false].each do |hidden_state|
+        saved = HQ::AgentArchiveStore::Record.new(
+          agent: HQ::ManagedAgent.from_hash(original.merge("project_hidden_at_archive" => hidden_state)),
+          directory: File.dirname(path), manifest_path: path
+        )
+        store.save(saved)
+        File.utime(root_time, root_time, HQ::AGENT_ARCHIVE_DIR)
+        updated = service.agent(target[:key]).dig(:delegation, :children).find { |ref| ref[:agent_key] == children.first[:key] }
+        assert(updated[:state] == (hidden_state ? "hidden" : "archived"),
+               "expected archive save to invalidate selective reference visibility")
+      end
+
+      context = service.send(:delegation_reference_context)
+      reference = { "agent_key" => children.last[:key], "name" => "Missing" }
+      before_miss = lookups.length
+      2.times { service.send(:reference_payload, reference, reference_context: context) }
+      assert(lookups.length == before_miss + 1, "expected one archive lookup per missing key in a response")
+      assert(context.fetch(:archived).key?(children.last[:key]), "expected missing reference to be memoized")
+      HQ::AgentArchiveStore.new.all
+      loaded.clear
+      warm = service.agent(target[:key])
+      assert(warm[:delegation] == payload[:delegation], "expected cold and warm archive lookup semantics to match")
+      assert(loaded.empty?, "expected a valid archive snapshot to avoid manifest hydration")
+      directory = File.dirname(by_key.fetch(children.last[:key]))
+      FileUtils.mkdir_p(directory)
+      File.write(by_key.fetch(children.last[:key]), JSON.generate(missing_record))
+      FileUtils.touch(HQ::AGENT_ARCHIVE_DIR, mtime: Time.now + 2)
+      restored = service.agent(target[:key]).dig(:delegation, :children).find { |ref| ref[:agent_key] == children.last[:key] }
+      assert(restored[:state] == "archived",
+             "expected a later request to see a restored archive after snapshot invalidation")
+
+      active = service.agent(target[:key])
+      standalone = create.call("Standalone")
+      empty_service = HQ::RemoteService.new(registry: registry)
+      empty_service.instance_variable_set(:@agent_archive_store, store)
+      loaded.clear
+      assert(empty_service.agent(standalone[:key]).dig(:delegation, :children).empty?, "expected no links for standalone agent")
+      assert(loaded.empty?, "expected no archive reads without relationships")
+      shadow = File.join(HQ::AGENT_ARCHIVE_DIR, "20000101-000000-#{target[:key]}")
+      FileUtils.mkdir_p(shadow)
+      live_record = empty_service.send(:read_all_agents).find { |agent| agent.key == target[:key] }.to_hash
+      File.write(File.join(shadow, "agent_manifest.json"), JSON.generate(live_record.merge("project_hidden_at_archive" => true)))
+      loaded.clear
+      archived_child = empty_service.agent(children.first[:key])
+      assert(archived_child.dig(:delegation, :parent, :state) == "active" &&
+             archived_child.dig(:delegation, :parent, :agent_key) == active[:key],
+             "expected archived detail to retain its live parent link")
+      assert(loaded.none? { |path| File.dirname(path) == shadow }, "expected active reference to take precedence without reading its archive")
+      (HQ::AgentArchiveStore::REFERENCE_CACHE_LIMIT + 1).times { |i| store.find("absent-#{i}", latest: true) }
+      references = HQ::AgentArchiveStore.reference_cache.fetch(HQ::AGENT_ARCHIVE_DIR).fetch(:records)
+      assert(references.length == HQ::AgentArchiveStore::REFERENCE_CACHE_LIMIT && !references.key?("absent-0"),
+             "expected selective hit/miss retention to stay bounded")
+      (HQ::AgentArchiveStore::REFERENCE_ROOT_LIMIT + 1).times do |i|
+        HQ::AgentArchiveStore.new(root: File.join(dir, "other-#{i}")).find("absent", latest: true)
+      end
+      assert(HQ::AgentArchiveStore.reference_cache.length == HQ::AgentArchiveStore::REFERENCE_ROOT_LIMIT,
+             "expected selective cache roots to stay bounded")
+    end
   end
 
   def assert_conversation_cache_does_not_serve_stale_delegation_references

@@ -12,6 +12,18 @@ type: project
 
 2026-11-17
 
+## Selective archived delegation references
+
+Agent detail and Conversation reference projection resolve archived agents only
+when a referenced key is absent from the live snapshot. Each response memoizes
+hits and misses; it does not hydrate unrelated archive manifests. A bounded
+process cache retains up to 128 selective results per root across eight roots,
+checks the archive root signature, and clears on archive save. A valid full
+archive snapshot remains reusable. Duplicate archived keys retain the previous
+last-sorted-record precedence, and archive visibility, disconnected links, and
+missing-reference metadata keep their existing behavior. Full archive browsing
+and creation receipt verification still use their complete scans.
+
 ## Conversation side panels
 
 Focus, Summary, and PR Diffs share persistent Side Conversation toggles in
