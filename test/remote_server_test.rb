@@ -9448,7 +9448,8 @@ module RemoteServerTest
            "expected local resource ownership to render as an accessible home icon without visible text")
     assert(js[:body].include?('return server.local ? "Host"'),
            "expected local ownership text to use Host")
-    assert(js[:body].include?('renderAgentRow(agent, { serverIcon: true, query, delegationDepth: depth })') &&
+    assert(js[:body].include?('function renderAgentTree({ root, entries }, query, options = { serverIcon: true })') &&
+           js[:body].include?('renderAgentRow(agent, { ...options, query, delegationDepth: depth })') &&
            js[:body].include?('class="agent-server-inline"') &&
            css[:body].include?(".agent-server-inline > .ui-icon"),
            "expected flat Agent rows to show the local or peer server icon")
@@ -9665,8 +9666,8 @@ module RemoteServerTest
            js[:body].include?('if (scheduleStatus === "paused"') &&
            js[:body].include?('status-mark ${escapeAttr(className)}'),
            "expected stopped and paused schedules to override associated agent icon colors")
-    assert(js[:body].include?("function renderSchedules()") && js[:body].include?('class="schedule-list"'),
-           "expected Remote UI schedule rows on a dedicated Schedules page")
+    assert(js[:body].include?("function renderSchedules()") && js[:body].include?('class="schedule-list resource-block-grid"'),
+           "expected responsive schedule blocks on a dedicated Schedules page")
     assert(js[:body].include?('class="schedule-card" aria-label="Schedules"') &&
            !js[:body].include?('class="detail-card schedule-card"') &&
            !js[:body].include?('class="schedule-summary-row"'),

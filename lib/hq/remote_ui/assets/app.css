@@ -11415,3 +11415,45 @@ body:has([data-agent-workspace]) .app-shell { height: 100dvh; min-height: 0; ove
     max-height: none;
   }
 }
+
+/* Agent and schedule blocks have their own responsive page grid. */
+.resource-block-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  min-width: 0;
+}
+@media (min-width: 900px) { .resource-block-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1440px) { .resource-block-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.app-shell:has(> .bottom-nav:not(.hidden)):has(.resource-block-grid),
+body:has(.resource-block-grid) .app-shell,
+body:has(.resource-block-grid) .app-header { max-width: none; margin-inline: 0; }
+.agent-group.resource-block-grid { padding: 12px; }
+.resource-block-grid > .group-title { grid-column: 1 / -1; padding: 0 0 10px; }
+.resource-block-grid > .empty-row,
+.schedule-list.resource-block-grid > :not(.schedule-row) { grid-column: 1 / -1; }
+.resource-block-grid > .agent-row,
+.resource-block-grid > .agent-delegation-tree {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: visible;
+  background: var(--panel);
+}
+.resource-block-grid > .agent-row:last-child { border-bottom-width: 1px; }
+.resource-block-grid .agent-delegation-tree .agent-row { border-radius: 0; }
+.resource-block-grid .agent-delegation-tree .agent-row:last-child { border-bottom-width: 0; }
+.resource-block-grid :is(.card-title strong, .row-title strong, .schedule-row-title strong) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.resource-block-grid :is(.card-title, .row-title) > span { overflow-wrap: anywhere; }
+.resource-block-grid .card { align-content: start; align-items: start; }
+.resource-block-grid .schedule-row { grid-template-columns: auto minmax(0, 1fr); }
+.resource-block-grid .schedule-row-end { grid-column: 1 / -1; grid-row: 2; justify-items: start; max-width: 100%; }
+.resource-block-grid .schedule-row-actions { justify-content: flex-start; }
+.resource-block-grid .schedule-row-title { flex-wrap: wrap; }
+.resource-block-grid .schedule-row-main > span { overflow-wrap: anywhere; }
+.resource-block-grid .agent-name-label { white-space: normal; overflow-wrap: anywhere; }
+.resource-block-grid .agent-card-excerpt { overflow-wrap: anywhere; }

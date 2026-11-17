@@ -15,10 +15,11 @@ For N reserved slots, each panel has width `(W - 12 * (N - 1)) / N` pixels.
 The calculation reserves every 12-pixel column gap, including gaps next to empty
 slots. The full available content width is used without a centered width cap.
 Panels start at the left. Their widths do not change when another panel opens.
-The existing global sidebar breakpoint remains 1100 pixels. Other pages retain
-their existing layouts after leaving an agent workspace. Browser checks cover
-Agents, Projects, Schedules, Attachments and Settings at 390, 900, 1440 and 1920
-pixels, including the intentionally scrollable Settings tabs.
+The existing global sidebar breakpoint remains 1100 pixels. Other pages use
+their own layouts after leaving an agent workspace. Now, Agents and Schedules
+have separate [responsive block grids](REMOTE_UI_RESOURCE_GRIDS.md). Browser
+checks also cover Projects, Attachments and Settings, including the intentionally
+scrollable Settings tabs.
 
 For example, a 1800-pixel grid has three 592-pixel slots and two 12-pixel gaps.
 One panel occupies the first slot; two leave the last slot vacant. At medium

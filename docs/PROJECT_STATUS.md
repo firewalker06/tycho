@@ -45,6 +45,11 @@ pixels, with vertical controls and retained peers/header. Inquiry warning copy
 keeps intrinsic height while fields own scrolling. Small screens retain modal
 editing. See [panel editors](REMOTE_UI_PANEL_EDITORS.md).
 
+Agent blocks on Now and Agents, plus schedule blocks, use a separate 3/2/1
+page grid at the existing 1440/900-pixel boundaries. Pages use their available
+width and left alignment. Group headings span all columns; delegated families
+stay together. See [resource block grids](REMOTE_UI_RESOURCE_GRIDS.md).
+
 ## Custom Remote UI themes
 
 Appearance Settings keeps independent dark and light palette choices, with
