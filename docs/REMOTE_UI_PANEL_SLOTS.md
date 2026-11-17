@@ -95,3 +95,6 @@ Run `TYCHO_REMOTE_UI_SIDE_CONVERSATIONS_ONLY=1` with
 checks Summary alone, both Focus/PR orders, both attachment sources, repeated layout changes, polling, navigation and drafts
 at 390, 899, 900, 1439, 1440 and 1920 pixels in Dark and Light. Mobile has no
 layout menu, so those cases invoke the shared layout transition directly.
+
+From 900 pixels, answer and prompt editors expand vertically within their fixed
+panel. Small screens retain modal editing. See [inquiry headers and panel editors](REMOTE_UI_PANEL_EDITORS.md).

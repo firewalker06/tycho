@@ -11355,3 +11355,48 @@ body:has([data-agent-workspace]) .app-shell { height: 100dvh; min-height: 0; ove
   padding-bottom: 64px;
   overflow-anchor: none;
 }
+
+/* Inquiry copy keeps its natural height even when its form receives spare space. */
+.inquiry-form { align-content: start; grid-auto-rows: max-content; }
+.inquiry-banner { align-self: start; align-content: center; }
+.inquiry-form-content {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  min-height: 0;
+}
+.inquiry-form { grid-template-rows: minmax(0, 1fr); }
+.inquiry-form .inquiry-fields { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.inquiry-form-content:not(:has(> .inquiry-banner)) { grid-template-rows: minmax(0, 1fr) auto; }
+.inquiry-form-full-height { grid-template-rows: minmax(0, 1fr); }
+.inquiry-form-full-height .inquiry-fields { align-content: start; grid-auto-rows: max-content; }
+@media (min-width: 900px) {
+  .agent-workspace:has(.inquiry-form-full-height, .composer-full-height) > .agent-conversation-pane { visibility: hidden; pointer-events: none; }
+  .agent-workspace:not(.agent-workspace-full-view) .agent-dock:has(.inquiry-form-full-height, .composer-full-height) {
+    display: flex;
+    flex-direction: column;
+    grid-row: 1 / -1;
+    height: 100%;
+    max-height: 100%;
+    overflow: hidden;
+    align-self: stretch;
+  }
+  .agent-dock:has(.inquiry-form-full-height, .composer-full-height) > :not(#inquiry-form, #composer) { flex-shrink: 0; }
+  .agent-dock :is(.inquiry-form-full-height, .composer-full-height) {
+    flex: 1;
+    width: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .composer-full-height .composer-content { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+  .composer-full-height .composer-editor-shell { flex: 1; min-height: 0; }
+  .agent-workspace .composer.composer-full-height .composer-editor-shell #prompt-input {
+    height: 100%;
+    min-height: 0;
+    max-height: none;
+    field-sizing: fixed;
+    overflow-y: auto;
+  }
+  .composer-full-height .send-row { flex-shrink: 0; }
+  .composer-full-height :is(.pending-attachments, .prompt-queue-panel) { max-height: 20vh; overflow-y: auto; }
+}

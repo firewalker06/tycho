@@ -40,6 +40,11 @@ drafts scroll inside the textarea; prompt actions remain visible or reachable
 when the viewport shrinks. See [panel and mobile verification](REMOTE_UI_PANEL_SLOTS.md)
 and [Agent Focus](AGENT_FOCUS.md#side-conversations).
 
+Answer and prompt expansion uses the existing Conversation column from 900
+pixels, with vertical controls and retained peers/header. Inquiry warning copy
+keeps intrinsic height while fields own scrolling. Small screens retain modal
+editing. See [panel editors](REMOTE_UI_PANEL_EDITORS.md).
+
 ## Custom Remote UI themes
 
 Appearance Settings keeps independent dark and light palette choices, with
