@@ -229,6 +229,10 @@ Set `TYCHO_REMOTE_UI_CAPTURE_DIR` outside the checkout to retain screenshots and
 geometry measurements. PR 372 remains separate; its polling reconciliation
 changes overlap this preview renderer and need explicit integration.
 
+Summary layout actions select Summary explicitly and remove a dismissed
+attachment peer. This prevents a stale Summary route from showing only Focus
+after Full View. See [Summary layout selection](REMOTE_UI_PANEL_SLOTS.md#summary-layout-selection).
+
 ### Collapse Focus sections
 
 Each section heading is a keyboard-accessible button with an expanded state and

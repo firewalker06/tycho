@@ -72,3 +72,26 @@ or test physical iOS browser chrome and its animation.
 
 PR 372 remains separate. Its attachment polling reconciliation overlaps this
 renderer and needs explicit integration; these changes do not merge it.
+
+## Summary layout selection
+
+Selecting a Summary layout explicitly requests Summary as the newest peer and
+returns from a small-screen Conversation selection. It also closes the current
+attachment preview and removes its peer selection. Other requested Focus or PR
+context stays available. This applies to normal, detail-only (Full View), and
+saved legacy Wide mode; Wide does not widen a fixed slot.
+
+Previously the Summary route and peer selection could disagree. Opening a file
+from Focus could replace Summary while leaving the Summary route and layout
+menu active. Full View cleared the preview data but kept Focus and an empty
+Attachment peer selected. Summary was absent until its tab was toggled. The
+layout setter now reconciles both states together. Browser checks assert that
+the actual Summary paragraph has visible geometry and receives a hit immediately
+after the menu action, before polling or any retoggle can repair it.
+
+Run `TYCHO_REMOTE_UI_SIDE_CONVERSATIONS_ONLY=1` with
+`TYCHO_REMOTE_UI_SUMMARY_VIEW_MODES_ONLY=1 bin/remote-ui-smoke`. Add
+`TYCHO_REMOTE_UI_SUMMARY_VIEW_MODES_WEBKIT=1` for installed WebKit. The profile
+checks Summary alone, both Focus/PR orders, both attachment sources, repeated layout changes, polling, navigation and drafts
+at 390, 899, 900, 1439, 1440 and 1920 pixels in Dark and Light. Mobile has no
+layout menu, so those cases invoke the shared layout transition directly.
