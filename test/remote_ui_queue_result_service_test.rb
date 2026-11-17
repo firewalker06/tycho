@@ -152,7 +152,7 @@ module RemoteUIQueueResultServiceTest
   end
 
   def assert_guarded_retry_domain_results
-    %w[started busy refusal].each do |scenario|
+    %w[started sibling refusal].each do |scenario|
       PromptQueueTest.with_queue_store do |registry, workspace|
         target = PromptQueueTest.terminal_agent(workspace, status: "blocked")
         target.enqueue_prompt!(id: "first", prompt: "First message", source: "user")
@@ -169,7 +169,7 @@ module RemoteUIQueueResultServiceTest
                    PromptQueueTest.with_stubbed_start(error: IOError.new("Controlled retry refusal")) { service.retry_prompt_queue(target.key, attrs) }
                  else
                    PromptQueueTest.with_stubbed_running_start do
-                     if scenario == "busy"
+                     if scenario == "sibling"
                        current = service.send(:find_agent_reference!, target.key)
                        blocker = HQ::ManagedAgent.new(key: "busy", name: "Busy", project_key: "web", template_key: "custom", workspace:, prompt: "Work")
                        store.save([current, blocker])
@@ -179,18 +179,18 @@ module RemoteUIQueueResultServiceTest
                    end
                  end
         assert(result["batch_id"] == batch_id && result["processed_entry_ids"] == ["first"], "retry must identify its original batch and messages")
-        assert(result["status"] == (scenario == "started" ? "started" : "accepted"), "retry must report the actual domain result")
-        assert(result[:agent][:running] == (scenario == "started"), "accepted must not become started")
+        assert(result["status"] == (scenario == "refusal" ? "accepted" : "started"), "retry must report the actual domain result")
+        assert(result[:agent][:running] == (scenario != "refusal"), "accepted must not become started")
         assert(result["current_entry_ids"] == result[:agent][:prompt_queue]["entries"].map { |entry| entry["id"] }, "retry current IDs must match projection")
         assert(result[:agent][:prompt_queue]["dispatch_error"], "launch refusal must remain visible") if scenario == "refusal"
       end
     end
-    puts "guarded retry domain started/busy/refusal: ok"
+    puts "guarded retry domain started/sibling/refusal: ok"
   end
 
   def assert_retry_proof_matches_actual_delivery
     rows = []
-    %w[full started busy refusal partial prior newer protected].each do |scenario|
+    %w[full started sibling refusal partial prior newer protected].each do |scenario|
       PromptQueueTest.with_queue_store do |registry, workspace|
         target = PromptQueueTest.terminal_agent(workspace, status: "blocked")
         ids = scenario == "prior" ? %w[done a b] : %w[a b]
@@ -223,7 +223,7 @@ module RemoteUIQueueResultServiceTest
                    PromptQueueTest.with_stubbed_start(error: IOError.new("Controlled retry refusal")) { service.retry_prompt_queue(target.key, attrs) }
                  else
                    PromptQueueTest.with_stubbed_running_start do
-                     if scenario == "busy"
+                     if scenario == "sibling"
                        blocker = HQ::ManagedAgent.new(key: "busy", name: "Busy", project_key: "web", template_key: "custom", workspace:, prompt: "Work")
                        store.save([current, blocker])
                        store.start_agent!(blocker.key)
@@ -232,7 +232,7 @@ module RemoteUIQueueResultServiceTest
                    end
                  end
         after = service.send(:find_agent_reference!, target.key)
-        actual = if %w[busy refusal].include?(scenario)
+        actual = if scenario == "refusal"
                    after.prompt_queue_claim["entries"].map { |entry| entry["id"] }
                  else
                    after.last_run.metadata["prompt_queue_entry_ids"]
@@ -240,7 +240,7 @@ module RemoteUIQueueResultServiceTest
         assert(actual == selected, "retry must not expand the retained claim")
         assert(result["processed_entry_ids"] == actual, "retry proof must equal actual claim/delivery IDs: #{scenario}")
         assert(result["batch_id"] == batch_id, "retry proof must retain batch identity")
-        assert(result["status"] == (%w[busy refusal].include?(scenario) ? "accepted" : "started"), "retry must retain actual running state")
+        assert(result["status"] == (scenario == "refusal" ? "accepted" : "started"), "retry must retain actual running state")
         assert(HQ::QueueWork.unresolved_ids(after.active_queue_work) == %w[a b], "retry delivery does not complete the whole batch")
         if scenario == "prior"
           assert(after.active_queue_work["dispositions"]["done"]["outcome"] == "completed", "retry must preserve prior outcomes")
@@ -253,7 +253,7 @@ module RemoteUIQueueResultServiceTest
             assert(e.status == 409, "protected callback discard must remain rejected")
           end
         end
-        if %w[started partial prior newer protected].include?(scenario)
+        if %w[started sibling partial prior newer protected].include?(scenario)
           after.instance_variable_set(:@structured_result, { "status" => scenario == "partial" ? "partial" : "success" })
           after.send(:gate_successful_queue_work!, after.last_run)
           assert(after.active_queue_work["dispositions"]["a"]["outcome"] == "completed", "only delivered instructions may auto-complete")
@@ -272,7 +272,7 @@ module RemoteUIQueueResultServiceTest
   end
 
   def run!
-    %w[started busy refusal].each do |scenario|
+    %w[started sibling refusal].each do |scenario|
       PromptQueueTest.with_queue_store do |registry, workspace|
         target = PromptQueueTest.terminal_agent(workspace, status: "blocked")
         %w[a b c].each { |id| target.enqueue_prompt!(id:, prompt: "Synthetic #{id}", source: "user") }
@@ -289,7 +289,7 @@ module RemoteUIQueueResultServiceTest
                    end
                  else
                    PromptQueueTest.with_stubbed_running_start do
-                     if scenario == "busy"
+                     if scenario == "sibling"
                        blocker = HQ::ManagedAgent.new(key: "busy", name: "Synthetic busy", project_key: "web",
                                                       template_key: "custom", workspace:, prompt: "Synthetic")
                        store.save([target, blocker])
@@ -299,15 +299,15 @@ module RemoteUIQueueResultServiceTest
                    end
                  end
         agent = result.fetch(:agent)
-        expected = scenario == "started" ? "started" : "accepted"
-        assert(result["status"] == expected && agent[:running] == (scenario == "started"), "truthful start state: #{scenario}")
+        expected = scenario == "refusal" ? "accepted" : "started"
+        assert(result["status"] == expected && agent[:running] == (scenario != "refusal"), "truthful start state: #{scenario}")
         assert(result["processed_entry_ids"] == %w[c a], "selected IDs must be explicit")
         projected = agent.fetch(:prompt_queue).fetch("entries").map { |entry| entry.fetch("id") }
         assert(projected == result["current_entry_ids"], "projection must agree with current IDs")
         if scenario == "refusal"
           assert(agent[:prompt_queue]["dispatch_error"], "launch refusal retains error")
-        elsif scenario == "busy"
-          assert(agent[:run_count] == 1, "busy target must not launch a new run")
+        elsif scenario == "sibling"
+          assert(agent[:run_count] == 2, "a running sibling must not block the target delivery")
         end
         puts "queue service #{scenario}: #{result['status']}, running=#{agent[:running]}, selected=#{result['processed_entry_ids'].join(',')}"
       end
