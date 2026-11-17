@@ -24,7 +24,7 @@ module RemoteUIAttachmentPreviewTest
         let navigation;
         let summary = { id: "summary-1", runNumber: 1, createdAt: "today" };
         const context = {
-          state: { summaryAttachmentPreview: null, attachmentDetails: {}, agentSidePanels: new Map([[agent.key, { open: ["focus", "summary"] }]]), prDiffFullViewMode: {} },
+          state: { agentFocusSnapshots: new Map(), summaryAttachmentPreview: null, attachmentDetails: {}, agentSidePanels: new Map([[agent.key, { open: ["focus", "summary"] }]]), prDiffFullViewMode: {} },
           window: { matchMedia: () => ({ matches: wide }) },
           document: { querySelector: () => null, querySelectorAll: () => [] },
           parseRoute: () => route,
