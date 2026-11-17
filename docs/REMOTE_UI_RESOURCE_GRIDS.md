@@ -25,7 +25,8 @@ from left to right, then top to bottom.
 Long labels wrap inside their card. Schedule actions use a separate row so the
 schedule name and status have room. Pause/Resume, menus, edit and agent-opening
 controls retain their existing semantics. Empty/loading states span the grid.
-Projects, Settings and other pages keep their own layouts.
+An empty Agents search retains the page width and left alignment. Projects,
+Settings and other pages keep their own layouts.
 
 ## Verification
 

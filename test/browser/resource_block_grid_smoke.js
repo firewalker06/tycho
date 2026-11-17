@@ -65,6 +65,15 @@ module.exports = async ({browser,baseUrl,captureDir,metadataFixture}) => {
       }
       await page.evaluate(()=>refresh({force:true}));
       assert.deepEqual(await page.locator('#view [data-open-agent],#view .schedule-row').evaluateAll(es=>es.map(e=>e.dataset.openAgent||e.querySelector('[data-schedule-key]')?.dataset.scheduleKey)),order,`polling retains order and grouping at ${width}/${theme}/${route.name}`);
+      if(width===1920&&route.name==='agents-grouped') {
+        const shell=page.locator('.app-shell'),before=await shell.boundingBox();
+        await page.locator('#agent-filter').fill('NoBlockMatchesThisSearch');
+        await page.locator('.empty-state > strong').filter({hasText:'No matches'}).waitFor();
+        const empty=await shell.boundingBox();
+        assert(Math.abs(empty.x-before.x)<1.1&&Math.abs(empty.width-before.width)<1.1,'empty search retains left alignment and page width');
+        await page.locator('#agent-filter').fill('');await page.locator('.resource-block-grid').first().waitFor();
+      }
+
     }
     if(width===1920&&theme==='dark') {
       await page.goto(`${baseUrl}/ui#schedules`,{waitUntil:'networkidle'});await page.locator('.schedule-row').first().waitFor();

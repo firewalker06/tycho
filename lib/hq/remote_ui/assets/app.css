@@ -11426,9 +11426,9 @@ body:has([data-agent-workspace]) .app-shell { height: 100dvh; min-height: 0; ove
 }
 @media (min-width: 900px) { .resource-block-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (min-width: 1440px) { .resource-block-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-.app-shell:has(> .bottom-nav:not(.hidden)):has(.resource-block-grid),
-body:has(.resource-block-grid) .app-shell,
-body:has(.resource-block-grid) .app-header { max-width: none; margin-inline: 0; }
+.app-shell:has(> .bottom-nav:not(.hidden)):has(.resource-block-grid, .resource-grid-page),
+body:has(.resource-block-grid, .resource-grid-page) .app-shell,
+body:has(.resource-block-grid, .resource-grid-page) .app-header { max-width: none; margin-inline: 0; }
 .agent-group.resource-block-grid { padding: 12px; }
 .resource-block-grid > .group-title { grid-column: 1 / -1; padding: 0 0 10px; }
 .resource-block-grid > .empty-row,
