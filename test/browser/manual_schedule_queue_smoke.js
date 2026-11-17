@@ -33,6 +33,9 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       const all = page.locator('[data-queue-action="process-all"]');
       assert.equal(await all.innerText(), "Process queue once");
       assert(await all.isEnabled());
+      assert(!(await queue.innerText()).includes("agent and workspace are free"),
+        "delayed queue copy must not claim that another agent blocks its workspace");
+      if (status === "stopped") assert((await queue.innerText()).includes("Checked when the agent is free"));
       assert((await queue.innerText()).includes(`The schedule stays ${status}. ${status === "stopped" ? "Due queued work continues automatically." : "Automatic dispatch stays off."}`));
       await page.locator('[data-select-queue-entry="first"]').focus();
       await page.keyboard.press("Space");
