@@ -13,7 +13,7 @@ module RetiredFeatureRemovalTest
   RETIRED_FEATURE_ALIAS = RETIRED_FEATURE_WORDS.join("_").freeze
   RETIRED_BRAND_NAME = [102, 114, 101, 100].pack("C*").freeze
   RETIRED_RESULT_FIELD_WORDS = %w[action proposals].freeze
-  VISUAL_BRAND_DOCS = %w[AGENTS.md docs/CONVERSATION_ANIMATIONS.md docs/PROJECT_STATUS.md docs/NOW_EMPTY_STATE.md].freeze
+  VISUAL_BRAND_DOCS = %w[AGENTS.md docs/CONVERSATION_ANIMATIONS.md docs/PROJECT_STATUS.md docs/NOW_EMPTY_STATE.md docs/FOCUS_EMPTY_STATE.md].freeze
   VISUAL_BRAND_ASSETS = %w[lib/hq/remote_ui/assets/app.js lib/hq/remote_ui/assets/app.css].freeze
 
   def run!
@@ -56,7 +56,7 @@ module RetiredFeatureRemovalTest
       /#{RETIRED_FEATURE_WORDS.map { |word| Regexp.escape(word) }.join("[- _]?")}/i,
       /#{RETIRED_RESULT_FIELD_WORDS.map { |word| Regexp.escape(word) }.join("_")}/i
     ]
-    # Cards 320 and 881 reuse only the historical face, not the removed assistant.
+    # Cards 320, 881, and 902 reuse only the historical face, not the removed assistant.
     brand_content = content
     if VISUAL_BRAND_DOCS.include?(relative_path)
       brand_content = content.gsub(RETIRED_BRAND_NAME.upcase, "").gsub("#{RETIRED_BRAND_NAME}-avatar.png", "")
@@ -74,6 +74,8 @@ module RetiredFeatureRemovalTest
     assert(retired_identifiers?(RETIRED_FEATURE_ALIAS, VISUAL_BRAND_DOCS.first), "retired feature identifiers must remain forbidden in visual docs")
     assert(!retired_identifiers?(RETIRED_BRAND_NAME.upcase, "docs/NOW_EMPTY_STATE.md"), "expected approved artwork documentation to name the face")
     assert(retired_identifiers?("/api/#{RETIRED_BRAND_NAME}/sessions", "docs/NOW_EMPTY_STATE.md"), "artwork documentation must not permit retired routes")
+    assert(!retired_identifiers?(RETIRED_BRAND_NAME.upcase, "docs/FOCUS_EMPTY_STATE.md"), "expected Focus artwork documentation to name the face")
+    assert(retired_identifiers?("/api/#{RETIRED_BRAND_NAME}/sessions", "docs/FOCUS_EMPTY_STATE.md"), "Focus artwork documentation must not permit retired routes")
     assert(retired_identifiers?(RETIRED_BRAND_NAME, "lib/hq/domain/example.rb"), "brand exception must not reach domain code")
   end
 

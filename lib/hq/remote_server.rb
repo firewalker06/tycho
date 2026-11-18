@@ -880,6 +880,8 @@ module HQ
         ui_asset("image/png", RemoteUI.png_asset("remote-logo-light"))
       when "/remote-logo-horizontal-light.png"
         ui_asset("image/png", RemoteUI.png_asset("remote-logo-horizontal-light"))
+      when "/focus-zen.png"
+        ui_asset("image/png", RemoteUI.png_asset("focus-zen"))
       when "/apple-touch-icon.png"
         ui_asset("image/png", RemoteUI.png_asset("apple-touch-icon"))
       when "/pwa-icon-192.png"
@@ -926,6 +928,7 @@ module HQ
         "/remote-logo-horizontal.png",
         "/remote-logo-light.png",
         "/remote-logo-horizontal-light.png",
+        "/focus-zen.png",
         "/apple-touch-icon.png",
         "/pwa-icon-192.png",
         "/pwa-icon-512.png",

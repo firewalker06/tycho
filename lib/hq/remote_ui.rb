@@ -42,6 +42,7 @@ module HQ
         File.join(PLUS_JAKARTA_SANS_ROOT, "plus-jakarta-sans-v12-latin-wght-italic-bb113d8f5be8.woff2")
     }.freeze
     PNG_ASSETS = {
+      "focus-zen" => File.join(ROOT, "assets", "focus-zen.png"),
       "remote-logo" => LOGO_PATH,
       "remote-logo-horizontal" => HORIZONTAL_LOGO_PATH,
       "remote-logo-light" => File.join(ROOT, "assets", "tycho-logo-light.png"),
