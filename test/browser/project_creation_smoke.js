@@ -85,6 +85,7 @@ const { chromium } = require(process.env.TYCHO_PLAYWRIGHT_PATH || "playwright");
       const newAgent = menu.getByRole("menuitem", { name: "New agent", exact: true });
       const newProject = menu.getByRole("menuitem", { name: "New project", exact: true });
       await trigger.waitFor();
+      await page.waitForFunction(() => !state.refreshInFlight && document.getElementById("tycho-boot-shell").hidden);
       assert.equal(await page.locator(".top-actions [data-new-project]").count(), 0);
       assert.equal(await trigger.getAttribute("aria-expanded"), "false");
       const caret = page.locator(".quick-create-caret");
