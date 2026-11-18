@@ -114,7 +114,7 @@ const { chromium } = require(process.env.TYCHO_PLAYWRIGHT_PATH || "playwright");
       assert.equal(await trigger.getAttribute("aria-expanded"), "false");
       await trigger.press("ArrowUp");
       assert.equal(await newProject.evaluate(el => document.activeElement === el), true);
-      await page.locator("#agent-filter").click();
+      await page.locator("#agent-filter").click({ position: { x: 5, y: 10 } });
       assert.equal(await menu.isVisible(), false);
       await trigger.press("ArrowDown");
       assert.equal(await newAgent.evaluate(el => document.activeElement === el), true);
