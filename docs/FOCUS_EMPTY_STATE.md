@@ -8,7 +8,7 @@ accessible meaning. Populated Focus sections keep their existing rendering.
 
 ## FRED asset
 
-The built-in imagegen tool generated `lib/hq/remote_ui/assets/fred-zen.png`.
+The built-in imagegen tool generated `lib/hq/remote_ui/assets/focus-zen.png`.
 The identity reference was the existing `now-mascot/f.webp` study, described in
 [Now empty state](NOW_EMPTY_STATE.md). ImageMagick resized the transparent source
 to 384 × 256 pixels. The UI displays it at 192 × 128 CSS pixels. The PNG uses

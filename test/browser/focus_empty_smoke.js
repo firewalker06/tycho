@@ -12,7 +12,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     assert(response.ok(), await response.text());
   };
   await write([]);
-  const image = await api.request.get(`${baseUrl}/fred-zen.png`);
+  const image = await api.request.get(`${baseUrl}/focus-zen.png`);
   assert.equal(image.status(), 200);
   assert.match(image.headers()["content-type"], /image\/png/);
   const results = [];
