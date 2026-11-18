@@ -23,6 +23,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     const open = async prompt => {
       await page.goto(`${baseUrl}/ui#agents`, { waitUntil: "networkidle" });
       await page.locator("#quick-agent-fab").click();
+      await page.locator("[data-quick-create-agent]").click();
       await page.locator("#quick-agent-prompt").fill(prompt);
       await page.waitForFunction(() => quickAgentCanSubmit());
       assert.deepEqual(await buttons().evaluateAll(nodes => nodes.map(node => ({value: node.value, disabled: node.disabled}))), [
@@ -46,6 +47,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
           else await page.locator("#quick-agent-dialog").dispatchEvent("click");
           assert.equal(await page.locator("#quick-agent-dialog").evaluate(dialog => dialog.open), false);
           await page.locator("#quick-agent-fab").click();
+          await page.locator("[data-quick-create-agent]").click();
           await page.waitForFunction(() => quickAgentCanSubmit());
           assert.equal(await page.locator("#quick-agent-prompt").inputValue(), `Quick ${action} ${width}`);
         }

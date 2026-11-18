@@ -8453,8 +8453,10 @@ module RemoteServerTest
            "expected the header More menu to use the shared overlay contract")
     assert(response[:body].include?('id="header-more-badge"'), "expected root shell to expose the header More badge")
     assert(response[:body].include?('id="quick-agent-fab"'), "expected root shell to expose New agent launch")
-    assert(response[:body].include?('class="quick-agent-fab-label"'),
-           "expected the New agent launch to expose a contextual text label")
+    assert(response[:body].include?('id="quick-create-menu"') &&
+           response[:body].include?('aria-controls="quick-create-items"') &&
+           response[:body].include?('aria-expanded="false"'),
+           "expected the create menu to expose its accessible closed state")
     assert(response[:body].include?('id="quick-agent-dialog"'), "expected root shell to expose New agent modal")
     assert(response[:body].include?('aria-label="New agent"'), "expected the create-agent dialog to use consistent naming")
     assert(response[:body].include?('id="confirmation-dialog"') &&

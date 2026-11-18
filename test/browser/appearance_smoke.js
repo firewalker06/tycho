@@ -330,6 +330,7 @@ module.exports = async function appearanceSmoke({ browser, baseUrl, agentKey, ca
       await page.locator("[data-confirmation-cancel]").click();
       await page.goto(`${baseUrl}/ui#agents`);
       await page.locator("#quick-agent-fab").click();
+      await page.locator("[data-quick-create-agent]").click();
       await page.locator("#quick-agent-prompt").fill("Synthetic draft; do not run.");
       if (await page.locator("[data-quick-agent-toggle]").getAttribute("aria-expanded") === "false") {
         await page.locator("[data-quick-agent-toggle]").click();
