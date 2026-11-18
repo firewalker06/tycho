@@ -11483,3 +11483,49 @@ body:has(.resource-block-grid, .resource-grid-page) .app-header { max-width: non
 .agent-focus-panel-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 .agent-focus-panel > .agent-focus-refresh-error { padding: 8px 16px; margin: 0; color: var(--danger); }
 .agent-focus-panel:has(> .agent-focus-refresh-error) { grid-template-rows: auto auto minmax(0, 1fr); }
+
+/* The create menu keeps the search toolbar free for filters. */
+.quick-create-menu {
+  position: relative;
+}
+
+.quick-create-menu.hidden {
+  display: none;
+}
+
+.quick-create-menu > summary {
+  position: relative;
+  right: auto;
+  bottom: auto;
+  list-style: none;
+}
+
+.quick-create-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.quick-create-menu .quick-agent-fab {
+  width: var(--touch-target);
+  padding: 0;
+  border-radius: 8px;
+}
+
+.quick-create-menu .quick-create-caret {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 12px;
+  height: 12px;
+}
+
+.quick-create-menu[open] .quick-create-caret {
+  transform: rotate(180deg);
+}
+
+.quick-create-items {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  width: 210px;
+  z-index: 20;
+}

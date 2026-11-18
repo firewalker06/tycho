@@ -10768,6 +10768,7 @@ title: !123 value
         await page.goto(`${baseUrl}/ui`, { waitUntil: "networkidle" });
         await page.waitForSelector("#quick-agent-fab:not(.hidden)", { state: "visible", timeout: 10_000 });
         await page.click("#quick-agent-fab");
+        await page.locator("[data-quick-create-agent]").click();
         await page.waitForSelector("#quick-agent-prompt", { state: "visible", timeout: 10_000 });
         await page.click("[data-quick-agent-toggle]");
         await page.evaluate(() => quickAgentRerender({ effort: "high", advancedOpen: true }));
@@ -10804,6 +10805,7 @@ title: !123 value
         await mobileQuickAgentPage.goto(`${baseUrl}/ui`, { waitUntil: "networkidle" });
         await mobileQuickAgentPage.waitForSelector("#quick-agent-fab:not(.hidden)", { state: "visible", timeout: 10_000 });
         await mobileQuickAgentPage.click("#quick-agent-fab");
+        await mobileQuickAgentPage.locator("[data-quick-create-agent]").click();
         await mobileQuickAgentPage.waitForSelector("#quick-agent-prompt", { state: "visible", timeout: 10_000 });
         await mobileQuickAgentPage.click("[data-quick-agent-toggle]");
         await mobileQuickAgentPage.waitForSelector("#quick-agent-effort", { state: "visible", timeout: 10_000 });

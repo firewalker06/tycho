@@ -61,6 +61,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
       await page.goto(`${baseUrl}/ui#${quick ? "agents" : "project/web"}`, { waitUntil: "networkidle" });
       if (quick) {
         await page.locator("#quick-agent-fab").click();
+        await page.locator("[data-quick-create-agent]").click();
         await page.locator("#quick-agent-prompt").fill(`Keep quick prompt ${width}`);
       } else {
         await page.locator("#view [data-create-agent=web]").first().click();

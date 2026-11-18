@@ -46,6 +46,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     await api("/settings/quick-agent", "PATCH", { default_project_key: "" });
     await page.goto(`${baseUrl}/ui#agents`, { waitUntil: "networkidle" });
     await page.locator("#quick-agent-fab").click();
+    await page.locator("[data-quick-create-agent]").click();
     await prompt.waitFor({ state: "visible" });
     await page.waitForFunction(() => quickAgentCanSubmit());
     await checkCollapsed();
@@ -114,6 +115,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     await page.evaluate(() => closeQuickAgent(true));
     await page.goto(`${baseUrl}/ui#agents`, { waitUntil: "networkidle" });
     await page.locator("#quick-agent-fab").click();
+    await page.locator("[data-quick-create-agent]").click();
     await prompt.waitFor({ state: "visible" });
     await page.waitForFunction(() => quickAgentCanSubmit());
     await checkCollapsed();
@@ -166,6 +168,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
 
     await page.goto(`${baseUrl}/ui#agents`, { waitUntil: "networkidle" });
     await page.locator("#quick-agent-fab").click();
+    await page.locator("[data-quick-create-agent]").click();
     await prompt.waitFor({ state: "visible" });
     await page.waitForFunction(() => quickAgentCanSubmit());
     await checkCollapsed();

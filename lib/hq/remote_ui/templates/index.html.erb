@@ -147,13 +147,13 @@
 
       <main id="view" class="content" aria-live="polite"></main>
 
-      <button id="quick-agent-fab" class="quick-agent-fab hidden" type="button" aria-label="New agent" title="New agent (c)">
-        <svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24">
-          <path d="M12 5v14"></path>
-          <path d="M5 12h14"></path>
-        </svg>
-        <span class="quick-agent-fab-label">New agent</span>
-      </button>
+      <details id="quick-create-menu" class="quick-create-menu hidden" data-overlay-menu data-overlay-key="quick-create">
+        <summary id="quick-agent-fab" class="quick-agent-fab" role="button" aria-label="Create" title="Create" aria-haspopup="menu" aria-controls="quick-create-items" aria-expanded="false">
+          <svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>
+          <svg class="ui-icon quick-create-caret" aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg>
+        </summary>
+        <div id="quick-create-items" class="quick-create-items ui-overlay-surface" aria-label="Create"></div>
+      </details>
       <dialog id="quick-agent-dialog" class="quick-agent-dialog" aria-label="New agent"></dialog>
       <dialog id="confirmation-dialog" class="ui-confirmation-dialog" aria-labelledby="confirmation-title" aria-describedby="confirmation-description"></dialog>
 
