@@ -6493,6 +6493,12 @@ details.queue-read-block:not([open]) > .queue-read-body {
   font-size: 12px;
 }
 
+.pending-attachments > summary { cursor: pointer; list-style: none; }
+.pending-attachments > summary::-webkit-details-marker { display: none; }
+.pending-attachments-toggle { display: inline-flex; align-items: center; justify-content: center; }
+.pending-attachments-toggle .ui-icon { width: 16px; height: 16px; transition: transform 140ms ease; }
+.pending-attachments[open] .pending-attachments-toggle .ui-icon { transform: rotate(180deg); }
+
 .pending-attachment-header strong {
   color: var(--text);
   font-size: 13px;
@@ -11344,7 +11350,8 @@ body:has([data-agent-workspace]) .app-shell { height: 100dvh; min-height: 0; ove
   margin-inline: 0;
 }
 .side-conversation-workspace .agent-pr-diff-layout { grid-template-columns: minmax(0, 1fr); }
-.agent-workspace.side-conversation-workspace .side-conversation-pane { grid-row: 1 / -1; }
+/* Keep the dock in its own bottom row while side panels use the content row. */
+.agent-workspace.side-conversation-workspace .side-conversation-pane { grid-row: 1; }
 :root { --safe-area-bottom: env(safe-area-inset-bottom, 0px); }
 .agent-workspace .agent-dock {
   position: relative;
@@ -11360,6 +11367,8 @@ body:has([data-agent-workspace]) .app-shell { height: 100dvh; min-height: 0; ove
   padding-bottom: calc(6px + var(--safe-area-bottom));
   overscroll-behavior: contain;
 }
+.agent-workspace .agent-dock.composer-short-viewport .pending-attachments:not([open]) .pending-attachment-list { display: none; }
+.agent-workspace .agent-dock.composer-short-viewport .pending-attachments:not([open]) { gap: 0; }
 .agent-workspace.conversation-only .agent-conversation-pane { display: grid; grid-column: 1; grid-row: 1; min-height: 0; overflow: hidden; }
 .agent-workspace .agent-conversation-scroll { min-height: 0; overflow-y: auto; }
 .agent-workspace .composer:not(.composer-full-screen) .composer-editor-shell #prompt-input {

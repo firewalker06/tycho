@@ -27,8 +27,20 @@ module RemoteUIAssetSnapshotTest
     assert_fast_route_bootstrap_uses_cached_peer_activity
     assert_pull_request_comment_sections_are_unlimited
     assert_detail_composer_submissions_are_optimistic
+    assert_mobile_dock_and_pending_attachment_layout
     assert_non_assistant_conversation_blocks_are_quiet
     puts "remote_ui_asset_snapshot_test: ok"
+  end
+
+  def assert_mobile_dock_and_pending_attachment_layout
+    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
+    css = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.css"))
+    renderer = javascript[/function renderPendingAttachments\(agent\).*?^}/m].to_s
+    raise "pending attachments need a retained file count" unless renderer.include?('`${pending.length}/${PROMPT_ATTACHMENT_LIMITS.maxFiles}`')
+    raise "pending attachments need an accessible disclosure" unless renderer.include?('<details class="pending-attachments"') && renderer.include?('<summary class="pending-attachment-header"')
+    raise "short viewport must retain a compact pending-file control" unless css.include?(".agent-dock.composer-short-viewport .pending-attachments:not([open]) .pending-attachment-list { display: none; }")
+    raise "side conversation panels must not span through the dock row" unless css.include?(".agent-workspace.side-conversation-workspace .side-conversation-pane { grid-row: 1; }")
+    raise "composer budget must detect the short viewport" unless javascript.include?('dock.classList.toggle("composer-short-viewport", available < 360)')
   end
 
   def assert_detail_composer_submissions_are_optimistic
