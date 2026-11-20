@@ -14,6 +14,7 @@ module.exports = async ({ browser, baseUrl, captureDir, advanceInquiry, waitForI
     const banner = document.querySelector('.inquiry-banner');
     const dock = document.querySelector('[data-agent-dock]');
     return { header: rect(document.querySelector('.app-header')), root: rect(root), dock: rect(dock), dockScrollHeight: dock?.scrollHeight, dockClientHeight: dock?.clientHeight,
+      dockOverflowY: dock && getComputedStyle(dock).overflowY,
       composer: rect(document.querySelector('#composer')), form: rect(form), footer: rect(form.querySelector('.inquiry-footer')),
       answer: rect(document.querySelector('textarea[data-inquiry-control]')), banner: rect(banner), copy: rect(banner?.querySelector('p')), fields: rect(document.querySelector('.inquiry-fields')),
       fieldCount: document.querySelectorAll('#inquiry-form .inquiry-field').length,
@@ -31,6 +32,34 @@ module.exports = async ({ browser, baseUrl, captureDir, advanceInquiry, waitForI
     await button.scrollIntoViewIfNeeded();
     const g = await button.evaluate(e => {const b=e.getBoundingClientRect();return {box:b.toJSON(),hit:e.contains(document.elementFromPoint(b.x+b.width/2,b.y+b.height/2)),height:innerHeight};});
     assert(g.box.top >= -1 && g.box.bottom <= g.height + 1 && g.hit, `action must remain reachable: ${JSON.stringify(g)}`);
+  };
+  const wheelScrollReachesAnswer = async page => {
+    const dock = page.locator('[data-agent-dock]');
+    const before = await dock.evaluate(e => ({ scrollTop: e.scrollTop, overflowY: getComputedStyle(e).overflowY }));
+    assert.equal(before.overflowY, 'auto', `expanded inquiry dock must allow user scrolling: ${JSON.stringify(before)}`);
+    assert.equal(before.scrollTop, 0, 'wheel regression starts at the top of the answer form');
+    const footer = page.locator('#inquiry-form .inquiry-footer');
+    const box = await dock.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    let scrollTop = 0;
+    for (let i = 0; i < 24 && scrollTop === 0; i++) {
+      await page.mouse.wheel(0, 300);
+      await page.waitForTimeout(30);
+      scrollTop = await dock.evaluate(e => e.scrollTop);
+    }
+    assert(scrollTop > 0, 'a real mouse wheel event scrolls the long answer form');
+    for (let i = 0; i < 24; i++) {
+      const visible = await footer.evaluate(e => { const r=e.getBoundingClientRect(); return r.bottom <= innerHeight && r.top >= 0; });
+      if (visible) break;
+      await page.mouse.wheel(0, 300);
+      await page.waitForTimeout(30);
+    }
+    const result = await footer.evaluate(e => {
+      const r=e.getBoundingClientRect();
+      return { top:r.top, bottom:r.bottom, height:innerHeight, visible:r.bottom <= innerHeight && r.top >= 0 };
+    });
+    assert(result.visible, `mouse wheel reaches the answer footer: ${JSON.stringify(result)}`);
+    return { ...before, scrollTop: await dock.evaluate(e => e.scrollTop), footer: result };
   };
   const assertPanel = (before, after) => {
     assert(!after.modal && !after.inert, "panel expansion must leave header and peers interactive");
@@ -84,6 +113,12 @@ module.exports = async ({ browser, baseUrl, captureDir, advanceInquiry, waitForI
       assert((await toggle.innerHTML()).includes('M12 2v20'),"vertical expansion icon");
     }
     await toggle.click();await frame(page);
+    if (process.env.TYCHO_REMOTE_UI_INQUIRY_BASELINE === "1" && width === 1260 && !long && longForm) {
+      await page.addStyleTag({content: `@media (min-width:900px) {
+        .agent-workspace:not(.agent-workspace-full-view) .agent-dock:has(.inquiry-form-full-height, .composer-full-height) { overflow:hidden; }
+      }`});
+      await frame(page);
+    }
     if (process.env.TYCHO_REMOTE_UI_INQUIRY_BASELINE === "1" && width === 1260 && !long && !longForm) {
       await page.addStyleTag({content: `@media (min-width:900px) {
         .agent-dock:has(.inquiry-form-full-height) { overflow:hidden; }
@@ -109,6 +144,10 @@ module.exports = async ({ browser, baseUrl, captureDir, advanceInquiry, waitForI
         `answer actions follow the answer fields: ${JSON.stringify({fields:expanded.fields,footer:expanded.footer})}`);
       if (longForm) assert(expanded.dockScrollHeight > expanded.dockClientHeight && expanded.form.bottom > expanded.viewport.height,
         `long answer form scrolls naturally below the fold: ${JSON.stringify(expanded)}`);
+      if (longForm && width === 1260 && !long && theme === 'light') {
+        expanded.wheel = await wheelScrollReachesAnswer(page);
+        if (captureDir) await page.screenshot({path:path.join(captureDir,`inquiry-expanded-long-desktop-wheel-footer-${browser.browserType().name()}.png`)});
+      }
     }
     else assert(expanded.modal&&expanded.inert,"small screens retain accessible modal editing");
     await actionsReachable(page,true);
@@ -204,6 +243,22 @@ module.exports = async ({ browser, baseUrl, captureDir, advanceInquiry, waitForI
   await recoveryPage.unroute(failedPattern);
   await recoveryPage.locator('#inquiry-form button[type=submit]').click();
   await recoveryPage.locator('#composer').waitFor({state:'visible'});
+  const composerPlacement = await recoveryPage.locator('#composer').evaluate(e => {
+    const dock = document.querySelector('[data-agent-dock]');
+    const box = e.getBoundingClientRect();
+    return { inDock: dock.contains(e), top: box.top, bottom: box.bottom, viewportHeight: innerHeight };
+  });
+  assert(composerPlacement.inDock, `conversation composer follows the accepted answer in the dock: ${JSON.stringify(composerPlacement)}`);
+  let composerVisible = composerPlacement.top >= 0 && composerPlacement.bottom <= composerPlacement.viewportHeight;
+  for (let i = 0; i < 12 && !composerVisible; i++) {
+    await recoveryPage.mouse.move(600, 400);
+    await recoveryPage.mouse.wheel(0, 250);
+    await recoveryPage.waitForTimeout(30);
+    composerVisible = await recoveryPage.locator('#composer').evaluate(e => {
+      const box=e.getBoundingClientRect(); return box.top >= 0 && box.bottom <= innerHeight;
+    });
+  }
+  assert(composerVisible, 'the conversation composer is reachable after the answer is accepted');
   if(waitForInquiryRuns) waitForInquiryRuns();
   assert.equal(await recoveryPage.locator('[data-editor-modal]').count(),0);
   await recoveryContext.close();
