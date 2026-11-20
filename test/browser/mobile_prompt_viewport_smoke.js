@@ -69,6 +69,46 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         }
         return g;
       };
+      if (width === 390 && height === 844) {
+        const attachmentInput = page.locator("[data-prompt-attachment-input]").first();
+        await attachmentInput.setInputFiles([
+          { name: "first.txt", mimeType: "text/plain", buffer: Buffer.from("first file") },
+          { name: "second.txt", mimeType: "text/plain", buffer: Buffer.from("second file") },
+        ]);
+        const disclosure = page.locator("[data-pending-attachments]");
+        await disclosure.waitFor({ state: "visible" });
+        await page.setViewportSize({ width: 390, height: 390 });
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        assert.equal(await disclosure.evaluate(e => e.open), false, "short viewport collapses pending attachment list");
+        assert.equal(await disclosure.locator("[data-pending-attachment]").count(), 2, "collapse retains both files");
+        assert.match(await disclosure.innerText(), /2\/5/, "collapsed disclosure shows the retained file count");
+        await disclosure.locator("summary").click();
+        assert.equal(await disclosure.evaluate(e => e.open), true, "user can open the list at short height");
+        await page.evaluate(() => syncAgentDockLayout());
+        await page.evaluate(() => refresh({ force: true }));
+        assert.equal(await disclosure.evaluate(e => e.open), true, "layout sync and polling preserve explicit open choice");
+        assert.equal(await disclosure.locator("[data-pending-attachment]").count(), 2, "polling preserves selected files");
+        assert.equal(await page.locator("#prompt-input").inputValue(), draft, "polling preserves prompt draft");
+        await disclosure.locator("summary").focus();
+        await page.keyboard.press("Enter");
+        assert.equal(await disclosure.evaluate(e => e.open), false, "keyboard activation closes the list");
+        await page.evaluate(() => syncAgentDockLayout());
+        await page.evaluate(() => refresh({ force: true }));
+        assert.equal(await disclosure.evaluate(e => e.open), false, "layout sync and polling preserve explicit closed choice");
+        await disclosure.locator("summary").focus();
+        await page.keyboard.press("Enter");
+        assert.equal(await disclosure.evaluate(e => e.open), true, "keyboard activation opens the list");
+        const removeButtons = disclosure.locator("[data-remove-prompt-attachment]");
+        assert.equal(await removeButtons.count(), 2, "open list exposes file controls");
+        await removeButtons.first().click();
+        assert.equal(await disclosure.locator("[data-pending-attachment]").count(), 1, "file control removes the selected file");
+        assert.match(await disclosure.innerText(), /1\/5/, "count updates after file removal");
+        assert.equal(await disclosure.evaluate(e => e.open), true, "file control leaves the list open");
+        await disclosure.locator("[data-remove-prompt-attachment]").click();
+        assert.equal(await page.locator("[data-pending-attachments]").count(), 0, "remaining test attachment is removed");
+        assert.equal(await page.locator("#prompt-input").inputValue(), draft, "file controls preserve prompt draft");
+        await page.setViewportSize({ width, height });
+      }
       await check("long-draft");
       const model = width < 900 && height > 500 ? { top: Math.round(height * 0.14), height: Math.round(height * 0.55) }
         : { top: 0, height: width >= 1100 ? Math.round(height * 0.8) : 230 };

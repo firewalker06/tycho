@@ -11350,8 +11350,6 @@ body:has([data-agent-workspace]) .app-shell { height: 100dvh; min-height: 0; ove
   margin-inline: 0;
 }
 .side-conversation-workspace .agent-pr-diff-layout { grid-template-columns: minmax(0, 1fr); }
-/* Keep the dock in its own bottom row while side panels use the content row. */
-.agent-workspace.side-conversation-workspace .side-conversation-pane { grid-row: 1; }
 :root { --safe-area-bottom: env(safe-area-inset-bottom, 0px); }
 .agent-workspace:is(.has-detail, .conversation-only) .agent-dock {
   position: relative;
