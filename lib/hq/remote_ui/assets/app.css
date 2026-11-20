@@ -11353,7 +11353,7 @@ body:has([data-agent-workspace]) .app-shell { height: 100dvh; min-height: 0; ove
 /* Keep the dock in its own bottom row while side panels use the content row. */
 .agent-workspace.side-conversation-workspace .side-conversation-pane { grid-row: 1; }
 :root { --safe-area-bottom: env(safe-area-inset-bottom, 0px); }
-.agent-workspace .agent-dock {
+.agent-workspace:is(.has-detail, .conversation-only) .agent-dock {
   position: relative;
   inset: auto;
   transform: none;
@@ -11365,6 +11365,7 @@ body:has([data-agent-workspace]) .app-shell { height: 100dvh; min-height: 0; ove
   min-height: 0;
   overflow-y: auto;
   padding-bottom: calc(6px + var(--safe-area-bottom));
+  background: var(--panel);
   overscroll-behavior: contain;
 }
 .agent-workspace .agent-dock.composer-short-viewport .pending-attachments:not([open]) .pending-attachment-list { display: none; }

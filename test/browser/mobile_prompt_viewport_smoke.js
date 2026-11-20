@@ -45,6 +45,8 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           const row = document.querySelector("#composer .send-row");
           return { viewport: { top: 0, bottom: visualViewport.height, offsetTop: visualViewport.offsetTop, height: visualViewport.height },
             windowHeight: innerHeight, header: box(document.querySelector(".app-header")), dock: box(dock), input: box(input), row: box(row),
+            dockBackground: getComputedStyle(dock).backgroundColor, dockPaddingBottom: parseFloat(getComputedStyle(dock).paddingBottom),
+            safeAreaBottom: parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--safe-area-bottom")) || 0,
             submit: box(document.querySelector('#composer button[type="submit"]')), dockScroll: dock.scrollTop, dockClient: dock.clientHeight, dockContent: dock.scrollHeight,
             inputClient: input.clientHeight, inputContent: input.scrollHeight, pageScroll: scrollY, pageWidth: document.documentElement.scrollWidth, width: innerWidth,
             buttons: [...row.querySelectorAll("button,summary")].filter(e => e.getClientRects().length).map(box) };
@@ -57,6 +59,9 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         assert(g.submit.top >= g.viewport.top - 1 && g.submit.bottom <= g.viewport.bottom + 1, `Submit outside visible viewport: ${JSON.stringify(g)}`);
         assert(g.buttons.every(b => b.top >= g.viewport.top - 1 && b.bottom <= g.viewport.bottom + 1), `Prompt tools outside visible viewport: ${JSON.stringify(g)}`);
         assert(g.row.top >= g.dock.top - 1 && g.row.bottom <= g.dock.bottom + 1, `Actions clipped by dock: ${JSON.stringify(g)}`);
+        assert(Math.abs(g.dock.bottom - g.viewport.bottom) <= 1, `Dock must reach the visible viewport bottom: ${JSON.stringify(g)}`);
+        assert(g.dockPaddingBottom >= g.safeAreaBottom + 5, `Dock controls must keep their safe-area inset: ${JSON.stringify(g)}`);
+        assert(!g.dockBackground.includes("/"), `Dock background must be opaque through the safe area: ${JSON.stringify(g)}`);
         assert(g.pageWidth <= g.width + 1 && g.inputContent > g.inputClient, "long draft scrolls inside bounded textarea without horizontal overflow");
         assert.equal(await page.locator("#prompt-input").inputValue(), draft);
         if (await page.locator("#prompt-input").evaluate(e => e === document.activeElement)) {
