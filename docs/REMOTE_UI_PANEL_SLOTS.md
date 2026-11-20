@@ -52,6 +52,11 @@ remaining region is very short. Compact editor controls sit side by side, with
 scroll clearance so they remain reachable above the sticky action row. Existing
 safe-area variables are included. Drafts survive all layout changes.
 
+Element rectangles and the dock budget use the visual viewport's local origin.
+Do not add `visualViewport.offsetTop` to the bottom: iOS can pan the rendered
+page when its keyboard opens, while the app shell keeps layout-viewport sizing.
+The mobile prompt smoke models this pan and asserts against the visible bottom.
+
 ## Browser checks
 
 Run each profile with `TYCHO_REMOTE_UI_SIDE_CONVERSATIONS_ONLY=1` and

@@ -4,9 +4,10 @@ const path = require("node:path");
 
 module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
   const results = [];
-  for (const [width, height] of [[390, 844], [320, 740], [844, 390], [932, 430]]) {
-    const context = await browser.newContext({ viewport: { width, height }, isMobile: true, hasTouch: true });
-    // This models the VisualViewport contract. Headless engines do not show a real OS keyboard or browser toolbar.
+  for (const [width, height] of [[390, 844], [320, 740], [844, 390], [932, 430], [1440, 900]]) {
+    const mobile = width < 900;
+    const context = await browser.newContext({ viewport: { width, height }, isMobile: mobile, hasTouch: mobile });
+    // Model the visual viewport and iOS's keyboard pan. Headless engines do not show a real OS keyboard or browser toolbar.
     await context.addInitScript(() => {
       const viewport = window.visualViewport;
       let model = null;
@@ -14,7 +15,13 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         height: { configurable: true, get: () => model?.height ?? innerHeight },
         offsetTop: { configurable: true, get: () => model?.top ?? 0 },
       });
-      window.setTestVisualViewport = next => { model = next; viewport.dispatchEvent(new Event("resize")); viewport.dispatchEvent(new Event("scroll")); };
+      window.setTestVisualViewport = next => {
+        model = next;
+        // iOS can pan the rendered page inside a non-scrolling layout viewport when the keyboard opens.
+        document.body.style.transform = next?.top ? `translateY(-${next.top}px)` : "";
+        viewport.dispatchEvent(new Event("resize"));
+        viewport.dispatchEvent(new Event("scroll"));
+      };
     });
     const page = await context.newPage();
     const errors = [];
@@ -28,32 +35,38 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       const draft = Array.from({ length: 70 }, (_, i) => `Draft line ${i + 1}: Keep the full prompt and make every form action reachable.`).join("\n\n");
       await page.locator("#prompt-input").fill(draft);
       await page.locator("#prompt-input").focus();
+      const caret = Math.floor(draft.length / 2);
+      await page.locator("#prompt-input").evaluate((input, position) => input.setSelectionRange(position, position), caret);
       const check = async stage => {
         await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))));
         const g = await page.evaluate(() => {
           const box = e => e?.getBoundingClientRect().toJSON() || null;
           const input = document.querySelector("#prompt-input"), dock = document.querySelector("[data-agent-dock]");
           const row = document.querySelector("#composer .send-row");
-          return { viewport: { top: visualViewport.offsetTop, bottom: visualViewport.offsetTop + visualViewport.height, height: visualViewport.height },
+          return { viewport: { top: 0, bottom: visualViewport.height, offsetTop: visualViewport.offsetTop, height: visualViewport.height },
             windowHeight: innerHeight, header: box(document.querySelector(".app-header")), dock: box(dock), input: box(input), row: box(row),
             submit: box(document.querySelector('#composer button[type="submit"]')), dockScroll: dock.scrollTop, dockClient: dock.clientHeight, dockContent: dock.scrollHeight,
             inputClient: input.clientHeight, inputContent: input.scrollHeight, pageScroll: scrollY, pageWidth: document.documentElement.scrollWidth, width: innerWidth,
             buttons: [...row.querySelectorAll("button,summary")].filter(e => e.getClientRects().length).map(box) };
         });
         results.push({ stage, width, height, ...g });
-          assert(g.submit.top >= g.viewport.top - 1 && g.submit.bottom <= g.viewport.bottom + 1, `Submit outside visible viewport: ${JSON.stringify(g)}`);
-          assert(g.buttons.every(b => b.top >= g.viewport.top - 1 && b.bottom <= g.viewport.bottom + 1), `Prompt tools outside visible viewport: ${JSON.stringify(g)}`);
-          assert(g.row.top >= g.dock.top - 1 && g.row.bottom <= g.dock.bottom + 1, `Actions clipped by dock: ${JSON.stringify(g)}`);
-          assert(g.pageWidth <= g.width + 1 && g.inputContent > g.inputClient, "long draft scrolls inside bounded textarea without horizontal overflow");
-          assert.equal(await page.locator("#prompt-input").inputValue(), draft);
         if (captureDir) {
           fs.mkdirSync(captureDir, { recursive: true });
           await page.screenshot({ path: path.join(captureDir, `mobile-prompt-${stage}-${width}-${browser.browserType().name()}.png`), clip: { x: 0, y: g.viewport.top, width: g.width, height: Math.min(g.viewport.height, g.windowHeight - g.viewport.top) } });
         }
+        assert(g.submit.top >= g.viewport.top - 1 && g.submit.bottom <= g.viewport.bottom + 1, `Submit outside visible viewport: ${JSON.stringify(g)}`);
+        assert(g.buttons.every(b => b.top >= g.viewport.top - 1 && b.bottom <= g.viewport.bottom + 1), `Prompt tools outside visible viewport: ${JSON.stringify(g)}`);
+        assert(g.row.top >= g.dock.top - 1 && g.row.bottom <= g.dock.bottom + 1, `Actions clipped by dock: ${JSON.stringify(g)}`);
+        assert(g.pageWidth <= g.width + 1 && g.inputContent > g.inputClient, "long draft scrolls inside bounded textarea without horizontal overflow");
+        assert.equal(await page.locator("#prompt-input").inputValue(), draft);
+        if (await page.locator("#prompt-input").evaluate(e => e === document.activeElement)) {
+          assert.equal(await page.locator("#prompt-input").evaluate(e => e.selectionStart), caret, "keyboard viewport changes preserve the focused caret");
+        }
         return g;
       };
       await check("long-draft");
-      const model = width < 900 && height > 500 ? { top: height - 320, height: 260 } : { top: 0, height: 230 };
+      const model = width < 900 && height > 500 ? { top: Math.round(height * 0.14), height: Math.round(height * 0.55) }
+        : { top: 0, height: width >= 1100 ? Math.round(height * 0.8) : 230 };
       await page.evaluate(model => setTestVisualViewport(model), model);
       await check("keyboard-model");
       await page.evaluate(() => refresh({ force: true }));
@@ -73,7 +86,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           await dock.evaluate((e, value) => { e.scrollTop = value; }, Math.min(scroll, maxScroll));
           control = await editorControls.nth(i).evaluate(e => {
           const r = e.getBoundingClientRect(), hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
-          return { rect: r.toJSON(), top: visualViewport.offsetTop, bottom: visualViewport.offsetTop + visualViewport.height, hit: hit?.outerHTML?.slice(0, 200), ownHit: e.contains(hit), label: e.getAttribute("aria-label") };
+          return { rect: r.toJSON(), top: 0, bottom: visualViewport.height, offsetTop: visualViewport.offsetTop, hit: hit?.outerHTML?.slice(0, 200), ownHit: e.contains(hit), label: e.getAttribute("aria-label") };
           });
           if (control.ownHit && control.rect.top >= control.top - 1 && control.rect.bottom <= control.bottom + 1) break;
         }
@@ -104,6 +117,25 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       await page.setViewportSize({ width, height });
       await page.evaluate(() => { document.documentElement.style.removeProperty("--safe-area-top"); document.documentElement.style.removeProperty("--safe-area-bottom"); setTestVisualViewport(null); });
       await check("restored");
+      const expand = page.locator("#composer .composer-full-screen-button");
+      const expandedKind = (await expand.getAttribute("aria-label")).includes("full-screen") ? "composer-full-screen" : "composer-full-height";
+      await expand.click();
+      await page.locator(`#composer.${expandedKind}`).waitFor();
+      const expandedGeometry = await page.locator('#composer button[type="submit"]').evaluate(e => {
+        const rect = e.getBoundingClientRect();
+        return { top: rect.top, bottom: rect.bottom, viewportHeight: visualViewport.height };
+      });
+      assert(expandedGeometry.top >= -1 && expandedGeometry.bottom <= expandedGeometry.viewportHeight + 1,
+        `Expanded composer action outside visible viewport: ${JSON.stringify({ width, expandedKind, expandedGeometry })}`);
+      const closeExpanded = expandedKind === "composer-full-screen"
+        ? page.locator('#composer button[aria-label="Close full-screen editor"]')
+        : page.locator('#composer button[aria-label="Collapse editor"]');
+      await closeExpanded.click();
+      await page.locator("#composer:not(.composer-full-screen):not(.composer-full-height)").waitFor();
+      assert.equal(await page.locator("#prompt-input").inputValue(), draft, "expanded editor keeps the prompt draft");
+      if (await page.locator("#prompt-input").evaluate(e => e === document.activeElement)) {
+        assert.equal(await page.locator("#prompt-input").evaluate(e => e.selectionStart), caret, "expanded editor keeps the prompt caret");
+      }
       await page.setViewportSize({ width: height, height: width });
       await check("orientation-change");
       assert.deepEqual(errors, []);
