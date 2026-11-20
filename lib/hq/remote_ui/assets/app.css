@@ -11431,19 +11431,7 @@ body:has([data-agent-workspace]) .app-shell { height: 100dvh; min-height: 0; ove
   .composer-full-height :is(.pending-attachments, .prompt-queue-panel) { max-height: 20vh; overflow-y: auto; }
 }
 @media (min-width: 900px) {
-  .inquiry-form-full-height .inquiry-fields { display: flex; flex-direction: column; }
-  .inquiry-form-full-height .inquiry-fields > * { flex-shrink: 0; }
-  .inquiry-form-full-height .inquiry-field:has(textarea[data-inquiry-control]) {
-    display: flex;
-    flex-direction: column;
-    flex: 1 0 180px;
-    min-height: 180px;
-  }
-  .inquiry-form-full-height .inquiry-field textarea[data-inquiry-control] {
-    flex: 1;
-    min-height: 120px;
-    max-height: none;
-  }
+  .inquiry-form-full-height .inquiry-fields { align-content: start; grid-auto-rows: max-content; }
 }
 
 /* Agent and schedule blocks have their own responsive page grid. */
