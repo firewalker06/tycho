@@ -56,7 +56,15 @@ if ARGV.first == "--advance"
   exit
 end
 
-review_fields = if ENV["TYCHO_REMOTE_UI_INQUIRY_PANEL_ONLY"] == "1"
+review_fields = if ENV["TYCHO_REMOTE_UI_INQUIRY_LONG_FORM"] == "1"
+                  [
+                    { "key" => "choice", "label" => "Primary answer", "input_type" => "multiline", "required" => true },
+                    *8.times.map { |index| { "key" => "detail_#{index}", "label" => "Detail #{index + 1}", "input_type" => "multiline", "required" => false } },
+                    { "key" => "regions", "label" => "Regions", "input_type" => "multi_select", "options" => ["Jakarta", "Tokyo"], "required" => false },
+                    { "key" => "city", "label" => "City", "input_type" => "select", "options" => ["Jakarta", "Tokyo"], "required" => false },
+                    { "key" => "approved", "label" => "Approved", "input_type" => "boolean", "required" => false }
+                  ]
+                elsif ENV["TYCHO_REMOTE_UI_INQUIRY_PANEL_ONLY"] == "1"
                   [{ "key" => "choice", "label" => "Your answer", "input_type" => "multiline", "required" => true }]
                 elsif ENV["TYCHO_REMOTE_UI_INQUIRY_BLOCKER_CASE"] == "blocker-multiselect-comma"
                   [{ "key" => "regions", "label" => "Regions", "input_type" => "multi_select", "options" => ["Jakarta, Indonesia", "Tokyo"], "required" => true }]

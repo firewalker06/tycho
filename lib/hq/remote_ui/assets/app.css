@@ -11431,6 +11431,22 @@ body:has([data-agent-workspace]) .app-shell { height: 100dvh; min-height: 0; ove
   .composer-full-height :is(.pending-attachments, .prompt-queue-panel) { max-height: 20vh; overflow-y: auto; }
 }
 @media (min-width: 900px) {
+  .agent-dock:has(.inquiry-form-full-height) {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .agent-dock .inquiry-form-full-height {
+    flex: 0 0 auto;
+    height: auto;
+    overflow: visible;
+  }
+  .inquiry-form-full-height .inquiry-form-content {
+    grid-template-rows: auto auto auto;
+    height: auto;
+  }
+  .inquiry-form-full-height .inquiry-fields {
+    overflow: visible;
+  }
   .inquiry-form-full-height .inquiry-fields { align-content: start; grid-auto-rows: max-content; }
 }
 

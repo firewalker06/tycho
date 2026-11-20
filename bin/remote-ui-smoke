@@ -11069,6 +11069,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     "TYCHO_GITHUB_API_URL" => github_api_url
   )
   env["PATH"] = "#{metadata_fixture.fetch(:bin_dir)}#{File::PATH_SEPARATOR}#{ENV.fetch("PATH")}" if metadata_fixture
+  env["TYCHO_REMOTE_UI_INQUIRY_LONG_FORM"] = "1" if ENV["TYCHO_REMOTE_UI_INQUIRY_LONG_FORM"] == "1"
 
   if ENV["TYCHO_REMOTE_UI_INQUIRY_RECEIPT_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_INQUIRY_CARD_PADDING_ONLY"] == "1"
     out, status = Open3.capture2e(env, RbConfig.ruby, "test/browser/inquiry_receipt_fixture.rb", fixture.fetch(:workspace), chdir: ROOT)
