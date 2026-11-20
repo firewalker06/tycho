@@ -82,6 +82,10 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         assert.equal(await disclosure.evaluate(e => e.open), false, "short viewport collapses pending attachment list");
         assert.equal(await disclosure.locator("[data-pending-attachment]").count(), 2, "collapse retains both files");
         assert.match(await disclosure.innerText(), /2\/5/, "collapsed disclosure shows the retained file count");
+        if (captureDir) {
+          fs.mkdirSync(captureDir, { recursive: true });
+          await page.screenshot({ path: path.join(captureDir, `pending-attachments-short-collapsed-${browser.browserType().name()}.png`) });
+        }
         await disclosure.locator("summary").click();
         assert.equal(await disclosure.evaluate(e => e.open), true, "user can open the list at short height");
         await page.evaluate(() => syncAgentDockLayout());
@@ -89,12 +93,21 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         assert.equal(await disclosure.evaluate(e => e.open), true, "layout sync and polling preserve explicit open choice");
         assert.equal(await disclosure.locator("[data-pending-attachment]").count(), 2, "polling preserves selected files");
         assert.equal(await page.locator("#prompt-input").inputValue(), draft, "polling preserves prompt draft");
+        if (captureDir) {
+          await page.screenshot({ path: path.join(captureDir, `pending-attachments-short-open-${browser.browserType().name()}.png`) });
+        }
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        assert.equal(await disclosure.evaluate(e => e.open), true, "viewport expansion preserves explicit open choice");
         await disclosure.locator("summary").focus();
         await page.keyboard.press("Enter");
         assert.equal(await disclosure.evaluate(e => e.open), false, "keyboard activation closes the list");
         await page.evaluate(() => syncAgentDockLayout());
         await page.evaluate(() => refresh({ force: true }));
         assert.equal(await disclosure.evaluate(e => e.open), false, "layout sync and polling preserve explicit closed choice");
+        await page.setViewportSize({ width: 390, height: 390 });
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        assert.equal(await disclosure.evaluate(e => e.open), false, "viewport contraction preserves explicit closed choice");
         await disclosure.locator("summary").focus();
         await page.keyboard.press("Enter");
         assert.equal(await disclosure.evaluate(e => e.open), true, "keyboard activation opens the list");
