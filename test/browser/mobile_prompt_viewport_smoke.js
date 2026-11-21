@@ -45,6 +45,8 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           const row = document.querySelector("#composer .send-row");
           return { viewport: { top: 0, bottom: visualViewport.height, offsetTop: visualViewport.offsetTop, height: visualViewport.height },
             windowHeight: innerHeight, header: box(document.querySelector(".app-header")), dock: box(dock), input: box(input), row: box(row),
+            dockBackground: getComputedStyle(dock).backgroundColor, dockPaddingBottom: parseFloat(getComputedStyle(dock).paddingBottom),
+            safeAreaBottom: parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--safe-area-bottom")) || 0,
             submit: box(document.querySelector('#composer button[type="submit"]')), dockScroll: dock.scrollTop, dockClient: dock.clientHeight, dockContent: dock.scrollHeight,
             inputClient: input.clientHeight, inputContent: input.scrollHeight, pageScroll: scrollY, pageWidth: document.documentElement.scrollWidth, width: innerWidth,
             buttons: [...row.querySelectorAll("button,summary")].filter(e => e.getClientRects().length).map(box) };
@@ -57,6 +59,9 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         assert(g.submit.top >= g.viewport.top - 1 && g.submit.bottom <= g.viewport.bottom + 1, `Submit outside visible viewport: ${JSON.stringify(g)}`);
         assert(g.buttons.every(b => b.top >= g.viewport.top - 1 && b.bottom <= g.viewport.bottom + 1), `Prompt tools outside visible viewport: ${JSON.stringify(g)}`);
         assert(g.row.top >= g.dock.top - 1 && g.row.bottom <= g.dock.bottom + 1, `Actions clipped by dock: ${JSON.stringify(g)}`);
+        assert(Math.abs(g.dock.bottom - g.viewport.bottom) <= 1, `Dock must reach the visible viewport bottom: ${JSON.stringify(g)}`);
+        assert(g.dockPaddingBottom >= g.safeAreaBottom + 5, `Dock controls must keep their safe-area inset: ${JSON.stringify(g)}`);
+        assert(!g.dockBackground.includes("/"), `Dock background must be opaque through the safe area: ${JSON.stringify(g)}`);
         assert(g.pageWidth <= g.width + 1 && g.inputContent > g.inputClient, "long draft scrolls inside bounded textarea without horizontal overflow");
         assert.equal(await page.locator("#prompt-input").inputValue(), draft);
         if (await page.locator("#prompt-input").evaluate(e => e === document.activeElement)) {
@@ -64,6 +69,59 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         }
         return g;
       };
+      if (width === 390 && height === 844) {
+        const attachmentInput = page.locator("[data-prompt-attachment-input]").first();
+        await attachmentInput.setInputFiles([
+          { name: "first.txt", mimeType: "text/plain", buffer: Buffer.from("first file") },
+          { name: "second.txt", mimeType: "text/plain", buffer: Buffer.from("second file") },
+        ]);
+        const disclosure = page.locator("[data-pending-attachments]");
+        await disclosure.waitFor({ state: "visible" });
+        await page.setViewportSize({ width: 390, height: 390 });
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        assert.equal(await disclosure.evaluate(e => e.open), false, "short viewport collapses pending attachment list");
+        assert.equal(await disclosure.locator("[data-pending-attachment]").count(), 2, "collapse retains both files");
+        assert.match(await disclosure.innerText(), /2\/5/, "collapsed disclosure shows the retained file count");
+        if (captureDir) {
+          fs.mkdirSync(captureDir, { recursive: true });
+          await page.screenshot({ path: path.join(captureDir, `pending-attachments-short-collapsed-${browser.browserType().name()}.png`) });
+        }
+        await disclosure.locator("summary").click();
+        assert.equal(await disclosure.evaluate(e => e.open), true, "user can open the list at short height");
+        await page.evaluate(() => syncAgentDockLayout());
+        await page.evaluate(() => refresh({ force: true }));
+        assert.equal(await disclosure.evaluate(e => e.open), true, "layout sync and polling preserve explicit open choice");
+        assert.equal(await disclosure.locator("[data-pending-attachment]").count(), 2, "polling preserves selected files");
+        assert.equal(await page.locator("#prompt-input").inputValue(), draft, "polling preserves prompt draft");
+        if (captureDir) {
+          await page.screenshot({ path: path.join(captureDir, `pending-attachments-short-open-${browser.browserType().name()}.png`) });
+        }
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        assert.equal(await disclosure.evaluate(e => e.open), true, "viewport expansion preserves explicit open choice");
+        await disclosure.locator("summary").focus();
+        await page.keyboard.press("Enter");
+        assert.equal(await disclosure.evaluate(e => e.open), false, "keyboard activation closes the list");
+        await page.evaluate(() => syncAgentDockLayout());
+        await page.evaluate(() => refresh({ force: true }));
+        assert.equal(await disclosure.evaluate(e => e.open), false, "layout sync and polling preserve explicit closed choice");
+        await page.setViewportSize({ width: 390, height: 390 });
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        assert.equal(await disclosure.evaluate(e => e.open), false, "viewport contraction preserves explicit closed choice");
+        await disclosure.locator("summary").focus();
+        await page.keyboard.press("Enter");
+        assert.equal(await disclosure.evaluate(e => e.open), true, "keyboard activation opens the list");
+        const removeButtons = disclosure.locator("[data-remove-prompt-attachment]");
+        assert.equal(await removeButtons.count(), 2, "open list exposes file controls");
+        await removeButtons.first().click();
+        assert.equal(await disclosure.locator("[data-pending-attachment]").count(), 1, "file control removes the selected file");
+        assert.match(await disclosure.innerText(), /1\/5/, "count updates after file removal");
+        assert.equal(await disclosure.evaluate(e => e.open), true, "file control leaves the list open");
+        await disclosure.locator("[data-remove-prompt-attachment]").click();
+        assert.equal(await page.locator("[data-pending-attachments]").count(), 0, "remaining test attachment is removed");
+        assert.equal(await page.locator("#prompt-input").inputValue(), draft, "file controls preserve prompt draft");
+        await page.setViewportSize({ width, height });
+      }
       await check("long-draft");
       const model = width < 900 && height > 500 ? { top: Math.round(height * 0.14), height: Math.round(height * 0.55) }
         : { top: 0, height: width >= 1100 ? Math.round(height * 0.8) : 230 };
