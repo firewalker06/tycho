@@ -10,6 +10,8 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     const pageErrors = [];
     let delayedFontUrl = "";
     let fontResponseReleased = false;
+    let delayedAgentDetailUrl = "";
+    let holdAgentRefresh = false;
     page.on("pageerror", error => pageErrors.push(error.message));
     await page.route("**/fonts/**/*.woff2", async route => {
       if (!delayedFontUrl) {
@@ -19,19 +21,37 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       fontResponseReleased = true;
       await route.continue();
     });
+    await page.route(`**/agents/${agentKey}`, async route => {
+      if (!holdAgentRefresh) return route.continue();
+      delayedAgentDetailUrl = route.request().url();
+      await new Promise(resolve => setTimeout(resolve, 900));
+      const response = await route.fetch();
+      const payload = await response.json();
+      const agent = payload.agent;
+      assert(agent, "the delayed agent detail response did not include the fixture agent");
+      const longTitles = [
+        "Quarterly access review — final presentation with approved speaker notes.pptx",
+        "Quarterly access review — supporting report with complete findings.pdf",
+      ];
+      assert(Array.isArray(agent.attachments), "the delayed agent detail response has no attachments");
+      agent.attachments.forEach((attachment, index) => {
+        attachment.title = longTitles[index];
+      });
+      return route.fulfill({ response, body: JSON.stringify(payload) });
+    });
     await page.goto(`${baseUrl}/ui#agent/${agentKey}/summary/layout-2`, { waitUntil: "domcontentloaded" });
     await page.evaluate(themeName => window.TychoAppearance.setPreference(themeName), theme);
     const summary = page.locator("[data-agent-summary-page]");
     const rows = summary.locator(".summary-attachment-item");
     await rows.first().waitFor();
     assert.equal(await rows.count(), 2);
+    assert((await rows.first().textContent()).includes("presentation.pptx"));
+    assert((await rows.nth(1).textContent()).includes("report.pdf"));
     assert(delayedFontUrl, "the test did not hold the UI font response");
     assert(!fontResponseReleased, "the delayed font loaded before the fallback layout was measured");
     assert.equal(await summary.locator(".summary-attachment-item .summary-attachment-row").count(), 2);
     assert.equal(await summary.locator(".summary-attachment-item .summary-attachment-preview").count(), 2);
     assert.equal(await summary.locator(".summary-attachment-item [data-download-attachment]").count(), 2);
-    assert((await summary.locator(".summary-attachment-item").first().textContent()).includes("approved speaker notes.pptx"));
-    assert((await summary.locator(".summary-attachment-item").nth(1).textContent()).includes("complete findings.pdf"));
 
     const measure = () => page.evaluate(() => {
       const items = [...document.querySelectorAll("[data-agent-summary-page] .summary-attachment-item")];
@@ -77,19 +97,22 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     assert(fontResponseReleased, "the held font response did not complete");
     const afterFont = await assertRowsFit("after delayed font load");
     if (captureDir) await page.screenshot({ path: path.join(captureDir, `summary-attachment-font-loaded-${theme}-${width}.png`) });
-    let delayedAgentResponseUrl = "";
-    await page.route("**/agents/**", async route => {
-      if (!delayedAgentResponseUrl && route.request().method() === "GET") {
-        delayedAgentResponseUrl = route.request().url();
-        await new Promise(resolve => setTimeout(resolve, 900));
-      }
-      await route.continue();
-    });
+    holdAgentRefresh = true;
     const refreshPromise = page.evaluate(() => refresh({ force: true, forceConversation: true }));
     await page.waitForTimeout(150);
+    assert((await rows.first().textContent()).includes("presentation.pptx"), "attachment content changed before the held agent response");
     const whilePending = await assertRowsFit("while refresh response is delayed");
     await refreshPromise;
-    assert(delayedAgentResponseUrl, "refresh did not pass through the deliberately delayed agent response");
+    assert(delayedAgentDetailUrl, "refresh did not pass through the deliberately delayed agent detail response");
+    assert.equal(await summary.count(), 1, `summary disappeared after delayed refresh at ${page.url()}; body=${(await page.locator("body").innerText()).slice(0, 600)}; errors=${pageErrors.join(" | ")}`);
+    const refreshedRows = await rows.count();
+    if (refreshedRows !== 2) {
+      const projection = await page.evaluate(key => ({ route: parseRoute(), catalog: state.agents.find(agent => agent.key === key)?.attachments,
+        detail: state.agentDetails[key]?.attachments, summary: state.conversations[key]?.blocks.filter(block => block.kind === "run_summary").map(block => block.metadata?.attachments) }), agentKey);
+      throw new Error(`Delayed refresh changed attachment row count: ${refreshedRows}; projection=${JSON.stringify(projection)}; body=${(await summary.innerText()).slice(-500)}`);
+    }
+    assert((await rows.first().textContent()).includes("approved speaker notes.pptx"), "refresh did not apply the updated long attachment title");
+    assert((await rows.nth(1).textContent()).includes("complete findings.pdf"), "refresh did not apply the updated long attachment title");
     const afterRefresh = await assertRowsFit("after delayed refresh");
 
     for (const mode of ["wide", "full", "balanced"]) {
@@ -108,7 +131,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       await page.screenshot({ path: path.join(captureDir, `summary-attachment-layout-${theme}-${width}.png`) });
     }
     assert.deepEqual(pageErrors, []);
-    results.push({ width, theme, delayedFontUrl, beforeFont, afterFont, whilePending, afterRefresh });
+    results.push({ width, theme, delayedFontUrl, delayedAgentDetailUrl, beforeFont, afterFont, whilePending, afterRefresh });
     await context.close();
   }
   if (captureDir) fs.writeFileSync(path.join(captureDir, "summary-attachment-layout-results.json"), JSON.stringify(results, null, 2));

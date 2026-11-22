@@ -11,9 +11,11 @@ module SummaryAttachmentLayoutFixture
       "Quarterly access review — final presentation with approved speaker notes.pptx",
       "Quarterly access review — supporting report with complete findings.pdf"
     ]
-    paths = names.map { |name| File.join(workspace, "exports", "updated", "review", "final", name) }
+    paths = names.map { |name| File.join(workspace, "exports", "quarterly-access-review", "approved", "final", name) }
+    FileUtils.mkdir_p(File.dirname(paths.first))
     paths.each { |path| File.write(path, "Synthetic attachment content\n") }
-    attachments = names.zip(paths).map { |name, path| { "type" => "file", "title" => name, "path" => path } }
+    titles = ["presentation.pptx", "report.pdf"]
+    attachments = titles.zip(paths).map { |title, path| { "type" => "file", "title" => title, "path" => path } }
     agent = HQ::ManagedAgent.new(
       key: "web-agent-summary-layout", name: "Summary attachment layout", project_key: "web", template_key: "custom",
       workspace:, prompt: "Synthetic long attachment fixture", agent: "codex", model: "gpt-6.1-sol",
