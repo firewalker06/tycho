@@ -11442,6 +11442,13 @@ body:has([data-agent-workspace]) .app-shell { height: 100dvh; min-height: 0; ove
   .inquiry-form-full-height .inquiry-fields { align-content: start; grid-auto-rows: max-content; }
 }
 
+@media (min-width: 900px) {
+  /* Keep an expanded inquiry dock from consuming the Conversation grid track. */
+  .agent-workspace.has-detail:is(.side-conversation-workspace, .has-focus-panel):not(.agent-workspace-full-view):has(> .agent-dock > #inquiry-form.inquiry-form-full-height) {
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
 /* Agent and schedule blocks have their own responsive page grid. */
 .resource-block-grid {
   display: grid;

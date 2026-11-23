@@ -56,7 +56,13 @@ if ARGV.first == "--advance"
   exit
 end
 
-review_fields = if ENV["TYCHO_REMOTE_UI_INQUIRY_LONG_FORM"] == "1"
+review_fields = if ENV["TYCHO_REMOTE_UI_INQUIRY_FOCUS_ONLY"] == "1"
+                  (0...6).map do |index|
+                    { "key" => "decision_#{index + 1}", "label" => "Synthetic decision #{index + 1}",
+                      "description" => "Synthetic option guidance for layout checks.", "input_type" => "select",
+                      "options" => Array.new(index < 4 ? 3 : 2) { |option| "Synthetic option #{option + 1}" }, "required" => true }
+                  end + [{ "key" => "notes", "label" => "Synthetic optional notes", "description" => "Synthetic optional context.", "input_type" => "multiline", "required" => false }]
+                elsif ENV["TYCHO_REMOTE_UI_INQUIRY_LONG_FORM"] == "1"
                   [
                     { "key" => "choice", "label" => "Primary answer", "input_type" => "multiline", "required" => true },
                     *8.times.map { |index| { "key" => "detail_#{index}", "label" => "Detail #{index + 1}", "input_type" => "multiline", "required" => false } },
@@ -104,7 +110,9 @@ agents = 64.times.map do |index|
                                log_path: File.join(HQ::AGENT_LOGS_DIR, "#{key}.raw.log"))
   run = HQ::ManagedAgent::AgentRun.new(started_at: Time.now - 2, finished_at: Time.now - 1, status: "input_required", log_path: agent.raw_log_path)
   agent.runs << run
-  message = if ENV["TYCHO_REMOTE_UI_INQUIRY_PANEL_ONLY"] == "1"
+  message = if ENV["TYCHO_REMOTE_UI_INQUIRY_FOCUS_ONLY"] == "1"
+              "Synthetic review context for Focus layout checks. " * 4
+            elsif ENV["TYCHO_REMOTE_UI_INQUIRY_PANEL_ONLY"] == "1"
               index.odd? ? "Please review the available evidence before choosing the next step. " * 12 : "These questions remain open. Answer the items you can; the others will stay pending."
             else
               "Which synthetic option?"
