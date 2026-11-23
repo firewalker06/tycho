@@ -15,6 +15,7 @@ module.exports = async ({ browser, baseUrl, captureDir, advanceInquiry, waitForI
     const dock = document.querySelector('[data-agent-dock]');
     return { header: rect(document.querySelector('.app-header')), root: rect(root), dock: rect(dock), dockScrollHeight: dock?.scrollHeight, dockClientHeight: dock?.clientHeight,
       dockOverflowY: dock && getComputedStyle(dock).overflowY,
+      conversationVisibility: getComputedStyle(document.querySelector('.agent-conversation-pane')).visibility,
       composer: rect(document.querySelector('#composer')), form: rect(form), footer: rect(form.querySelector('.inquiry-footer')),
       answer: rect(document.querySelector('textarea[data-inquiry-control]')), banner: rect(banner), copy: rect(banner?.querySelector('p')), fields: rect(document.querySelector('.inquiry-fields')),
       fieldCount: document.querySelectorAll('#inquiry-form .inquiry-field').length,
@@ -66,7 +67,8 @@ module.exports = async ({ browser, baseUrl, captureDir, advanceInquiry, waitForI
     assert(Math.abs(after.dock.width-before.dock.width)<1.1 && Math.abs(after.dock.x-before.dock.x)<1.1, "expansion must preserve panel width and column");
     assert(Math.abs(after.header.height-before.header.height)<1.1 && Math.abs(after.header.bottom-before.header.bottom)<1.1, "header geometry stays unchanged");
     assert(after.form.top >= after.header.bottom-1, "editor stays below header");
-    assert(after.dock.height >= after.root.height-2, "expanded editor fills its panel height");
+    assert(after.dock.bottom <= after.root.bottom + 1,
+      `expanded editor stays inside its workspace: ${JSON.stringify({dock:after.dock,root:after.root})}`);
     assert.deepEqual(after.peers.map(p=>[p.kind,p.x,p.width,p.height]),before.peers.map(p=>[p.kind,p.x,p.width,p.height]), "peer geometry stays unchanged");
   };
   for (const [width,height] of layouts) for (const theme of ["dark","light"]) for (const long of [false,true]) {
@@ -119,21 +121,10 @@ module.exports = async ({ browser, baseUrl, captureDir, advanceInquiry, waitForI
       }`});
       await frame(page);
     }
-    if (process.env.TYCHO_REMOTE_UI_INQUIRY_BASELINE === "1" && width === 1260 && !long && !longForm) {
-      await page.addStyleTag({content: `@media (min-width:900px) {
-        .agent-dock:has(.inquiry-form-full-height) { overflow:hidden; }
-        .agent-dock:has(.inquiry-form-full-height) > .inquiry-form-full-height { flex:1; height:100%; overflow:hidden; }
-        .inquiry-form-full-height .inquiry-form-content { grid-template-rows:auto minmax(0,1fr) auto; height:100%; }
-        .inquiry-form-full-height .inquiry-fields { display:flex; flex-direction:column; overflow-y:auto; }
-        .inquiry-form-full-height .inquiry-fields > * { flex-shrink:0; }
-        .inquiry-form-full-height .inquiry-field:has(textarea[data-inquiry-control]) { display:flex; flex-direction:column; flex:1 0 180px; min-height:180px; }
-        .inquiry-form-full-height .inquiry-field textarea[data-inquiry-control] { flex:1; min-height:120px; max-height:none; }
-      }`});
-      await frame(page);
-    }
     const expanded=await measure(page);bannerFits(expanded);
     if(width>=900) {
       if (!longForm) assertPanel(normal,expanded);
+      assert.equal(expanded.conversationVisibility, 'visible', 'full-height editor keeps the Conversation pane visible');
       if(captureDir && process.env.TYCHO_REMOTE_UI_INQUIRY_BASELINE === "1" && width===1260 && !long && !longForm) {
         fs.mkdirSync(captureDir,{recursive:true});
         await page.screenshot({path:path.join(captureDir,"inquiry-before-oversized-desktop.png")});
