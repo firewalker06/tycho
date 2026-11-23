@@ -12,6 +12,46 @@ including focus isolation and Escape. Crossing the breakpoint while expanded
 saves the current form and changes between modal and panel editing. Attachment
 view controls and their separate layout semantics are unchanged.
 
+## Initial answer position on iPad
+
+WebKit 26.0 can retain an incorrect intrinsic grid track size after side-panel
+and narrow-layout navigation. With a historical Summary, newer conversation
+metadata, and a long inquiry, the banner itself can have its correct height
+while its `auto` row grows to several thousand pixels. The answer fields then
+start below a large blank area. Scrolling or another layout pass can repair the
+size, so a reachability check after scrolling misses the initial failure.
+
+The inquiry content uses `max-content` for its banner and footer rows. Expanded
+forms use it for all three rows. This keeps the fields directly after the banner
+without changing the normal internal-field scroll or expanded dock scroll.
+
+The isolated regression records geometry before a screenshot, scroll, or refresh
+can repair the old WebKit state. It covers both Focus/Summary orders, Back from
+the narrow layout, Summary run 8 with twenty newer messages, a paused queue,
+long copy, normal/expanded editors, and polling at 1180 by 788/820 pixels:
+
+```bash
+TYCHO_REMOTE_UI_INQUIRY_INITIAL_POSITION_ONLY=1 bin/remote-ui-smoke
+```
+
+The original failure reproduces in WebKit 26.0 from Playwright 1.56.1, but not in
+the tested WebKit 27.2. To run the older engine from the repository root:
+
+```bash
+ipad_tools=$(mktemp -d)
+npm install --prefix "$ipad_tools" --no-audit --fund=false playwright@1.56.1
+"${ipad_tools}/node_modules/.bin/playwright" install webkit
+TYCHO_PLAYWRIGHT_PATH="${ipad_tools}/node_modules/playwright" \
+  TYCHO_REMOTE_UI_INQUIRY_INITIAL_POSITION_ONLY=1 \
+  TYCHO_REMOTE_UI_INQUIRY_INITIAL_WEBKIT=1 bin/remote-ui-smoke
+```
+
+Use an external temporary tools directory and `TYCHO_REMOTE_UI_CAPTURE_DIR`
+outside the checkout to retain synthetic screenshots and measured grid rows.
+Desktop WebKit with touch/mobile emulation does not reproduce physical Safari
+or PWA browser chrome; the two viewport heights also cover the iPad status-bar
+height difference.
+
 ## Height diagnosis
 
 The short inquiry banner measured 58 pixels in the normal isolated tablet

@@ -56,7 +56,14 @@ if ARGV.first == "--advance"
   exit
 end
 
-review_fields = if ENV["TYCHO_REMOTE_UI_INQUIRY_FOCUS_ONLY"] == "1"
+initial_position = ENV["TYCHO_REMOTE_UI_INQUIRY_INITIAL_POSITION_ONLY"] == "1"
+review_fields = if initial_position
+                  [
+                    { "key" => "decision", "label" => "Synthetic review decision", "description" => "Review the synthetic evidence before selecting the next step. " * 2,
+                      "input_type" => "select", "options" => ["Edit", "Defer", "Post"], "required" => true },
+                    { "key" => "notes", "label" => "Edit instructions or other notes", "input_type" => "multiline", "required" => false }
+                  ]
+                elsif ENV["TYCHO_REMOTE_UI_INQUIRY_FOCUS_ONLY"] == "1"
                   (0...6).map do |index|
                     { "key" => "decision_#{index + 1}", "label" => "Synthetic decision #{index + 1}",
                       "description" => "Synthetic option guidance for layout checks.", "input_type" => "select",
@@ -103,14 +110,32 @@ review_fields = if ENV["TYCHO_REMOTE_UI_INQUIRY_FOCUS_ONLY"] == "1"
                   [{ "key" => "choice", "label" => "Your answer", "input_type" => "text", "required" => true }]
                 end
 
-agents = 64.times.map do |index|
+agents = (initial_position ? 1 : 64).times.map do |index|
   key = "web-inquiry-recovery-#{index}"
   agent = HQ::ManagedAgent.new(key:, name: "Answer recovery", project_key: "web", template_key: "custom",
                                workspace: ARGV.fetch(0), prompt: "Synthetic inquiry fixture", agent: "codex",
                                log_path: File.join(HQ::AGENT_LOGS_DIR, "#{key}.raw.log"))
   run = HQ::ManagedAgent::AgentRun.new(started_at: Time.now - 2, finished_at: Time.now - 1, status: "input_required", log_path: agent.raw_log_path)
+  if initial_position
+    8.times do |number|
+      agent.runs << HQ::ManagedAgent::AgentRun.new(started_at: Time.now - 40 + number * 2, finished_at: Time.now - 39 + number * 2,
+                                                  status: "input_required", log_path: agent.raw_log_path)
+    end
+    memory = HQ::AgentMemory.new(agent)
+    memory.append_run_summary!(summary: (("Synthetic historical review context. " * 16) + "\n\n") * 12,
+                               status: "input_required", created_at: Time.now - 20,
+                               metadata: { "summary_id" => "initial-position-summary-8", "run_number" => 8 })
+    memory.append_run_summary!(summary: "Synthetic latest review.", status: "input_required", created_at: Time.now - 3,
+                               metadata: { "summary_id" => "initial-position-summary-9", "run_number" => 9 })
+    17.times { |number| agent.enqueue_prompt!(prompt: "Synthetic queued item #{number + 1}") }
+  end
   agent.runs << run
-  message = if ENV["TYCHO_REMOTE_UI_INQUIRY_FOCUS_ONLY"] == "1"
+  message = if initial_position
+              "Synthetic dependency review: the follow-up proposes a top-level comment. " \
+                "The review says that the alternate lockfile was not updated. " \
+                "It suggests a separate change for the production dependencies. " \
+                "Read the full synthetic report before choosing the next step. " * 2
+            elsif ENV["TYCHO_REMOTE_UI_INQUIRY_FOCUS_ONLY"] == "1"
               "Synthetic review context for Focus layout checks. " * 4
             elsif ENV["TYCHO_REMOTE_UI_INQUIRY_PANEL_ONLY"] == "1"
               index.odd? ? "Please review the available evidence before choosing the next step. " * 12 : "These questions remain open. Answer the items you can; the others will stay pending."

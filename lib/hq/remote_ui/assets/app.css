@@ -11386,7 +11386,8 @@ body:has([data-agent-workspace]) .app-shell { height: 100dvh; min-height: 0; ove
 .inquiry-banner { align-self: start; align-content: center; }
 .inquiry-form-content {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  /* WebKit 26 can retain a stretched auto track after a peer/viewport change. */
+  grid-template-rows: max-content minmax(0, 1fr) max-content;
   gap: 8px;
   min-height: 0;
 }
@@ -11433,7 +11434,7 @@ body:has([data-agent-workspace]) .app-shell { height: 100dvh; min-height: 0; ove
     overflow: visible;
   }
   .inquiry-form-full-height .inquiry-form-content {
-    grid-template-rows: auto auto auto;
+    grid-template-rows: max-content max-content max-content;
     height: auto;
   }
   .inquiry-form-full-height .inquiry-fields {
