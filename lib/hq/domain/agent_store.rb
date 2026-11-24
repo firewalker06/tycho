@@ -1329,6 +1329,7 @@ module HQ
         end
         source_paths = targets.flat_map(&:log_files)
         transaction = FileTransaction.new([AGENTS_FILE, DELEGATIONS_FILE, *source_paths])
+        archive_snapshots = targets.to_h { |target| [target.key, target.to_hash] }
         stopped_snapshots = {}
         destinations = targets.to_h do |target|
           run_aborted = target.running?
@@ -1350,7 +1351,7 @@ module HQ
         unless stopped_snapshots.to_h.empty?
           begin
             partial_agents = agents.map do |target|
-              snapshot = stopped_snapshots[target.key]
+              snapshot = stopped_snapshots.to_h[target.key] || archive_snapshots.to_h[target.key]
               snapshot ? ManagedAgent.from_hash(snapshot) : target
             end
             stopped_targets = partial_agents.select { |target| stopped_snapshots.key?(target.key) }

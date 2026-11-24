@@ -52,6 +52,7 @@ module RemoteServerTest
     assert_archive_confirmation_is_bound_to_current_work
     assert_guarded_bulk_archive_stops_and_aborts_selected_work
     assert_partial_archive_failure_preserves_stopped_work
+    assert_partial_archive_failure_preserves_parent_queue
     assert_remote_schedule_session_archive_routes
     assert_remote_agent_clone_archives_source_with_editable_name
     assert_remote_context_pressure_clone_replaces_schedule_target
@@ -2256,6 +2257,95 @@ module RemoteServerTest
       assert(queued_event && queued_event.dig("metadata", "archived_without_run") == true &&
                queued_event.dig("metadata", "queue_work_abort_message") == HQ::ManagedAgent::ARCHIVE_ABORT_MESSAGE,
              "expected queued work to retain its aborted disposition after archive rollback: #{queued_event.inspect}; #{events.inspect}")
+    ensure
+      HQ::ManagedAgent.define_method(:archive_logs!, original_archive_logs)
+    end
+  ensure
+    if running_pid
+      begin
+        Process.kill("TERM", -running_pid)
+        Process.wait(running_pid)
+      rescue Errno::ESRCH, Errno::EPERM, Errno::ECHILD
+        nil
+      end
+    end
+  end
+
+  def assert_partial_archive_failure_preserves_parent_queue
+    running_pid = nil
+    original_archive_logs = HQ::ManagedAgent.instance_method(:archive_logs!)
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace))
+      parent = service.create_agent(
+        "project_key" => "web", "template_key" => "custom", "name" => "Queued parent",
+        "prompt" => "Synthetic parent work must remain queued.", "agent" => "codex"
+      )
+      running = service.create_agent(
+        "project_key" => "web", "template_key" => "custom", "name" => "Running child",
+        "prompt" => "Synthetic child run.", "agent" => "codex", "parent_agent_key" => parent[:key]
+      )
+      [parent, running].each { |agent| File.write(agent[:log_path], "#{agent[:name]}\n") }
+      store = HQ::AgentStore.new(service.instance_variable_get(:@projects))
+      store.update_agent!(parent[:key]) do |agent|
+        agent.enqueue_prompt!(id: "parent-queued-during-partial-archive", prompt: "Keep this parent work", source: "user")
+      end
+      parent_before = service.agent(parent[:key])
+      running_pid = Process.spawn(RbConfig.ruby, "-e", "sleep 30", pgroup: true, out: File::NULL, err: File::NULL)
+      records = JSON.parse(File.read(HQ::AGENTS_FILE))
+      records.each do |record|
+        next unless record["key"] == running[:key]
+
+        record["pid"] = running_pid
+        record["started_at"] = Time.now.iso8601
+        record["runs"] << {
+          "started_at" => Time.now.iso8601, "finished_at" => nil, "exit_code" => nil,
+          "status" => "running", "log_path" => record["log_path"], "command" => "synthetic",
+          "run_id" => "synthetic-parent-queue-partial-run"
+        }
+      end
+      File.write(HQ::AGENTS_FILE, JSON.pretty_generate(records))
+      keys = [parent[:key], running[:key]]
+      expected = keys.to_h { |key| [key, service.agent(key)[:archive_work_token]] }
+      HQ::ManagedAgent.define_method(:archive_logs!) do |root = HQ::AGENT_ARCHIVE_DIR|
+        raise IOError, "Synthetic child archive disk failure" if key == running[:key]
+
+        original_archive_logs.bind_call(self, root)
+      end
+      error = begin
+        HQ::RemoteServer.new.send(
+          :route, service, "POST", "/agents/archive",
+          { "keys" => keys, "expected_work_states" => expected }, nil
+        )
+        nil
+      rescue HQ::RemoteServer::Error => exception
+        exception
+      end
+      assert(error && error.status == 500 && error.details[:archive_partial] == true,
+             "expected the synthetic child archive to fail after its stop")
+      active_keys = service.agents.map { |agent| agent[:key] }
+      assert((keys - active_keys).empty?, "expected failed group archive to keep parent and child active")
+      parent_detail = service.agent(parent[:key])
+      assert(parent_detail.dig(:prompt_queue, "pending_count") == 1,
+             "expected parent queued work to remain pending after child archive failure: #{parent_detail[:prompt_queue].inspect}")
+      assert(parent_detail[:last_result] == parent_before[:last_result] && parent_detail[:finished_at] == parent_before[:finished_at],
+             "expected parent run outcome to remain unchanged")
+      parent_events = File.readlines(parent[:memory_path], chomp: true).reject(&:empty?).map { |line| JSON.parse(line) }
+      queued_event = parent_events.find { |event| event["content"] == "Keep this parent work" }
+      assert(queued_event.nil? || queued_event.dig("metadata", "archived_without_run") != true,
+             "expected parent queue history not to show an abort before archive completed: #{queued_event.inspect}")
+
+      HQ::ManagedAgent.define_method(:archive_logs!, original_archive_logs)
+      retry_expected = keys.to_h { |key| [key, service.agent(key)[:archive_work_token]] }
+      result = service.archive_agents("keys" => keys, "expected_work_states" => retry_expected)
+      assert(result[:archive_count] == 2, "expected retry to archive parent and child")
+      archived_parent = HQ::AgentArchiveStore.new(root: HQ::AGENT_ARCHIVE_DIR).find(parent[:key])&.agent
+      archived_events = File.readlines(archived_parent.memory_path, chomp: true).reject(&:empty?).map { |line| JSON.parse(line) }
+      archived_queue_event = archived_events.find { |event| event["content"] == "Keep this parent work" }
+      assert(archived_parent.queued_prompts.empty? && archived_queue_event&.dig("metadata", "archived_without_run") == true &&
+               archived_queue_event.dig("metadata", "queue_work_abort_message") == HQ::ManagedAgent::ARCHIVE_ABORT_MESSAGE,
+             "expected retry to archive the parent queue with canonical abort history")
     ensure
       HQ::ManagedAgent.define_method(:archive_logs!, original_archive_logs)
     end
