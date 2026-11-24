@@ -14,6 +14,7 @@ module HQ
     MAX_BYTES = 128 * 1024
     MAX_SECTIONS = 20
     MAX_ITEMS = 100
+    MAX_SUBTITLE_LENGTH = 80
     ICONS = %w[todo_done todo_working todo_pending blocked note].freeze
 
     def initialize(agent)
@@ -28,7 +29,7 @@ module HQ
       unless value.is_a?(Hash) && value["revision"].is_a?(Integer) && value["revision"] >= 0 && value["sections"].is_a?(Array)
         raise Error, "Invalid saved Focus document"
       end
-      value.merge("sections" => normalize(value["sections"], check_files: false))
+      value.merge("sections" => normalize(value["sections"], check_files: false, check_subtitles: false))
     rescue JSON::ParserError, EncodingError
       raise Error, "Cannot read saved Focus document; preserve the file before repair"
     end
@@ -37,7 +38,7 @@ module HQ
       raise Error, "Archived agent Focus is read-only" if @agent.archived?
       raise Error, "Focus revision must be a non-negative integer" unless expected_revision.is_a?(Integer) && expected_revision >= 0
 
-      normalized = normalize(sections)
+      normalized = normalize(sections, check_subtitles: true)
       FileUtils.mkdir_p(File.dirname(@path))
       File.open("#{@path}.lock", File::RDWR | File::CREAT, 0o600) do |lock|
         lock.flock(File::LOCK_EX)
@@ -58,7 +59,7 @@ module HQ
       { "revision" => 0, "updated_at" => nil, "sections" => [] }
     end
 
-    def normalize(sections, check_files: true)
+    def normalize(sections, check_files: true, check_subtitles: false)
       raise Error, "Focus must contain at most #{MAX_SECTIONS} sections" unless sections.is_a?(Array) && sections.length <= MAX_SECTIONS
       raise Error, "Focus exceeds #{MAX_BYTES} bytes" if JSON.generate(sections).bytesize > MAX_BYTES
       count = 0
@@ -72,24 +73,32 @@ module HQ
         raise Error, "Focus has more than #{MAX_ITEMS} items" if count > MAX_ITEMS
         {
           "title" => text(section["title"], required: true),
-          "subtitle" => text(section["subtitle"]),
+          "subtitle" => subtitle(section["subtitle"], check_limit: check_subtitles),
           "icon" => icon,
-          "items" => items.map { |item| normalize_item(item, check_files:) }
+          "items" => items.map { |item| normalize_item(item, check_files:, check_subtitles:) }
         }
       end
       raise Error, "Focus exceeds #{MAX_BYTES} bytes" if JSON.generate(normalized).bytesize > MAX_BYTES
       normalized
     end
 
-    def normalize_item(item, check_files:)
+    def normalize_item(item, check_files:, check_subtitles:)
       object!(item, %w[title subtitle attachments])
       attachments = item["attachments"] || []
       raise Error, "Focus item must have at most 10 attachments" unless attachments.is_a?(Array) && attachments.length <= 10
       {
         "title" => text(item["title"], required: true),
-        "subtitle" => text(item["subtitle"]),
+        "subtitle" => subtitle(item["subtitle"], check_limit: check_subtitles),
         "attachments" => attachments.map { |attachment| normalize_attachment(attachment, check_files:) }
       }
+    end
+
+    def subtitle(value, check_limit:)
+      result = text(value)
+      if check_limit && result && result.length > MAX_SUBTITLE_LENGTH
+        raise Error, "Focus subtitles must be 80 characters or fewer"
+      end
+      result
     end
 
     def normalize_attachment(attachment, check_files:)

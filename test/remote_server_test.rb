@@ -2762,6 +2762,12 @@ module RemoteServerTest
       agent = service.create_agent("project_key" => "web", "template_key" => "custom", "name" => "Focus fixture", "prompt" => "Synthetic only")
       key = agent[:key]
       assert(agent[:focus]["revision"] == 0, "new agent Focus must be empty")
+      long_legacy_subtitle = "x" * 81
+      File.write(managed_focus_path = HQ::AgentStore.new(registry.projects).load.find { |entry| entry.key == key }.focus_path,
+                 JSON.generate("revision" => 0, "updated_at" => nil, "sections" => [{ "title" => "Legacy", "subtitle" => long_legacy_subtitle, "icon" => "note", "items" => [] }]))
+      assert(service.agent_focus(key)["sections"][0]["subtitle"] == long_legacy_subtitle,
+             "existing Focus subtitles over the new limit must remain readable")
+      File.delete(managed_focus_path)
       sections = [{ "title" => "Ready for Review", "icon" => "todo_done", "items" => [
         { "title" => "Review changes", "subtitle" => "PR is ready", "attachments" => [{ "type" => "link", "title" => "PR", "url" => "https://github.com/example/web/pull/12" }] }
       ] }]
@@ -2772,6 +2778,20 @@ module RemoteServerTest
       saved = service.update_agent_focus(key, "sections" => sections, "revision" => 0)
       assert(saved["revision"] == 1, "Focus revision must advance")
       assert(service.update_agent_focus(key, "sections" => sections, "revision" => 0) == saved, "exact retries must be safe")
+      at_limit = [{ "title" => "Limit", "subtitle" => "x" * 80, "items" => [{ "title" => "Item", "subtitle" => "y" * 80 }] }]
+      assert(HQ::AgentFocus.new(managed).send(:normalize, at_limit).first["subtitle"].length == 80,
+             "80-character Focus subtitles must be accepted")
+      [
+        [{ "title" => "Too long", "subtitle" => "x" * 81, "items" => [] }],
+        [{ "title" => "Item too long", "items" => [{ "title" => "Item", "subtitle" => "x" * 81 }] }]
+      ].each do |invalid_sections|
+        begin
+          service.update_agent_focus(key, "sections" => invalid_sections, "revision" => 1)
+          raise "Focus subtitle over 80 characters was accepted"
+        rescue HQ::RemoteServer::Error => e
+          assert(e.status == 422 && e.message.include?("80 characters"), "overlong Focus subtitle must return a clear validation error")
+        end
+      end
       fresh = HQ::RemoteService.new(registry: registry)
       projected = fresh.agent(key)[:focus]
       assert(projected["sections"][0]["items"][0]["title"] == "Review changes", "Focus must survive service reload")
