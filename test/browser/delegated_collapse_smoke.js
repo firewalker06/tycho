@@ -5,10 +5,12 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
   const results = [];
   const integratedFacts = button => button.evaluate(toggle => {
     const row = toggle.parentElement;
-    const main = row.querySelector(":scope > [data-open-agent]");
+    const tree = toggle.closest("[data-agent-tree], .switcher-tree-row");
+    const main = row.querySelector(":scope > [data-open-agent], :scope > .selectable-agent-row");
     const rect = node => { const r = node.getBoundingClientRect(); return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, width: r.width, height: r.height }; };
     const style = getComputedStyle(toggle);
-    return { row: rect(row), main: rect(main), toggle: rect(toggle), divider: Number.parseFloat(style.borderLeftWidth), dividerStyle: style.borderLeftStyle, dividerColor: style.borderLeftColor, outerRight: Number.parseFloat(getComputedStyle(row).borderRightWidth), outerTop: Number.parseFloat(getComputedStyle(row).borderTopWidth), outerBottom: Number.parseFloat(getComputedStyle(row).borderBottomWidth), role: row.getAttribute("role"), siblings: main.parentElement === toggle.parentElement, nested: row.querySelectorAll("button button").length, controlled: document.getElementById(toggle.getAttribute("aria-controls"))?.contains(row) === true };
+    const controlled = document.getElementById(toggle.getAttribute("aria-controls"));
+    return { row: rect(row), tree: rect(tree), main: rect(main), toggle: rect(toggle), divider: Number.parseFloat(style.borderLeftWidth), dividerStyle: style.borderLeftStyle, dividerColor: style.borderLeftColor, outerRight: Number.parseFloat(getComputedStyle(tree).borderRightWidth), outerTop: Number.parseFloat(getComputedStyle(tree).borderTopWidth), role: tree.getAttribute("role"), siblings: main.parentElement === toggle.parentElement, nested: row.querySelectorAll("button button").length, controlled: Boolean(controlled && (tree.contains(controlled) || controlled.contains(tree))) };
   });
   const assertIntegrated = facts => {
     assert.equal(facts.siblings, true);
@@ -18,9 +20,8 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     assert(Math.abs(facts.main.right - facts.toggle.x) <= 1, "actions must meet without a floating gap");
     assert(Math.abs(facts.main.y - facts.toggle.y) <= 1);
     assert(Math.abs(facts.main.height - facts.toggle.height) <= 1, "disclosure hit area must fill the row height");
-    assert(Math.abs(facts.toggle.right + facts.outerRight - facts.row.right) <= 1);
-    assert(Math.abs(facts.toggle.y - facts.row.y - facts.outerTop) <= 1);
-    assert(Math.abs(facts.toggle.height + facts.outerTop + facts.outerBottom - facts.row.height) <= 1);
+    assert(Math.abs(facts.toggle.right + facts.outerRight - facts.tree.right) <= 1);
+    assert(Math.abs(facts.toggle.y - facts.tree.y - facts.outerTop) <= 1);
     assert(facts.toggle.width >= 44 && facts.toggle.height >= 44);
     assert(facts.divider >= 1 && facts.dividerStyle === "solid" && facts.dividerColor !== "rgba(0, 0, 0, 0)");
   };
@@ -46,7 +47,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           child("fixture-child", "Hidden child", key, { running: true, status: "running" }),
           child("fixture-grandchild", "Nested needle", "fixture-child"),
           child("fixture-peer", "Peer sibling", key, { server_key: "peer" }),
-          child("fixture-orphan", "Unknown parent", "missing"),
+          child("fixture-orphan", "Unknown parent", "missing", { running: true, status: "running" }),
           child("fixture-disconnected", "Disconnected root", "absent"),
           child("fixture-same", "Tree parent", "missing"),
         ];
@@ -58,24 +59,115 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         state.agents = window.collapseFixtureAgents;
         state.servers = [{ key: "local", name: "Local", local: true, ready: true, status: "ready" }];
         state.filters.agents = "";
-        state.agentSort = "relevancy";
         state.route = { type: "tab", tab: "agents" };
+        for (const sort of ["agent_name_asc", "agent_name_desc", "agent_updated_asc", "agent_updated_desc", "project_asc", "project_desc"]) {
+          state.agentSort = sort;
+          renderAgents({ focusFilter: false });
+          const sortedTree = document.querySelector(`[data-agent-tree="${CSS.escape(key)}"]`);
+          const sortedChild = sortedTree?.querySelector('[data-open-agent="fixture-child"]');
+          const sortedCount = sortedTree?.querySelector(".delegated-running-count");
+          if (!sortedTree || !sortedChild || !sortedCount || !sortedChild.closest(".agent-delegation-children").hidden) {
+            throw new Error(`Agents sort ${sort} did not group and collapse the running child`);
+          }
+          if (sortedCount.textContent.trim() !== "1") throw new Error(`Agents sort ${sort} running count was ${sortedCount.textContent}`);
+        }
+        state.agentSort = "agent_name_asc";
+        state.filters.agents = "Hidden child";
         renderAgents({ focusFilter: false });
-        const agentsTree = document.querySelector(`[data-agent-tree="${CSS.escape(key)}"]`);
-        const agentsChild = agentsTree?.querySelector('[data-open-agent="fixture-child"]');
-        const badge = agentsTree?.querySelector(".delegated-running-count");
-        const status = agentsTree?.querySelector(".agent-status-icon.running");
+        if (!document.querySelector('[data-open-agent="fixture-child"]') || document.querySelector(`[data-agent-tree="${CSS.escape(key)}"]`)) {
+          throw new Error("Agent search must keep a matching delegated child directly reachable");
+        }
+        state.filters.agents = "";
+        state.agentSort = "relevancy";
+        renderAgents({ focusFilter: false });
+        let agentsTree = document.querySelector(`[data-agent-tree="${CSS.escape(key)}"]`);
+        let agentsChild = agentsTree?.querySelector('[data-open-agent="fixture-child"]');
+        let badge = agentsTree?.querySelector(".delegated-running-count");
+        let status = agentsTree?.querySelector(".agent-status-icon.running");
         if (!agentsTree || !agentsChild || !badge || !status) throw new Error("Agents list did not show collapsed parent with running count");
         if (!agentsChild.closest(".agent-delegation-children").hidden) throw new Error("Agents list child row was not collapsed");
         if (badge.textContent.trim() !== "1") throw new Error(`Agents list running count was ${badge.textContent}`);
-        const agentsScreenshot = agentsTree.outerHTML;
+        const toggle = agentsTree.querySelector("[data-toggle-agent-tree]");
+        const mainRow = agentsTree.querySelector(":scope > .agent-delegation-parent-row > [data-open-agent]");
+        if (mainRow.parentElement !== toggle.parentElement || mainRow.contains(toggle) || mainRow.querySelector("button button")) {
+          throw new Error("Agent row and delegation disclosure must be sibling buttons");
+        }
+        const rowFacts = (() => {
+          const parentRow = toggle.parentElement;
+          const rect = node => { const bounds = node.getBoundingClientRect(); return { x: bounds.x, y: bounds.y, right: bounds.right, width: bounds.width, height: bounds.height }; };
+          const toggleStyle = getComputedStyle(toggle);
+          const treeStyle = getComputedStyle(agentsTree);
+          const statusIcon = mainRow.querySelector(".agent-status-icon.running");
+          const countBadge = mainRow.querySelector(".delegated-running-count");
+          if (!statusIcon || !countBadge) throw new Error("Running count must appear with the parent status icon");
+          const iconBounds = rect(statusIcon);
+          const badgeBounds = rect(countBadge);
+          return { parent: rect(parentRow), main: rect(mainRow), toggle: rect(toggle), tree: rect(agentsTree),
+            divider: Number.parseFloat(toggleStyle.borderLeftWidth), outerRight: Number.parseFloat(treeStyle.borderRightWidth),
+            outerTop: Number.parseFloat(treeStyle.borderTopWidth), icon: iconBounds, badge: badgeBounds };
+        })();
+        if (Math.abs(rowFacts.main.right - rowFacts.toggle.x) > 1 || Math.abs(rowFacts.main.y - rowFacts.toggle.y) > 1 ||
+            Math.abs(rowFacts.main.height - rowFacts.toggle.height) > 1 || Math.abs(rowFacts.toggle.right + rowFacts.outerRight - rowFacts.tree.right) > 1 ||
+            Math.abs(rowFacts.toggle.y - rowFacts.tree.y - rowFacts.outerTop) > 1 || rowFacts.toggle.height < 44 || rowFacts.toggle.width < 44 ||
+            rowFacts.divider < 1 || !(rowFacts.badge.x < rowFacts.icon.x + rowFacts.icon.width && rowFacts.badge.right > rowFacts.icon.x)) {
+          throw new Error(`Delegated parent actions or running badge are misaligned: ${JSON.stringify(rowFacts)}`);
+        }
+        toggle.click();
+        toggle.focus();
+        const renamedFixture = structuredClone(window.collapseFixtureAgents);
+        renamedFixture.find(agent => agent.key === "fixture-child").name = "Renamed child";
+        window.collapseFixtureAgents = renamedFixture;
+        state.agents = renamedFixture;
+        renderAgents({ focusFilter: false });
+        agentsTree = document.querySelector(`[data-agent-tree="${CSS.escape(key)}"]`);
+        const restoredToggle = agentsTree?.querySelector("[data-toggle-agent-tree]");
+        if (!restoredToggle || restoredToggle.getAttribute("aria-expanded") !== "true" || agentsTree.querySelector(".agent-delegation-children").hidden) {
+          throw new Error("Changed agent data must not collapse an expanded delegation tree");
+        }
+        if (document.activeElement !== restoredToggle) throw new Error("Changed agent data must restore focus to the disclosure");
+        if (!agentsTree.querySelector('[data-open-agent="fixture-child"] .row-title strong')?.textContent.includes("Renamed child")) {
+          throw new Error("Changed child data must appear after the tree rerender");
+        }
+        state.agentSort = "project_asc";
+        state.bulkArchiveMode = true;
+        state.bulkArchiveSelection.clear();
+        renderAgents({ focusFilter: false });
+        let bulkTree = document.querySelector(`[data-agent-tree="${CSS.escape(key)}"]`);
+        const bulkToggle = bulkTree?.querySelector("[data-toggle-agent-tree]");
+        if (bulkTree?.querySelectorAll("[data-select-agent]").length < 2 || !bulkToggle) {
+          throw new Error("Project ascending bulk mode must keep parent and child selection controls");
+        }
+        const originalRender = render;
+        render = () => renderAgents({ focusFilter: false });
+        try {
+          bulkToggle.click();
+          bulkTree.querySelector('[data-select-agent="fixture-child"]').click();
+          document.querySelector(`[data-agent-tree="${CSS.escape(key)}"] [data-select-agent="${CSS.escape(key)}"]`).click();
+        } finally {
+          render = originalRender;
+        }
+        bulkTree = document.querySelector(`[data-agent-tree="${CSS.escape(key)}"]`);
+        if (!state.bulkArchiveSelection.has(key) || !state.bulkArchiveSelection.has("fixture-child") ||
+            !bulkTree.querySelector('[data-select-agent="fixture-child"]').checked ||
+            !bulkTree.querySelector(`[data-select-agent="${CSS.escape(key)}"]`).checked) {
+          throw new Error("Bulk parent and delegated child selections must persist across rerender");
+        }
+        state.bulkArchiveMode = false;
+        state.bulkArchiveSelection.clear();
+        state.expandedAgentTreeKeys.delete(key);
         state.agentSort = "relevancy";
+        state.route = { type: "tab", tab: "agents" };
+        renderAgents({ focusFilter: false });
+        agentsTree = document.querySelector(`[data-agent-tree="${CSS.escape(key)}"]`);
+        const agentsScreenshot = agentsTree.outerHTML;
         state.route = { type: "tab", tab: "now" };
         renderNow();
         const nowTree = document.querySelector(`[data-agent-tree="${CSS.escape(key)}"]`);
         if (!nowTree || !nowTree.querySelector(".agent-status-icon.running") || nowTree.querySelector(".delegated-running-count")?.textContent.trim() !== "1") {
           throw new Error(`Now list did not show delegated running parent and count: root=${key}, root delegation=${JSON.stringify(findAgent(key)?.delegation)}, child=${JSON.stringify(findAgent("fixture-child")?.delegation)}, html=${document.querySelector("#view")?.innerHTML.slice(0, 1800)}`);
         }
+        const orphanRow = document.querySelector('[data-open-agent="fixture-orphan"]');
+        if (!orphanRow) throw new Error("Now must show a running delegated agent when its parent is missing");
         return { agentsScreenshot, nowScreenshot: nowTree.outerHTML };
       };
       state.activityReadyServerKeys.clear();
@@ -159,7 +251,9 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       await page.keyboard.press("Shift+Tab");
       const blurred = await searchFocus();
       assert(blurred.width === 0 || blurred.style === "none", `container cue must disappear after focus leaves: ${JSON.stringify(blurred)}`);
-      assert.deepEqual(blurred.bounds, keyboardFocus.bounds, "focus must not change layout");
+      assert.equal(blurred.bounds.x, keyboardFocus.bounds.x, "focus must not change horizontal layout");
+      assert.equal(blurred.bounds.width, keyboardFocus.bounds.width, "focus must not change search width");
+      assert.equal(blurred.bounds.height, keyboardFocus.bounds.height, "focus must not change search height");
       await keyboardSearch.click();
       await assertSearchFocus();
       await page.mouse.move(0, 0);

@@ -41,15 +41,21 @@ module RemoteUIAssetSnapshotTest
       'const sourceAgents = currentAgents().filter(resourceAvailableInNow)',
       'delegation: { ...(root.delegation || {}), children: delegatedAgents }',
       'delegated_running_count: runningCount',
-      'aria-expanded="false" aria-label="Show ${escapeAttr(label)}"',
+      'aria-expanded="${expanded}" aria-label="${expanded ? "Hide" : "Show"} ${escapeAttr(label)}"',
+      'state.expandedAgentTreeKeys.add(key)',
+      'REMOTE_HELPERS.groupAgentsByDelegation(agents, compareAgentsForCurrentSort)',
+      'agents.flatMap(agent => agent.delegated_agents || []).map(agent => agent.key)',
       'data-toggle-agent-tree',
       'const tree = REMOTE_HELPERS.groupAgentsByDelegation(quickSwitchPanelAgents()).find(candidate => candidate.root.key === agent.key)',
       'aria-label="${options.delegatedRunningCount} delegated agents running"',
     ]
     missing = required.reject { |fragment| javascript.include?(fragment) }
     raise "missing delegated running parent list contract: #{missing.join(", ")}" unless missing.empty?
-    raise "delegated rows must start hidden" unless javascript.include?('class="agent-delegation-children" hidden')
+    raise "delegation controls must use sibling buttons" unless javascript.include?('<div class="agent-delegation-parent-row">')
+    raise "delegated rows must restore their disclosure state" unless javascript.include?('class="agent-delegation-children"${expanded ? "" : " hidden"}')
+    raise "bulk mode must keep selection controls in standard grouped rows" unless javascript.include?("if (state.bulkArchiveMode) return renderSelectableAgentRow(agent, options);")
     raise "delegated running counts need a visible badge" unless css.include?(".delegated-running-count {")
+    raise "delegated disclosure controls need an integrated parent row" unless css.include?(".agent-delegation-parent-row {")
   end
 
   def assert_mobile_dock_and_pending_attachment_layout

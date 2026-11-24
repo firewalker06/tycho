@@ -2789,6 +2789,27 @@ body[data-route-tab="schedules"] .header-more-panel {
   color: var(--muted);
 }
 
+.agent-row-status {
+  position: relative;
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+.agent-row-status > .agent-status-icon,
+.agent-row-status > .status-mark {
+  width: 18px;
+  height: 18px;
+}
+
+.agent-row-status.selectable-agent-row-status {
+  display: inline-flex;
+  width: auto;
+  gap: 4px;
+}
+
 .agent-status-icon .ui-icon {
   width: 18px;
   height: 18px;
@@ -3079,7 +3100,14 @@ button[data-toggle-pr-diff-full-view],
   background: var(--panel);
 }
 
-.agent-delegation-tree > .agent-row {
+.agent-delegation-parent-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.agent-delegation-parent-row > .agent-row {
   border: 0;
   border-radius: 0;
   box-shadow: none;
@@ -3094,9 +3122,13 @@ button[data-toggle-pr-diff-full-view],
   align-items: center;
   justify-content: center;
   gap: 4px;
-  min-width: 42px;
-  min-height: 36px;
+  min-width: 44px;
+  min-height: 44px;
+  align-self: stretch;
   padding: 4px 8px;
+  border: 0;
+  border-left: 1px solid var(--border);
+  border-radius: 0;
   color: var(--text);
 }
 
@@ -3104,15 +3136,13 @@ button[data-toggle-pr-diff-full-view],
 .delegation-tree-toggle[aria-expanded="true"] .ui-icon { transform: rotate(180deg); }
 
 .delegated-running-count {
+  position: absolute;
+  top: -4px;
+  right: -6px;
   display: inline-grid;
-  grid-column: 1;
-  grid-row: 1;
-  justify-self: end;
-  align-self: start;
   min-width: 18px;
   width: 18px;
   height: 18px;
-  margin: -4px -6px 0 0;
   place-items: center;
   border-radius: 999px;
   background: var(--accent);
