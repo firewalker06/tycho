@@ -153,6 +153,8 @@ module HQ
       run_summary_number = 0
 
       events.each_with_index do |event, sequence|
+        next if migrated_agent_context_event?(event)
+
         sequence = event["sequence"] || sequence
         timestamp = parse_time(event["created_at"])
 
@@ -265,6 +267,10 @@ module HQ
       end
 
       [conversation, chat_system, system_log]
+    end
+
+    def migrated_agent_context_event?(event)
+      event["type"] == "system_prompt" && event.dig("metadata", "prompt_role") == "agent_context"
     end
 
     def projection_entries_from_raw(raw_path)

@@ -35,7 +35,7 @@ module HQ
       events = read_events
       messages = []
 
-      system_prompt_events(events).each do |event|
+      system_prompt_events(events).reject { |event| agent_context_prompt?(event) }.each do |event|
         messages << {
           role: "system",
           content: event["content"].to_s,
@@ -61,7 +61,7 @@ module HQ
       events = read_events
       messages = []
 
-      system_prompt_events(events).each do |event|
+      system_prompt_events(events).reject { |event| agent_context_prompt?(event) }.each do |event|
         messages << {
           role: "system",
           content: event["content"].to_s,
@@ -743,6 +743,10 @@ module HQ
 
     def system_prompt_events(events)
       events.select { |event| event["type"] == "system_prompt" && !event["content"].to_s.empty? }
+    end
+
+    def agent_context_prompt?(event)
+      event.dig("metadata", "prompt_role") == "agent_context"
     end
 
     def attachments_for_event(event)

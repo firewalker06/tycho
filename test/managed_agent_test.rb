@@ -39,6 +39,7 @@ module ManagedAgentTest
     assert_memory_rebuild_uses_each_runs_recorded_model
     assert_final_output_checklist_is_ephemeral_execution_context
     assert_current_agent_context_covers_root_delegation_and_skill_states
+    assert_agent_context_follows_each_user_prompt_without_memory_changes
     assert_current_agent_context_reaches_real_root_and_delegated_launches
     assert_summary_sections_guidance_reaches_every_harness_run
     assert_queue_work_contract_reaches_every_harness
@@ -1738,7 +1739,6 @@ module ManagedAgentTest
           workspace: dir, prompt: "Prompt", agent: harness, log_path: File.join(dir, "#{harness}.log")
         )
         agent.define_singleton_method(:tycho_skill_installed?) { false }
-        agent.ensure_agent_system_context_prompt!
         prompt = agent.send(:prompt_for_execution, response_style: "", include_hidden_guidance: false)
         assert(prompt.include?("Your agent key: #{harness}-agent"),
                "expected #{harness} cold launch prompt to include its agent context")
@@ -1754,13 +1754,77 @@ module ManagedAgentTest
           workspace: dir, prompt: "Prompt", agent: profile.key, log_path: File.join(dir, "#{profile.key}.log")
         )
         agent.define_singleton_method(:tycho_skill_installed?) { false }
-        agent.ensure_agent_system_context_prompt!
         assert(agent.send(:prompt_for_execution, response_style: "", include_hidden_guidance: false)
                     .include?("Your agent key: #{profile.key}-agent"),
                "expected custom #{profile.adapter} adapter to reuse persisted agent context")
       end
     ensure
       HQ.custom_harnesses = previous_harnesses if defined?(previous_harnesses)
+    end
+  end
+
+  def assert_agent_context_follows_each_user_prompt_without_memory_changes
+    Dir.mktmpdir("hq-agent-context-order-test") do |dir|
+      agent = HQ::ManagedAgent.new(
+        key: "focus-order-agent", name: "Focus order", project_key: "demo", template_key: "custom",
+        workspace: dir, prompt: "Base instructions.", log_path: File.join(dir, "focus-order.log"),
+        messages: [
+          { "role" => "system", "content" => "Base instructions." },
+          { "role" => "user", "content" => "First request." },
+          { "role" => "assistant", "content" => "First answer." },
+          { "role" => "user", "content" => "Second request." }
+        ]
+      )
+      agent.define_singleton_method(:tycho_skill_installed?) { false }
+      memory = agent.send(:memory_store)
+      memory.append_system_prompt!("Project system prompt", prompt_role: "project_context")
+      memory.append_system_prompt!("Legacy Focus context", prompt_role: "agent_context")
+      memory.append_system_prompt!("Additional system prompt")
+      before_events = memory.events
+      prompt = agent.send(:prompt_for_execution, response_style: "", include_hidden_guidance: false)
+      focus_context = prompt.index("Focus is durable, current actionable state")
+
+      assert(focus_context && focus_context > prompt.index("USER:\nSecond request."),
+             "expected Focus guidance after the current user prompt")
+      assert(!prompt.include?("USER:\nFirst request.\n") ||
+             prompt.index("Focus is durable, current actionable state") > prompt.index("USER:\nFirst request."),
+             "expected Focus guidance after prior user prompts in full transcript")
+      assert(prompt.include?("Do not copy the run Summary into Focus."),
+             "expected distinct Focus and Summary instructions")
+      assert(!prompt.include?("Legacy Focus context"),
+             "expected legacy stored Focus context to be omitted from execution prompt history")
+      assert(agent.send(:composed_prompt).include?("Second request."),
+             "expected legacy context filtering to preserve user conversation history")
+      chat_messages = HQ::AgentChatLog.new(agent).chat_blocks.select { |block| block.kind == :message }
+      system_messages = chat_messages.select { |block| block.role == "system" }.map(&:content)
+      assert(!system_messages.any? { |content| content.include?("Legacy Focus context") },
+             "expected Conversation to hide migrated legacy Focus context")
+      assert(system_messages.include?("Base instructions.") &&
+             system_messages.include?("Project system prompt") &&
+             system_messages.include?("Additional system prompt"),
+             "expected Conversation to preserve other system prompts")
+      assert(before_events == memory.events,
+             "building an execution prompt must not change stored conversation history")
+
+      quoted_agent = HQ::ManagedAgent.new(
+        key: "focus-quote-agent", name: "Focus quote", project_key: "demo", template_key: "custom",
+        workspace: dir, prompt: "Base instructions.", log_path: File.join(dir, "focus-quote.log")
+      )
+      quoted_agent.define_singleton_method(:tycho_skill_installed?) { false }
+      context = quoted_agent.send(:current_agent_system_context)
+      quoted_agent.send(:memory_store).append_user_message!(context)
+      quoted_agent.send(:memory_store).append_assistant_message!(context)
+      quoted_prompt = quoted_agent.send(:prompt_for_execution, response_style: "", include_hidden_guidance: false)
+      assert(quoted_prompt.scan(context).length == 3,
+             "expected quoted user and assistant context plus current trusted guidance")
+
+      agent.reconcile_run_count!(1)
+      agent.instance_variable_set(:@session_id, "focus-order-session")
+      agent.instance_variable_set(:@runs, [HQ::ManagedAgent::AgentRun.new(started_at: Time.now - 60, finished_at: Time.now - 30, status: "success", agent: "codex")])
+      agent.instance_variable_set(:@total_run_count, 1)
+      resumed_prompt = agent.send(:prompt_for_execution, response_style: "", include_hidden_guidance: false)
+      assert(resumed_prompt.include?("Focus is durable, current actionable state"),
+             "expected Focus context in a native resumed prompt")
     end
   end
 
@@ -1792,7 +1856,6 @@ module ManagedAgentTest
         delegation_parent: { "server_id" => "local", "agent_key" => "launched-root" }
       )
       [root, child].each { |agent| agent.define_singleton_method(:tycho_skill_installed?) { false } }
-      [root, child].each(&:ensure_agent_system_context_prompt!)
       root.start!
       child.start!
       deadline = Time.now + 5
