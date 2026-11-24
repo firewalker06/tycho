@@ -1777,7 +1777,9 @@ module ManagedAgentTest
       )
       agent.define_singleton_method(:tycho_skill_installed?) { false }
       memory = agent.send(:memory_store)
+      memory.append_system_prompt!("Project system prompt", prompt_role: "project_context")
       memory.append_system_prompt!("Legacy Focus context", prompt_role: "agent_context")
+      memory.append_system_prompt!("Additional system prompt")
       before_events = memory.events
       prompt = agent.send(:prompt_for_execution, response_style: "", include_hidden_guidance: false)
       focus_context = prompt.index("Focus is durable, current actionable state")
@@ -1793,8 +1795,28 @@ module ManagedAgentTest
              "expected legacy stored Focus context to be omitted from execution prompt history")
       assert(agent.send(:composed_prompt).include?("Second request."),
              "expected legacy context filtering to preserve user conversation history")
+      chat_messages = HQ::AgentChatLog.new(agent).chat_blocks.select { |block| block.kind == :message }
+      system_messages = chat_messages.select { |block| block.role == "system" }.map(&:content)
+      assert(!system_messages.any? { |content| content.include?("Legacy Focus context") },
+             "expected Conversation to hide migrated legacy Focus context")
+      assert(system_messages.include?("Base instructions.") &&
+             system_messages.include?("Project system prompt") &&
+             system_messages.include?("Additional system prompt"),
+             "expected Conversation to preserve other system prompts")
       assert(before_events == memory.events,
              "building an execution prompt must not change stored conversation history")
+
+      quoted_agent = HQ::ManagedAgent.new(
+        key: "focus-quote-agent", name: "Focus quote", project_key: "demo", template_key: "custom",
+        workspace: dir, prompt: "Base instructions.", log_path: File.join(dir, "focus-quote.log")
+      )
+      quoted_agent.define_singleton_method(:tycho_skill_installed?) { false }
+      context = quoted_agent.send(:current_agent_system_context)
+      quoted_agent.send(:memory_store).append_user_message!(context)
+      quoted_agent.send(:memory_store).append_assistant_message!(context)
+      quoted_prompt = quoted_agent.send(:prompt_for_execution, response_style: "", include_hidden_guidance: false)
+      assert(quoted_prompt.scan(context).length == 3,
+             "expected quoted user and assistant context plus current trusted guidance")
 
       agent.reconcile_run_count!(1)
       agent.instance_variable_set(:@session_id, "focus-order-session")

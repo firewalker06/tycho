@@ -3314,7 +3314,6 @@ module HQ
     def append_agent_system_context(prompt)
       text = prompt.to_s.rstrip
       context = current_agent_system_context
-      return text if text.include?(context)
 
       [text, context].reject(&:empty?).join("\n\n")
     end
