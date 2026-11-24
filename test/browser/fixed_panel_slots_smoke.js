@@ -73,6 +73,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir, metadataFixtur
         assert(Math.abs(p.x - (g.root.x + i * (expected + 12))) < 1.1, "occupied slots stay left aligned");
       });
       assert(Math.abs(g.dock.width - expected) < 1.1 && Math.abs(g.dock.x - g.root.x) < 1.1, `composer stays in the Conversation slot: ${JSON.stringify({ expected, g })}`);
+      assert(g.height - g.dock.bottom >= (width >= 900 ? 11 : 0), `medium and wide panels keep a bottom gap without changing narrow layouts: ${JSON.stringify(g)}`);
       const last = g.panes.at(-1);
       assert(Math.abs((g.root.right - last.right) - (n - kinds.length) * (expected + 12)) < 1.1, "unused slots remain space on the right");
       assert(!g.overflow && g.pageHeight <= g.height + 1, JSON.stringify(g));
