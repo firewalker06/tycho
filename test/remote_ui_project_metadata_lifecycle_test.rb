@@ -16,7 +16,7 @@ script = <<~'JS'
     let route = { type: "project", key: "p1" }, active = true, nextTimer = 0;
     const requests = [], timers = new Map(), events = new Map();
     const c = {
-      state: { projectDetails: {}, fullScreenComposerKeys: new Set(), fullScreenInquiryKeys: new Set() },
+      state: { projectDetails: {}, archiveDelegateExclusions: new Map(), fullScreenComposerKeys: new Set(), fullScreenInquiryKeys: new Set() },
       location: { hash: "#project/p1" }, AbortController,
       apiGet: (path, options) => new Promise((resolve, reject) => requests.push({ path, options, resolve, reject })),
       setTimeout: (callback) => { timers.set(++nextTimer, callback); return nextTimer; },
