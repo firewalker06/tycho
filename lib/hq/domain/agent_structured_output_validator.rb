@@ -163,7 +163,7 @@ module HQ
 
       source = markdown_without_code(value)
       markdown_link_destinations(source).each_with_index.filter_map do |target, index|
-        next if valid_http_url?(target)
+        next if valid_http_url?(markdown_unescape_destination(target))
 
         local_link_error("#{path}.link[#{index}]")
       end
@@ -177,7 +177,7 @@ module HQ
     def markdown_link_destinations(value)
       references = {}
       source_lines = []
-      lines = value.lines
+      lines = markdown_list_context_lines(value.lines)
       index = 0
       while index < lines.length
         definition = markdown_reference_definition(lines[index], continuation_line: lines[index + 1])
@@ -204,6 +204,37 @@ module HQ
         double || single || bare
       end
       inline + reference_uses + shortcut_uses + html
+    end
+
+    def markdown_list_context_lines(lines)
+      list_contexts = []
+      lines.map do |line|
+        content = markdown_unquote_reference_line(line)
+        marker = /\A(?<indent> *)(?<marker>[*+-]|\d{1,9}[.)])(?<space>[ \t]+)(?<content>.*)\z/.match(content)
+        if marker
+          marker_indent = marker[:indent].length
+          list_contexts.pop while list_contexts.any? && list_contexts.last[:marker_indent] > marker_indent
+          padding = marker[:space].length <= 4 ? marker[:space].length : 1
+          content_indent = marker_indent + marker[:marker].length + padding
+          list_contexts.pop while list_contexts.any? && list_contexts.last[:marker_indent] == marker_indent
+          list_contexts << { marker_indent:, content_indent: }
+          marker[:content]
+        elsif content.strip.empty?
+          content
+        elsif list_contexts.any?
+          indentation = content[/\A */].length
+          while list_contexts.any? && indentation < list_contexts.last[:content_indent]
+            list_contexts.pop
+          end
+          if list_contexts.any?
+            content.sub(/\A {#{list_contexts.last[:content_indent]}}/, "")
+          else
+            content
+          end
+        else
+          content
+        end
+      end
     end
 
     def markdown_reference_definition(line, continuation_line: nil)
@@ -247,6 +278,10 @@ module HQ
 
     def normalize_reference_label(value)
       value.to_s.strip.downcase.gsub(/\s+/, " ")
+    end
+
+    def markdown_unescape_destination(value)
+      value.to_s.gsub(/\\([[:punct:]])/, "\\1")
     end
 
     def local_link_error(path)

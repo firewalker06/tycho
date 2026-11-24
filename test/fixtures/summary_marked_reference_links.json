@@ -37,6 +37,36 @@
       "markdown": "> > [notes][]\n> >\n> > [notes]:\n> > https://example.test/notes\n> > [notes]: docs/notes.md",
       "hrefs": ["https://example.test/notes"],
       "local": false
+    },
+    {
+      "name": "list-nested multiline local target",
+      "markdown": "- [notes]\n\n    [notes]:\n    docs/notes.md",
+      "hrefs": ["docs/notes.md"],
+      "local": true
+    },
+    {
+      "name": "escaped HTTPS punctuation in reference destination",
+      "markdown": "[notes]\n\n[notes]: https://example.test/a\\(b\\)",
+      "hrefs": ["https://example.test/a(b)"],
+      "local": false
+    },
+    {
+      "name": "same-line shortcut local target",
+      "markdown": "[notes]\n\n[notes]: docs/notes.md",
+      "hrefs": ["docs/notes.md"],
+      "local": true
+    },
+    {
+      "name": "same-line collapsed external target",
+      "markdown": "[notes][]\n\n[notes]: <https://example.test/notes> \"Notes\"",
+      "hrefs": ["https://example.test/notes"],
+      "local": false
+    },
+    {
+      "name": "nested blockquote same-line local target",
+      "markdown": "> > [notes][]\n> >\n> > [notes]: docs/notes.md",
+      "hrefs": ["docs/notes.md"],
+      "local": true
     }
   ]
 }
