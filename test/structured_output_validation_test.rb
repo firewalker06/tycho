@@ -87,6 +87,31 @@ module StructuredOutputValidationTest
            paths.include?("$.summary_sections[2].attachment.path") &&
            paths.include?("$.summary_sections[3].attachment.url"),
            "expected unusable rich targets to report exact correction paths")
+
+    local_structured = validator.validate(
+      "status" => "success", "summary" => "See [local](docs/notes.md)",
+      "summary_sections" => [
+        { "type" => "text", "text" => "Open [file](../notes.md)", "url" => nil, "attachment" => nil },
+        { "type" => "link", "text" => "Local", "url" => "file:///tmp/notes.md", "attachment" => nil },
+        { "type" => "link", "text" => "External", "url" => "https://example.test/notes", "attachment" => nil },
+        { "type" => "attachment", "text" => nil, "url" => nil,
+          "attachment" => { "type" => "file", "title" => "Notes", "path" => "docs/notes.md", "url" => nil, "description" => nil, "mime_type" => nil } }
+      ],
+      "inquiry" => nil, "attachments" => nil, "memory_handoff" => nil
+    )
+    assert(local_structured.errors.count { |item| item["code"] == "local_link_not_allowed" } == 3,
+           "expected local links in summary, Markdown blocks, and link blocks to be rejected with guidance")
+    assert(local_structured.errors.all? { |item| item["message"].include?("file attachment") },
+           "expected local-link errors to guide agents to file attachments")
+
+    external_markdown = validator.validate(
+      "status" => "success", "summary" => "See [external](https://example.test/notes)",
+      "summary_sections" => [
+        { "type" => "text", "text" => "[external](https://example.test/notes)", "url" => nil, "attachment" => nil },
+        { "type" => "link", "text" => "External", "url" => "https://example.test/notes", "attachment" => nil }
+      ], "inquiry" => nil, "attachments" => nil, "memory_handoff" => nil
+    )
+    assert(external_markdown.valid?, "expected external Markdown and structured links to remain valid: #{external_markdown.errors.inspect}")
   end
 
   def assert_native_codex_schema_split_contract

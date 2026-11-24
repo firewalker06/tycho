@@ -136,6 +136,7 @@ module HQ
                                 "verification results, provide ordered rich blocks as a standalone expanded " \
                                 "account. Put headings, bullets, numbered lists, tables, and prose in Markdown " \
                                 "`text` blocks; use `link` and `attachment` blocks for their respective targets. " \
+                                "Do not use local links in Summary text or link blocks. For a local file, use a file attachment with its path. External HTTP(S) links remain supported. " \
                                 "Set every unused block field to `null`. Example Markdown list block: " \
                                 "`#{SUMMARY_SECTIONS_EXAMPLE}`"
     FINAL_OUTPUT_CHECKLIST = "For `summary`, write a concise operator-facing Markdown summary of the outcome, " \

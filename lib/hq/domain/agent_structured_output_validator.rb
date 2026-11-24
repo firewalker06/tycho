@@ -17,6 +17,7 @@ module HQ
 
       payload, compatibility_errors = canonicalize_compatibility_fields(payload)
       errors = compatibility_errors + validate_value(payload, @schema, "$")
+      errors.concat(validate_markdown_links(payload))
       errors.concat(validate_summary_sections(payload))
       Result.new(valid?: errors.empty?, payload:, errors:, raw_text:)
     end
@@ -127,7 +128,7 @@ module HQ
         path = "$.summary_sections[#{index}]"
         case block["type"]
         when "text"
-          nonempty_summary_field_errors(block, "text", path)
+          nonempty_summary_field_errors(block, "text", path) + local_markdown_link_errors(block["text"], "#{path}.text")
         when "link"
           nonempty_summary_field_errors(block, "text", path) + valid_summary_url_errors(block, path)
         when "attachment"
@@ -143,7 +144,33 @@ module HQ
     end
 
     def valid_summary_url_errors(block, path)
-      valid_http_url?(block["url"]) ? [] : [error("invalid_url", "#{path}.url", "Link block requires an HTTP(S) URL")]
+      valid_http_url?(block["url"]) ? [] : [local_link_error("#{path}.url")]
+    end
+
+    def validate_markdown_links(payload)
+      return [] unless payload.is_a?(Hash)
+
+      errors = local_markdown_link_errors(payload["summary"], "$.summary")
+      errors.concat(local_markdown_link_errors(payload.dig("summary_sections"), "$.summary_sections"))
+      errors
+    end
+
+    def local_markdown_link_errors(value, path)
+      if value.is_a?(Array)
+        return value.each_with_index.flat_map { |item, index| local_markdown_link_errors(item, "#{path}[#{index}]") }
+      end
+      return [] unless value.is_a?(String)
+
+      value.scan(/\[[^\]]*\]\(([^)]+)\)/).flatten.each_with_index.filter_map do |target, index|
+        next if valid_http_url?(target)
+
+        local_link_error("#{path}.link[#{index}]")
+      end
+    end
+
+    def local_link_error(path)
+      error("local_link_not_allowed", path,
+            "Local links are not supported in Summary. Add the local file as a file attachment with its path.")
     end
 
     def attachment_target_errors(attachment, path)
