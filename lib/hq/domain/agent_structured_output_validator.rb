@@ -176,15 +176,22 @@ module HQ
 
     def markdown_link_destinations(value)
       references = {}
-      source = value.lines.reject do |line|
-        definition = markdown_reference_definition(line)
-        next false unless definition
+      source_lines = []
+      lines = value.lines
+      index = 0
+      while index < lines.length
+        definition = markdown_reference_definition(lines[index], continuation_line: lines[index + 1])
+        unless definition
+          source_lines << lines[index]
+          index += 1
+          next
+        end
 
-        label, target = definition
-        references[normalize_reference_label(label)] ||= target
-        true
+        label, target, consumed = definition
+        references[normalize_reference_label(label)] ||= target if target
+        index += consumed
       end
-      .join
+      source = source_lines.join
 
       inline = source.scan(/(?<!!)\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)/).map { |angle, plain| angle || plain }
       reference_uses = source.scan(/(?<!!)\[([^\]]+)\]\[([^\]]*)\]/).filter_map do |label, reference|
@@ -199,13 +206,39 @@ module HQ
       inline + reference_uses + shortcut_uses + html
     end
 
-    def markdown_reference_definition(line)
-      content = line.chomp
-      content = content.sub(/\A {0,3}>[ \t]?/, "") while content.match?(/\A {0,3}>/)
-      match = /\A {0,3}\[([^\]]+)\]:[ \t]*(?:<([^>]+)>|(\S+))(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^)]*\)))?[ \t]*\z/.match(content)
+    def markdown_reference_definition(line, continuation_line: nil)
+      content = markdown_unquote_reference_line(line)
+      match = /\A {0,3}\[([^\]]+)\]:[ \t]*(.*)\z/.match(content)
       return unless match
 
-      [match[1], match[2] || match[3]]
+      label = match[1]
+      target = markdown_reference_target(match[2])
+      consumed = 1
+      if target.nil?
+        continuation = markdown_unquote_reference_line(continuation_line) if continuation_line
+        return [label, nil, consumed] unless continuation&.match?(/\A {1,}\S/)
+
+        target = markdown_reference_target(continuation.strip)
+        consumed = 2 if target
+      end
+
+      [label, target, consumed]
+    end
+
+    def markdown_unquote_reference_line(line)
+      content = line.chomp
+      content = content.sub(/\A {0,3}>[ \t]?/, "") while content.match?(/\A {0,3}>/)
+      content
+    end
+
+    def markdown_reference_target(content)
+      value = content.to_s.strip
+      return if value.empty?
+
+      match = /\A<([^>]+)>/.match(value)
+      return match[1] if match
+
+      value[/\A\S+/]
     end
 
     def normalize_reference_label(value)
