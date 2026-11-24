@@ -14,6 +14,7 @@ module RemoteUIAssetSnapshotTest
     assert_initial_loading_shell_contract
     assert_loaded_daemon_keeps_one_asset_build
     assert_delegation_ui_uses_typed_safe_references
+    assert_delegated_running_parent_lists
     assert_delegation_callbacks_render_as_complete_delegated_agent_messages
     assert_delegated_summary_attention_icon_is_in_header
     assert_started_agent_notice_uses_started_label_and_project
@@ -31,6 +32,39 @@ module RemoteUIAssetSnapshotTest
     assert_mobile_dock_and_pending_attachment_layout
     assert_non_assistant_conversation_blocks_are_quiet
     puts "remote_ui_asset_snapshot_test: ok"
+  end
+
+  def assert_delegated_running_parent_lists
+    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
+    css = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.css"))
+    required = [
+      'const sourceAgents = currentAgents().filter(resourceAvailableInNow)',
+      'delegation: { ...(root.delegation || {}), children: delegatedAgents }',
+      'delegated_running_count: runningCount',
+      'aria-expanded="${expanded}" aria-label="${expanded ? "Hide" : "Show"} ${escapeAttr(label)}"',
+      'state.expandedAgentTreeKeys.add(key)',
+      'REMOTE_HELPERS.groupAgentsByDelegation(agents, compareAgentsForCurrentSort)',
+      'agents.flatMap(agent => agent.delegated_agents || []).map(agent => agent.key)',
+      'data-toggle-agent-tree',
+      'const tree = REMOTE_HELPERS.groupAgentsByDelegation(quickSwitchPanelAgents()).find(candidate => candidate.root.key === agent.key)',
+      'aria-label="${options.delegatedRunningCount} delegated agents running"',
+    ]
+    missing = required.reject { |fragment| javascript.include?(fragment) }
+    raise "missing delegated running parent list contract: #{missing.join(", ")}" unless missing.empty?
+    raise "delegation controls must use sibling buttons" unless javascript.include?('<div class="agent-delegation-parent-row">')
+    raise "delegated rows must restore their disclosure state" unless javascript.include?('class="agent-delegation-children"${expanded ? "" : " hidden"}')
+    raise "bulk mode must preserve standard rows outside Agents" unless javascript.include?("if (state.bulkArchiveMode && !options.useStandardRow) return renderSelectableAgentRow(agent, options);")
+    raise "project groups must receive complete delegation trees rooted by project" unless javascript.include?("const projectAgents = query\n    ? agents\n    : REMOTE_HELPERS.groupAgentsByDelegation(agents, compareAgentsForCurrentSort)")
+    raise "Now agent rows must request the standard row renderer" unless javascript.include?('}, "", { serverIcon: true, useStandardRow: true })).join("")')
+    raise "project detail rows must keep navigation during Agents selection mode" unless javascript.include?('agents.map(agent => renderAgentRow(agent, { useStandardRow: true }))')
+    raise "Agents project rows must use selectable tree rows" unless javascript.include?("trees.map(tree => renderAgentTree(tree, query)).join(\"\")")
+    raise "delegated running counts need a visible badge" unless css.include?(".delegated-running-count {")
+    raise "delegated status icons must use the shared 42px container" unless css.include?(".agent-row-status {\n  position: relative;\n  display: inline-grid;\n  width: 42px;\n  height: 42px;")
+    raise "delegated status icons must be 20px and centered" unless css.include?(".agent-row-status > .agent-status-icon,\n.agent-row-status > .status-mark {\n  box-sizing: border-box;\n  width: 20px;")
+    raise "delegated count badge must clear the centered icon" unless css.include?("left: calc(50% + 11px);")
+    raise "delegated tree paint must clip to its rounded outer bounds" unless css.include?(".resource-block-grid > .agent-delegation-tree {\n  min-width: 0;\n  border: 1px solid var(--border);\n  border-radius: 8px;\n  overflow: hidden;")
+    raise "delegated parent focus must stay visible inside the clipped tree" unless css.include?(".agent-delegation-parent-row > .agent-row:focus-visible {\n  outline: 0;\n  box-shadow: inset 0 0 0 2px var(--ds-focus-ring);")
+    raise "delegated disclosure controls need an integrated parent row" unless css.include?(".agent-delegation-parent-row {")
   end
 
   def assert_mobile_dock_and_pending_attachment_layout

@@ -16,14 +16,14 @@
     },
     "summary": {
       "type": "string",
-      "description": "Concise operator-facing Markdown summary of this run. State the outcome, important changes or findings, blockers, and concrete next steps. Keep it focused enough for the Remote UI Summary page: usually 1-3 short paragraphs or bullets. After summarized, do a secondary check to not miss important details."
+      "description": "Concise operator-facing Markdown summary of this run. State the outcome, important changes or findings, blockers, and concrete next steps. Keep it focused enough for the Remote UI Summary page: usually 1-3 short paragraphs or bullets. Do not use local links in Summary Markdown; add local files as file attachments with their paths. External HTTP(S) links remain supported. After summarized, do a secondary check to not miss important details."
     },
     "summary_sections": {
       "type": [
         "array",
         "null"
       ],
-      "description": "Always provide a non-empty summary as the concise preview. Set summary_sections to null for simple runs. For substantive runs such as investigations, reviews, builds, or plans with multiple findings, provide ordered rich blocks as a standalone expanded account used instead of summary on the full Summary page. Put headings, bullets, numbered lists, tables, and prose in Markdown text blocks; use link and attachment blocks for their respective targets. Set every unused block field to null. Keep the array in reading order. Example Markdown list block: {\"type\":\"text\",\"text\":\"## Findings\\n- First\\n- Second\",\"url\":null,\"attachment\":null}.",
+      "description": "Always provide a non-empty summary as the concise preview. Set summary_sections to null for simple runs. For substantive runs such as investigations, reviews, builds, or plans with multiple findings, provide ordered rich blocks as a standalone expanded account used instead of summary on the full Summary page. Put headings, bullets, numbered lists, tables, and prose in Markdown text blocks; use link and attachment blocks for their respective targets. Do not use local links in Summary Markdown or link blocks. Add local files as file attachments with their paths. External HTTP(S) links remain supported. Set every unused block field to null. Keep the array in reading order. Example Markdown list block: {\"type\":\"text\",\"text\":\"## Findings\\n- First\\n- Second\",\"url\":null,\"attachment\":null}.",
       "items": {
         "type": "object",
         "additionalProperties": false,

@@ -6,6 +6,7 @@ require "uri"
 module HQ
   class AgentStructuredOutputValidator
     Result = Struct.new(:valid?, :payload, :errors, :raw_text, keyword_init: true)
+    ESCAPED_BRACKET_SENTINEL = "\uE000"
 
     def initialize(schema:)
       @schema = schema
@@ -17,6 +18,7 @@ module HQ
 
       payload, compatibility_errors = canonicalize_compatibility_fields(payload)
       errors = compatibility_errors + validate_value(payload, @schema, "$")
+      errors.concat(validate_markdown_links(payload))
       errors.concat(validate_summary_sections(payload))
       Result.new(valid?: errors.empty?, payload:, errors:, raw_text:)
     end
@@ -127,7 +129,7 @@ module HQ
         path = "$.summary_sections[#{index}]"
         case block["type"]
         when "text"
-          nonempty_summary_field_errors(block, "text", path)
+          nonempty_summary_field_errors(block, "text", path) + local_markdown_link_errors(block["text"], "#{path}.text")
         when "link"
           nonempty_summary_field_errors(block, "text", path) + valid_summary_url_errors(block, path)
         when "attachment"
@@ -143,7 +145,194 @@ module HQ
     end
 
     def valid_summary_url_errors(block, path)
-      valid_http_url?(block["url"]) ? [] : [error("invalid_url", "#{path}.url", "Link block requires an HTTP(S) URL")]
+      valid_http_url?(block["url"]) ? [] : [local_link_error("#{path}.url")]
+    end
+
+    def validate_markdown_links(payload)
+      return [] unless payload.is_a?(Hash)
+
+      errors = local_markdown_link_errors(payload["summary"], "$.summary")
+      errors.concat(local_markdown_link_errors(payload.dig("summary_sections"), "$.summary_sections"))
+      errors
+    end
+
+    def local_markdown_link_errors(value, path)
+      if value.is_a?(Array)
+        return value.each_with_index.flat_map { |item, index| local_markdown_link_errors(item, "#{path}[#{index}]") }
+      end
+      return [] unless value.is_a?(String)
+
+      source = markdown_without_code(value)
+      markdown_link_destinations(source).each_with_index.filter_map do |target, index|
+        next if valid_http_url?(markdown_unescape_destination(target))
+
+        local_link_error("#{path}.link[#{index}]")
+      end
+    end
+
+    def markdown_without_code(value)
+      value.gsub(/^\s*(`{3,}|~{3,}).*?^\s*\1\s*$/m, "")
+           .gsub(/(`+)(?!`).*?\1(?!`)/m, "")
+    end
+
+    def markdown_link_destinations(value)
+      references = {}
+      source_lines = []
+      source = markdown_mask_escaped_closing_brackets(value)
+      lines = markdown_list_context_lines(source.lines)
+      index = 0
+      while index < lines.length
+        definition = markdown_reference_definition(lines[index], continuation_line: lines[index + 1])
+        unless definition
+          source_lines << lines[index]
+          index += 1
+          next
+        end
+
+        label, target, consumed = definition
+        references[normalize_reference_label(label)] ||= target if target
+        index += consumed
+      end
+      source = source_lines.join
+
+      inline = source.scan(/(?<!!)\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)/).map do |angle, plain|
+        markdown_restore_escaped_closing_brackets(angle || plain)
+      end
+      reference_uses = source.scan(/(?<!!)\[([^\]]+)\]\[([^\]]*)\]/).filter_map do |label, reference|
+        references[normalize_reference_label(reference.empty? ? label : reference)]
+      end
+      shortcut_uses = source.gsub(/(?<!!)\[[^\]]+\]\[[^\]]*\]/, " ")
+                            .scan(/(?<!!)\[([^\]]+)\](?![\[(])/)
+                            .flatten.filter_map { |label| references[normalize_reference_label(label)] }
+      html = source.scan(/<a\b[^>]*\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>/i).map do |double, single, bare|
+        markdown_restore_escaped_closing_brackets(double || single || bare)
+      end
+      inline + reference_uses + shortcut_uses + html
+    end
+
+    def markdown_mask_escaped_closing_brackets(value)
+      characters = value.each_char.to_a
+      output = +""
+      index = 0
+      while index < characters.length
+        unless characters[index] == "\\"
+          output << characters[index]
+          index += 1
+          next
+        end
+
+        finish = index
+        finish += 1 while characters[finish] == "\\"
+        slashes = finish - index
+        if characters[finish] == "]" && slashes.odd?
+          output << ("\\" * (slashes / 2)) << ESCAPED_BRACKET_SENTINEL
+          index = finish + 1
+        else
+          output << ("\\" * slashes)
+          index = finish
+        end
+      end
+      output
+    end
+
+    def markdown_restore_escaped_closing_brackets(value)
+      value.to_s.gsub(ESCAPED_BRACKET_SENTINEL, "]")
+    end
+
+    def markdown_list_context_lines(lines)
+      list_contexts = []
+      lines.map do |line|
+        content = markdown_expand_leading_tabs(markdown_unquote_reference_line(line))
+        marker = /\A(?<indent> *)(?<marker>[*+-]|\d{1,9}[.)])(?<space>[ \t]+)(?<content>.*)\z/.match(content)
+        if marker
+          marker_indent = marker[:indent].length
+          list_contexts.pop while list_contexts.any? && list_contexts.last[:marker_indent] > marker_indent
+          marker_column = marker_indent + marker[:marker].length
+          whitespace_width = markdown_indent_width(marker[:space], marker_column) - marker_column
+          padding = whitespace_width <= 4 ? whitespace_width : 1
+          content_indent = marker_indent + marker[:marker].length + padding
+          list_contexts.pop while list_contexts.any? && list_contexts.last[:marker_indent] == marker_indent
+          list_contexts << { marker_indent:, content_indent: }
+          marker[:content]
+        elsif content.strip.empty?
+          content
+        elsif list_contexts.any?
+          indentation = content[/\A */].length
+          while list_contexts.any? && indentation < list_contexts.last[:content_indent]
+            list_contexts.pop
+          end
+          if list_contexts.any?
+            content.sub(/\A {#{list_contexts.last[:content_indent]}}/, "")
+          else
+            content
+          end
+        else
+          content
+        end
+      end
+    end
+
+    def markdown_expand_leading_tabs(value)
+      indentation = value[/\A[ \t]*/]
+      " " * markdown_indent_width(indentation) + value[indentation.length..]
+    end
+
+    def markdown_indent_width(value, column = 0)
+      value.each_char.reduce(column) do |width, character|
+        character == "\t" ? width + 4 - (width % 4) : width + 1
+      end
+    end
+
+    def markdown_reference_definition(line, continuation_line: nil)
+      content = markdown_unquote_reference_line(line)
+      match = /\A {0,3}\[([^\]]+)\]:[ \t]*(.*)\z/.match(content)
+      return unless match
+
+      label = match[1]
+      target = markdown_reference_target(match[2])
+      consumed = 1
+      if target.nil?
+        continuation = markdown_unquote_reference_line(continuation_line) if continuation_line
+        return [label, nil, consumed] unless continuation && !markdown_reference_definition_start?(continuation)
+
+        target = markdown_reference_target(continuation.strip)
+        consumed = 2 if target
+      end
+
+      [label, target, consumed]
+    end
+
+    def markdown_reference_definition_start?(line)
+      line.match?(/\A {0,3}\[[^\]]+\]:/)
+    end
+
+    def markdown_unquote_reference_line(line)
+      content = line.chomp
+      content = content.sub(/\A {0,3}>[ \t]?/, "") while content.match?(/\A {0,3}>/)
+      content
+    end
+
+    def markdown_reference_target(content)
+      value = content.to_s.strip
+      return if value.empty?
+
+      match = /\A<([^>]+)>/.match(value)
+      return markdown_restore_escaped_closing_brackets(match[1]) if match
+
+      markdown_restore_escaped_closing_brackets(value[/\A\S+/])
+    end
+
+    def normalize_reference_label(value)
+      markdown_restore_escaped_closing_brackets(value).strip.downcase.gsub(/\s+/, " ")
+    end
+
+    def markdown_unescape_destination(value)
+      value.to_s.gsub(/\\([[:punct:]])/, "\\1")
+    end
+
+    def local_link_error(path)
+      error("local_link_not_allowed", path,
+            "Summary link targets must use HTTP(S). For a local file, add a file attachment with its path.")
     end
 
     def attachment_target_errors(attachment, path)

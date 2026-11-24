@@ -13,6 +13,7 @@ module StructuredOutputValidationTest
   module_function
 
   FIXTURE_ROOT = File.expand_path("fixtures/structured_output", __dir__)
+  MARKED_REFERENCE_FIXTURE = File.expand_path("fixtures/summary_marked_reference_links.json", __dir__)
   SCHEMA_PATH = File.expand_path("../config/schemas/agent_result.json", __dir__)
 
   def run!
@@ -87,6 +88,86 @@ module StructuredOutputValidationTest
            paths.include?("$.summary_sections[2].attachment.path") &&
            paths.include?("$.summary_sections[3].attachment.url"),
            "expected unusable rich targets to report exact correction paths")
+
+    local_structured = validator.validate(
+      "status" => "success", "summary" => "See [local](docs/notes.md)",
+      "summary_sections" => [
+        { "type" => "text", "text" => "Open [file](../notes.md)", "url" => nil, "attachment" => nil },
+        { "type" => "link", "text" => "Local", "url" => "file:///tmp/notes.md", "attachment" => nil },
+        { "type" => "link", "text" => "External", "url" => "https://example.test/notes", "attachment" => nil },
+        { "type" => "attachment", "text" => nil, "url" => nil,
+          "attachment" => { "type" => "file", "title" => "Notes", "path" => "docs/notes.md", "url" => nil, "description" => nil, "mime_type" => nil } }
+      ],
+      "inquiry" => nil, "attachments" => nil, "memory_handoff" => nil
+    )
+    assert(local_structured.errors.count { |item| item["code"] == "local_link_not_allowed" } == 3,
+           "expected local links in summary, Markdown blocks, and link blocks to be rejected with guidance")
+    assert(local_structured.errors.all? { |item| item["message"].include?("file attachment") },
+           "expected local-link errors to guide agents to file attachments")
+
+    external_markdown = validator.validate(
+      "status" => "success", "summary" => "See [external](https://example.test/notes)",
+      "summary_sections" => [
+        { "type" => "text", "text" => "[external](https://example.test/notes)", "url" => nil, "attachment" => nil },
+        { "type" => "link", "text" => "External", "url" => "https://example.test/notes", "attachment" => nil }
+      ], "inquiry" => nil, "attachments" => nil, "memory_handoff" => nil
+    )
+    assert(external_markdown.valid?, "expected external Markdown and structured links to remain valid: #{external_markdown.errors.inspect}")
+
+    markdown_variants = [
+      ["[local][notes]\n\n[notes]: docs/notes.md", true],
+      ["[notes][]\n\n[notes]: docs/notes.md", true],
+      ["[notes]\n\n[notes]: docs/notes.md", true],
+      ["[notes][]\n\n[notes]: docs/notes.md\n[notes]: https://example.test/notes", true],
+      ["[notes]\n\n[notes]: https://example.test/notes\n[notes]: docs/notes.md", false],
+      ["> > [notes][]\n> >\n> > [notes]: docs/notes.md", true],
+      ["> > [notes]\n> >\n> > [notes]: https://example.test/notes", false],
+      ["[notes][]\n\n[notes]:\n  docs/notes.md\n[notes]: https://example.test/notes", true],
+      ["[notes][]\n\n[notes]:\n  https://example.test/notes\n[notes]: docs/notes.md", false],
+      ["> > [notes][]\n> >\n> > [notes]:\n> >   docs/notes.md", true],
+      ["> > [notes][]\n> >\n> > [notes]:\n> >   https://example.test/notes", false],
+      ['<a href="docs/notes.md">local file</a>', true],
+      ['[external](https://example.test/notes "Notes")', false],
+      ["[external](<https://example.test/notes>)", false],
+      ["[external][]\n\n[external]: <https://example.test/notes> \"Notes\"", false],
+      ["[external]\n\n[external]: https://example.test/notes \"Notes\"", false],
+      ["`[example](docs/notes.md)`\n\n```html\n<a href=\"docs/notes.md\">code</a>\n```", false]
+    ]
+    markdown_variants.each do |markdown, local_target|
+      result = validator.validate(
+        "status" => "success", "summary" => markdown,
+        "summary_sections" => [
+          { "type" => "text", "text" => markdown, "url" => nil, "attachment" => nil }
+        ], "inquiry" => nil, "attachments" => nil, "memory_handoff" => nil
+      )
+      if local_target
+        paths = result.errors.map { |item| item["path"] }
+        assert(paths.any? { |path| path.start_with?("$.summary.link") } &&
+               paths.any? { |path| path.start_with?("$.summary_sections[0].text.link") },
+               "expected Markdown local targets in both Summary locations to be rejected: #{markdown.inspect}")
+      else
+        assert(result.valid?, "expected valid external or code-only Markdown to pass: #{markdown.inspect}: #{result.errors.inspect}")
+      end
+    end
+
+    renderer_fixtures = JSON.parse(File.read(MARKED_REFERENCE_FIXTURE))
+    renderer_fixtures.fetch("cases").each do |fixture|
+      result = validator.validate(
+        "status" => "success", "summary" => fixture.fetch("markdown"),
+        "summary_sections" => [
+          { "type" => "text", "text" => fixture.fetch("markdown"), "url" => nil, "attachment" => nil }
+        ], "inquiry" => nil, "attachments" => nil, "memory_handoff" => nil
+      )
+      if fixture.fetch("local")
+        paths = result.errors.map { |item| item["path"] }
+        assert(paths.any? { |path| path.start_with?("$.summary.link") } &&
+               paths.any? { |path| path.start_with?("$.summary_sections[0].text.link") },
+               "expected renderer-derived local reference to fail in both Summary fields (#{fixture.fetch("name")}, hrefs: #{fixture.fetch("hrefs")})")
+      else
+        assert(result.valid?,
+               "expected renderer-derived external reference to pass (#{fixture.fetch("name")}, hrefs: #{fixture.fetch("hrefs")}); errors: #{result.errors.inspect}")
+      end
+    end
   end
 
   def assert_native_codex_schema_split_contract
