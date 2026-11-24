@@ -2,7 +2,7 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 
 module.exports = async ({ browser, baseUrl, captureDir }) => {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, hasTouch: true });
   const page = await context.newPage();
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
@@ -32,7 +32,25 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
   assert.equal(await delegate.evaluate(node => node.closest(".agent-row")?.classList.contains("archive-delegate-row")), true,
     "Delegate must use the standard agent block with a left checkbox segment");
   assert.equal(await delegate.evaluate(node => node.parentElement.firstElementChild === node), true,
-    "Delegate checkbox must be the first row segment");
+    "Delegate checkbox segment must be first in the standard agent block");
+  assert.equal(await delegate.evaluate(node => node.closest(".agent-row")?.tagName), "DIV",
+    "Delegate selection must use a separate control beside a non-clickable agent block");
+  assert.match(await delegate.getAttribute("aria-label"), /Archive .* with parent/,
+    "Delegate checkbox must have an accessible archive label");
+  const desktopTarget = await delegate.evaluate(node => {
+    const segment = node.closest(".archive-delegate-check");
+    const rect = segment.getBoundingClientRect();
+    const style = getComputedStyle(segment);
+    return { width: rect.width, height: rect.height, separator: style.borderRightWidth, borderStyle: style.borderRightStyle };
+  });
+  assert(desktopTarget.width >= 44 && desktopTarget.height >= 44,
+    `Desktop checkbox segment must be at least 44 by 44 CSS pixels: ${JSON.stringify(desktopTarget)}`);
+  assert.equal(desktopTarget.separator, "1px", "Checkbox segment must have a visible separator");
+  await delegate.focus();
+  await delegate.press("Space");
+  assert.equal(await delegate.isChecked(), false, "Keyboard Space must toggle the delegate checkbox");
+  await delegate.press("Space");
+  assert.equal(await delegate.isChecked(), true, "Keyboard Space must restore the delegate checkbox");
   if (captureDir) await page.screenshot({ path: path.join(captureDir, "archive-delegates-dialog.png") });
   await page.evaluate(parentKey => {
     state.bulkArchiveMode = true;
@@ -268,6 +286,16 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
   await page.goto(`${baseUrl}/ui#agent/${retainedParent.key}/archive`, { waitUntil: "networkidle" });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true,
     "Archive delegate rows must fit the mobile viewport");
+  const mobileCheckbox = page.locator(`[data-archive-delegate][value="${retainedFirst.key}"]`);
+  const mobileSegment = page.locator(`[data-archive-delegate][value="${retainedFirst.key}"]`).locator("xpath=ancestor::label[contains(@class, 'archive-delegate-check')]");
+  const mobileTarget = await mobileSegment.boundingBox();
+  assert(mobileTarget && mobileTarget.width >= 44 && mobileTarget.height >= 44,
+    `Mobile checkbox segment must be at least 44 by 44 CSS pixels: ${JSON.stringify(mobileTarget)}`);
+  await page.touchscreen.tap(mobileTarget.x + mobileTarget.width / 2, mobileTarget.y + mobileTarget.height / 2);
+  assert.equal(await mobileCheckbox.isChecked(), false, "A mobile tap on the checkbox segment must change selection");
+  await page.touchscreen.tap(mobileTarget.x + mobileTarget.width / 2, mobileTarget.y + mobileTarget.height / 2);
+  assert.equal(await mobileCheckbox.isChecked(), true, "A second mobile tap must restore selection");
+  await page.locator("#growl").waitFor({ state: "hidden", timeout: 10000 }).catch(() => {});
   if (captureDir) await page.screenshot({ path: path.join(captureDir, "archive-delegates-dialog-mobile.png") });
   assert.deepEqual(errors, [], `Unexpected page errors: ${errors.join("; ")}`);
   await context.close();
