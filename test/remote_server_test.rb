@@ -2782,22 +2782,34 @@ module RemoteServerTest
       limit_saved = service.update_agent_focus(key, "sections" => at_limit, "revision" => 1)
       assert(limit_saved["sections"][0]["subtitle"].length == 80 && limit_saved["sections"][0]["items"][0]["subtitle"].length == 80,
              "80-character Focus subtitles must be accepted")
-      legacy_sections = Marshal.load(Marshal.dump(sections))
-      legacy_sections[0]["subtitle"] = "s" * 81
-      legacy_sections[0]["items"][0]["subtitle"] = "i" * 85
+      legacy_sections = [
+        { "title" => "Legacy section", "subtitle" => "s" * 81, "icon" => "note", "items" => [
+          Marshal.load(Marshal.dump(sections[0]["items"][0])).merge("subtitle" => "i" * 85),
+          { "title" => "Other item", "subtitle" => "Short item", "attachments" => [] }
+        ] },
+        { "title" => "Other section", "subtitle" => "Short section", "icon" => "blocked", "items" => [] }
+      ]
       File.write(managed.focus_path, JSON.generate("revision" => 2, "updated_at" => Time.now.utc.iso8601(6), "sections" => legacy_sections))
       assert(service.agent_focus(key)["sections"] == legacy_sections, "legacy long section and item subtitles must remain readable")
-      edited_legacy_sections = Marshal.load(Marshal.dump(legacy_sections))
-      edited_legacy_sections[0]["title"] = "Edited section title"
-      edited_legacy_sections[0]["items"][0]["title"] = "Edited item title"
+      edited_legacy_sections = [
+        { "title" => "Inserted section", "subtitle" => "Short inserted section", "icon" => "note", "items" => [] },
+        legacy_sections[1],
+        legacy_sections[0].merge("items" => [legacy_sections[0]["items"][1],
+          { "title" => "Inserted item", "subtitle" => "Short inserted item", "attachments" => [] },
+          legacy_sections[0]["items"][0]])
+      ]
       saved = service.update_agent_focus(key, "sections" => edited_legacy_sections, "revision" => 2)
-      assert(saved["revision"] == 3, "editing unrelated content must advance the revision once")
-      assert(saved["sections"][0]["subtitle"] == legacy_sections[0]["subtitle"] &&
-             saved["sections"][0]["items"][0]["subtitle"] == legacy_sections[0]["items"][0]["subtitle"],
-             "unrelated edits must preserve legacy section and item subtitles")
+      assert(saved["revision"] == 3, "inserting and reordering unrelated content must advance the revision once")
+      assert(saved["sections"][2]["subtitle"] == legacy_sections[0]["subtitle"] &&
+             saved["sections"][2]["items"][2]["subtitle"] == legacy_sections[0]["items"][0]["subtitle"],
+             "insertion and reordering must preserve legacy section and item subtitles")
       [
-        [{ "title" => "Changed section", "subtitle" => "x" * 81, "items" => [] }],
-        [{ "title" => "Legacy", "subtitle" => legacy_sections[0]["subtitle"], "items" => [{ "title" => "Changed item", "subtitle" => "x" * 81 }] }]
+        [{ "title" => "New section", "subtitle" => "x" * 81, "items" => [] }],
+        [{ "title" => "New section", "items" => [{ "title" => "New item", "subtitle" => "x" * 81 }] }],
+        [legacy_sections[0].merge("subtitle" => "x" * 81), legacy_sections[1]],
+        [legacy_sections[0].merge("items" => [legacy_sections[0]["items"][0].merge("subtitle" => "x" * 81), legacy_sections[0]["items"][1]]), legacy_sections[1]],
+        edited_legacy_sections + [Marshal.load(Marshal.dump(legacy_sections[0]))],
+        [legacy_sections[0].merge("items" => legacy_sections[0]["items"] + [Marshal.load(Marshal.dump(legacy_sections[0]["items"][0]))]), legacy_sections[1]]
       ].each do |invalid_sections|
         begin
           service.update_agent_focus(key, "sections" => invalid_sections, "revision" => 3)
@@ -2816,8 +2828,8 @@ module RemoteServerTest
       assert(service.agent_focus(key)["revision"] == 3, "stale Focus writes must not change the revision")
       fresh = HQ::RemoteService.new(registry: registry)
       projected = fresh.agent(key)[:focus]
-      assert(projected["sections"][0]["items"][0]["title"] == "Edited item title", "Focus must survive service reload")
-      file = projected["sections"][0]["items"][0]["attachments"].last
+      assert(projected["sections"][2]["items"][2]["title"] == "Review changes", "Focus must survive service reload")
+      file = projected["sections"][2]["items"][2]["attachments"].last
       assert(file["blob_path"].to_s.start_with?("/attachments/"), "Focus files must use the existing attachment endpoint")
       assert(file["title"] == "Read report", "Focus attachment title must be retained")
       begin
