@@ -60,6 +60,74 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     "Default archive action must include the parent and all selected delegates");
   await page.waitForFunction(keys => keys.every(key => !state.agents.some(agent => agent.key === key)),
     [selectedParent.key, selectedChild.key]);
+
+  const retainedParent = await createAgent("Selection preservation parent fixture");
+  const retainedFirst = await createAgent("Selection preservation first fixture", retainedParent.key);
+  const retainedLast = await createAgent("Selection preservation last fixture", retainedParent.key);
+  await page.goto(`${baseUrl}/ui#agent/${retainedParent.key}/archive`, { waitUntil: "networkidle" });
+  const lastCheckbox = page.locator(`[data-archive-delegate][value="${retainedLast.key}"]`);
+  await lastCheckbox.uncheck();
+  await page.evaluate(({ parentKey, removeKey }) => {
+    state.agents.reverse();
+    renderAgentArchive(parentKey);
+    const removed = findAgent(removeKey);
+    state.agents = state.agents.filter(agent => agent.key !== removeKey);
+    delete state.agentDetails[removeKey];
+    if (removed) renderAgentArchive(parentKey);
+  }, { parentKey: retainedParent.key, removeKey: retainedFirst.key });
+  assert.equal(await page.locator(`[data-archive-delegate][value="${retainedLast.key}"]`).isChecked(), false,
+    "Excluded delegate must stay excluded after catalog reorder and removal");
+
+  const source = await page.evaluate(key => structuredClone(findAgent(key)), unrelated.key);
+  const peerParent = { ...source, key: "review-peer/peer-parent", resource_key: "peer-parent", name: "Peer archive parent fixture", server_key: "review-peer",
+    server_name: "Review peer", delegation: { parent: null, children: [] }, running: false, status: "idle" };
+  const peerChild = { ...source, key: "review-peer/peer-child", resource_key: "peer-child", name: "Peer running delegate fixture", server_key: "review-peer",
+    server_name: "Review peer", delegation: { parent: { key: peerParent.key, agent_key: "peer-parent", server_key: "review-peer" }, children: [] },
+    running: false, status: "idle" };
+  const peerRecords = new Map([["peer-parent", peerParent], ["peer-child", peerChild]]);
+  let childReads = 0;
+  await page.route("**/servers/review-peer/agents/**", async route => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (request.method() === "POST" && pathname === "/servers/review-peer/agents/archive") {
+      const keys = request.postDataJSON().keys;
+      await route.fulfill({ json: { archived: keys.map(agent_key => ({ agent_key })), skipped: [], failed: [] } });
+      return;
+    }
+    const rawKey = pathname.split("/").at(-1);
+    const record = peerRecords.get(rawKey);
+    if (!record) return route.fulfill({ status: 404, json: { error: "Synthetic peer agent missing" } });
+    const response = structuredClone(record);
+    if (rawKey === "peer-child") {
+      childReads += 1;
+      response.running = true;
+      response.status = "running";
+      response.current_run_id = childReads === 1 ? "synthetic-run-before-confirmation" : "synthetic-run-started-during-confirmation";
+    }
+    await route.fulfill({ json: { agent: response } });
+  });
+  await page.evaluate(({ parent, child }) => {
+    state.servers.push({ key: "review-peer", name: "Review peer", status: "online", stale: false });
+    state.agents = [parent, child, ...state.agents.filter(agent => agent.server_key !== "review-peer")];
+    state.agentDetails[parent.key] = parent;
+    state.agentDetails[child.key] = child;
+    navigate({ type: "agentArchive", key: parent.key });
+  }, { parent: peerParent, child: peerChild });
+  await page.locator("[data-agent-action='archive']").waitFor();
+  const peerArchiveRequest = page.waitForRequest(request =>
+    new URL(request.url()).pathname === "/servers/review-peer/agents/archive" && request.method() === "POST");
+  await page.locator("[data-agent-action='archive']").click();
+  await page.locator("[data-confirmation-accept]").waitFor();
+  const firstConfirmation = await page.locator("#confirmation-description").innerText();
+  assert.match(firstConfirmation, /Peer running delegate fixture \(running\)/,
+    "Fresh delegate status must appear in the active-work confirmation");
+  await page.locator("[data-confirmation-accept]").click();
+  await page.locator("[data-confirmation-accept]").waitFor();
+  await page.locator("[data-confirmation-accept]").click();
+  const peerRequest = await peerArchiveRequest;
+  assert.deepEqual(peerRequest.postDataJSON().keys, ["peer-parent", "peer-child"],
+    "Peer archive request must use raw keys on the peer server route");
+  assert(childReads >= 3, "Status change during confirmation must trigger a fresh read and confirmation");
   assert.deepEqual(errors, [], `Unexpected page errors: ${errors.join("; ")}`);
   await context.close();
 };

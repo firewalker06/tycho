@@ -2,22 +2,21 @@
 
 ## Scope
 
-This change adds a selection step to the existing Remote UI archive page for active direct delegates. It uses the existing single-agent archive route when the selection is empty and the existing bulk archive route when one or more delegates are selected.
+This change adds a selection step to the existing Remote UI archive page for active direct delegates. All delegates are selected by default. The existing single-agent archive route handles an empty selection. The existing server-local bulk archive behavior handles selected delegates.
 
-## Review points
+## Review blockers addressed
 
-- Delegate choices come from the active agent catalog and must have the parent relationship key and server key of the parent being archived.
-- Every listed delegate is selected on first render.
-- Cancel and Clone keep their existing actions.
-- The batch result restores agents that the server did not confirm as archived.
-- The existing running and queued work confirmation remains in place.
+- Selected delegates now use the parent agent's server route, headers, raw keys, and response scope.
+- Each checkbox has a stable state key based on its server-scoped client key. Exclusions stay in place when the catalog order or membership changes.
+- The archive action reads fresh detail for the parent and selected delegates. It asks for explicit confirmation when any selected agent has a run, queued work, or an open inquiry. It reads status again after confirmation and asks again when the work state changes.
 
 ## Verification
 
-- Synthetic Chrome fixture: default selection, Cancel, unchecked delegate, parent-only archive, all-selected parent-plus-delegate archive, and unrelated-agent preservation passed.
+- Synthetic Chrome fixture: default selection, Cancel, deselected delegate, parent-only archive, selected parent-plus-delegate archive, reorder/removal preservation, peer route and key scope, running-work confirmation, and a run-status change while confirmation was open passed.
 - `bin/test` passed.
+- Exact-head `signoff/tycho-bin-test` status is green.
 - Screenshot: `docs/screenshots/archive-delegates-dialog.png`.
 
 ## Independent review status
 
-This is a review handoff for the draft pull request. An independent reviewer has not reviewed the change yet. The PR is a draft so a formal PR review has not been started.
+The fixes are ready for independent review on the draft pull request. Do not merge until review is complete.

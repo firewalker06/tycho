@@ -145,8 +145,8 @@ module ArchiveDelegationCallbacksTest
   def assert_remote_ui_contract
     source = File.read(File.expand_path("../lib/hq/remote_ui/assets/app.js", __dir__))
     required = [
-      "Archive with callback history",
-      "data-confirm=\"Archive with",
+      "callbackArchive ?",
+      "async function confirmArchiveWork(keys)",
       'entry.source === "delegation_callback"'
     ]
     missing = required.reject { |text| source.include?(text) }
