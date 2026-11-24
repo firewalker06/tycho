@@ -260,15 +260,6 @@ module HQ
       true
     end
 
-    def ensure_agent_system_context_prompt!(created_at: @created_at || Time.now)
-      memory_store.insert_system_prompt_once!(
-        current_agent_system_context,
-        created_at:,
-        prompt_role: "agent_context",
-        before_prompt_role: "base"
-      )
-    end
-
     def ensure_schedule_context_prompt!(content, created_at: Time.now)
       text = content.to_s.strip
       return false if text.empty?
@@ -3308,6 +3299,7 @@ module HQ
                        "Use at most 3 words and fewer than 40 characters. Only a default title can change; " \
                        "an existing custom title is preserved. Otherwise return null or omit the field."].join("\n\n")
       end
+      base_prompt = append_agent_system_context(base_prompt)
       with_execution_guidance(base_prompt, response_style:, include_hidden_guidance:)
     end
 
@@ -3317,6 +3309,14 @@ module HQ
         parent: @delegation_parent,
         tycho_skill_installed: tycho_skill_installed?
       )
+    end
+
+    def append_agent_system_context(prompt)
+      text = prompt.to_s.rstrip
+      context = current_agent_system_context
+      return text if text.include?(context)
+
+      [text, context].reject(&:empty?).join("\n\n")
     end
 
     def tycho_skill_installed?

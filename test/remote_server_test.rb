@@ -43,7 +43,7 @@ module RemoteServerTest
     assert_shutdown_closes_stalled_client_sockets
     assert_remote_agent_delegation_lifecycle
     assert_detail_resolves_only_referenced_archives
-    assert_remote_conversation_persists_agent_system_context_once
+    assert_remote_conversation_keeps_agent_system_context_out_of_memory
     assert_remote_conversation_persists_installed_tycho_skill_context
     assert_remote_user_message_auto_resumes_awaiting_schedule
     assert_remote_agent_response_style_selection_is_independent
@@ -526,7 +526,7 @@ module RemoteServerTest
     end
   end
 
-  def assert_remote_conversation_persists_agent_system_context_once
+  def assert_remote_conversation_keeps_agent_system_context_out_of_memory
     with_remote_temp_store do |dir|
       workspace = File.join(dir, "workspace")
       write_project_workspace(workspace)
@@ -545,21 +545,18 @@ module RemoteServerTest
           block[:kind] == "message" && block[:role] == "system" &&
             block[:content].include?("Tycho managed-agent context (trusted):")
         end
-        assert(contexts.length == 1, "expected Remote UI conversation for #{key} to render one Tycho system-context event")
-        content = contexts.first[:content]
-        assert(content.include?("Tycho managed-agent context (trusted):") &&
-               content.include?("Your agent key: #{key}") && content.include?(parent_state),
-               "expected Remote UI system context for #{key} to match trusted launch identity")
+        assert(contexts.empty?, "expected Remote UI conversation for #{key} to omit injected Tycho context")
 
         agent = service.send(:load_all_agents).find { |candidate| candidate.key == key }
         prompt = agent.send(:prompt_for_execution, response_style: "", include_hidden_guidance: false)
-        assert(prompt.scan("Tycho managed-agent context (trusted):").length == 1,
-               "expected #{key} harness prompt to use the same single persisted context")
+        assert(prompt.scan("Tycho managed-agent context (trusted):").length == 1 &&
+               prompt.include?("Your agent key: #{key}") && prompt.include?(parent_state),
+               "expected #{key} harness prompt to include the correct trusted identity once")
         service.conversation(key)
         reloaded = service.conversation(key).count do |block|
           block[:role] == "system" && block[:content].include?("Tycho managed-agent context (trusted):")
         end
-        assert(reloaded == 1, "expected repeated Remote UI loads to avoid duplicating #{key} context")
+        assert(reloaded.zero?, "expected repeated Remote UI loads to keep #{key} context out of conversation history")
       end
     end
   end
@@ -585,12 +582,14 @@ module RemoteServerTest
         )
 
         [root, child].each do |agent|
-          contexts = service.conversation(agent[:key]).select do |block|
+          history_contexts = service.conversation(agent[:key]).select do |block|
             block[:role] == "system" && block[:content].include?("Tycho managed-agent context (trusted):")
           end
-          assert(contexts.length == 1, "expected one installed-skill identity event for #{agent[:key]}")
-          assert(contexts.first[:content].scan("The Tycho skill is installed and usable").length == 1,
-                 "expected installed Tycho skill to be visible in #{agent[:key]} Remote UI context")
+          assert(history_contexts.empty?, "expected installed-skill context to stay out of #{agent[:key]} conversation history")
+          stored_agent = service.send(:load_all_agents).find { |candidate| candidate.key == agent[:key] }
+          prompt = stored_agent.send(:prompt_for_execution, response_style: "", include_hidden_guidance: false)
+          assert(prompt.scan("The Tycho skill is installed and usable").length == 1,
+                 "expected installed Tycho skill to appear once in #{agent[:key]} execution context")
         end
       ensure
         ENV["TYCHO_SKILLS_HOME"] = previous_skills_home
