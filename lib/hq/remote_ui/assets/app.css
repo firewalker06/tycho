@@ -3239,18 +3239,19 @@ button[data-toggle-pr-diff-full-view],
 }
 
 .archive-delegate-row {
-  grid-template-columns: 48px auto minmax(0, 1fr) auto;
-  gap: 10px;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 0;
+  overflow: hidden;
+  padding: 0;
 }
 
 .archive-delegate-check {
   display: grid;
   align-self: stretch;
-  min-width: 44px;
-  min-height: 44px;
-  margin: -4px 0 -4px -4px;
+  width: 52px;
+  min-width: 52px;
+  min-height: 52px;
   border-right: 1px solid var(--border);
-  border-radius: 6px 0 0 6px;
   background: color-mix(in srgb, var(--panel-soft) 48%, var(--panel));
   cursor: pointer;
   place-items: center;
@@ -3266,6 +3267,15 @@ button[data-toggle-pr-diff-full-view],
   height: 18px;
   margin: 0;
   accent-color: var(--accent);
+}
+
+.archive-delegate-agent-block {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px;
 }
 
 .archive-delegate-option {

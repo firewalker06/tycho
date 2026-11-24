@@ -39,13 +39,36 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     "Delegate checkbox must have an accessible archive label");
   const desktopTarget = await delegate.evaluate(node => {
     const segment = node.closest(".archive-delegate-check");
+    const row = node.closest(".archive-delegate-row");
+    const block = row.querySelector(".archive-delegate-agent-block");
     const rect = segment.getBoundingClientRect();
+    const blockRect = block.getBoundingClientRect();
+    const rowStyle = getComputedStyle(row);
     const style = getComputedStyle(segment);
-    return { width: rect.width, height: rect.height, separator: style.borderRightWidth, borderStyle: style.borderRightStyle };
+    return {
+      width: rect.width,
+      height: rect.height,
+      separator: style.borderRightWidth,
+      borderStyle: style.borderRightStyle,
+      edgeGap: blockRect.left - rect.right,
+      columnGap: rowStyle.columnGap,
+      padding: rowStyle.padding,
+      segmentRadius: style.borderRadius,
+      blockRadius: getComputedStyle(block).borderRadius,
+      outerRadius: rowStyle.borderRadius,
+      overflow: rowStyle.overflow,
+    };
   });
-  assert(desktopTarget.width >= 44 && desktopTarget.height >= 44,
-    `Desktop checkbox segment must be at least 44 by 44 CSS pixels: ${JSON.stringify(desktopTarget)}`);
+  assert(desktopTarget.width >= 52 && desktopTarget.height >= 52,
+    `Desktop checkbox segment must be at least 52 by 52 CSS pixels: ${JSON.stringify(desktopTarget)}`);
   assert.equal(desktopTarget.separator, "1px", "Checkbox segment must have a visible separator");
+  assert.equal(desktopTarget.edgeGap, 0, "Checkbox and agent block outer edges must join without a gap");
+  assert.equal(desktopTarget.columnGap, "0px", "Joined button group must have no grid gap");
+  assert.equal(desktopTarget.padding, "0px", "Joined button group outer row must have no padding");
+  assert.equal(desktopTarget.segmentRadius, "0px", "Checkbox segment must not round its inner corners");
+  assert.equal(desktopTarget.blockRadius, "0px", "Agent block must not round its inner corners");
+  assert.notEqual(desktopTarget.outerRadius, "0px", "Joined button group must keep rounded outer corners");
+  assert.equal(desktopTarget.overflow, "hidden", "Outer corners must clip both joined segments");
   await delegate.focus();
   await delegate.press("Space");
   assert.equal(await delegate.isChecked(), false, "Keyboard Space must toggle the delegate checkbox");
@@ -289,8 +312,8 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
   const mobileCheckbox = page.locator(`[data-archive-delegate][value="${retainedFirst.key}"]`);
   const mobileSegment = page.locator(`[data-archive-delegate][value="${retainedFirst.key}"]`).locator("xpath=ancestor::label[contains(@class, 'archive-delegate-check')]");
   const mobileTarget = await mobileSegment.boundingBox();
-  assert(mobileTarget && mobileTarget.width >= 44 && mobileTarget.height >= 44,
-    `Mobile checkbox segment must be at least 44 by 44 CSS pixels: ${JSON.stringify(mobileTarget)}`);
+  assert(mobileTarget && mobileTarget.width >= 52 && mobileTarget.height >= 52,
+    `Mobile checkbox segment must be at least 52 by 52 CSS pixels: ${JSON.stringify(mobileTarget)}`);
   await page.touchscreen.tap(mobileTarget.x + mobileTarget.width / 2, mobileTarget.y + mobileTarget.height / 2);
   assert.equal(await mobileCheckbox.isChecked(), false, "A mobile tap on the checkbox segment must change selection");
   await page.touchscreen.tap(mobileTarget.x + mobileTarget.width / 2, mobileTarget.y + mobileTarget.height / 2);
