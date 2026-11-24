@@ -2792,21 +2792,34 @@ body[data-route-tab="schedules"] .header-more-panel {
 .agent-row-status {
   position: relative;
   display: inline-grid;
-  width: 18px;
-  height: 18px;
+  width: 42px;
+  height: 42px;
   place-items: center;
-  flex: 0 0 auto;
+  flex: 0 0 42px;
 }
 
 .agent-row-status > .agent-status-icon,
 .agent-row-status > .status-mark {
-  width: 18px;
-  height: 18px;
+  box-sizing: border-box;
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
 }
 
-.agent-row-status.selectable-agent-row-status {
+.agent-row-status > .status-mark {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.agent-row-status > :is(.agent-status-icon, .status-mark) > .ui-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.selectable-agent-row-leading {
   display: inline-flex;
-  width: auto;
+  align-items: center;
   gap: 4px;
 }
 
@@ -3137,12 +3150,14 @@ button[data-toggle-pr-diff-full-view],
 
 .delegated-running-count {
   position: absolute;
-  top: -4px;
-  right: -6px;
+  top: 0;
+  left: calc(50% + 11px);
   display: inline-grid;
+  box-sizing: border-box;
   min-width: 18px;
-  width: 18px;
   height: 18px;
+  width: max-content;
+  padding: 0 3px;
   place-items: center;
   border-radius: 999px;
   background: var(--accent);
@@ -3150,6 +3165,7 @@ button[data-toggle-pr-diff-full-view],
   font-size: 11px;
   font-weight: 700;
   line-height: 1;
+  white-space: nowrap;
 }
 
 .agent-ledger.ui-surface {

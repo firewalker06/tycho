@@ -59,6 +59,9 @@ module RemoteUIAssetSnapshotTest
     raise "project detail rows must keep navigation during Agents selection mode" unless javascript.include?('agents.map(agent => renderAgentRow(agent, { useStandardRow: true }))')
     raise "Agents project rows must use selectable tree rows" unless javascript.include?("trees.map(tree => renderAgentTree(tree, query)).join(\"\")")
     raise "delegated running counts need a visible badge" unless css.include?(".delegated-running-count {")
+    raise "delegated status icons must use the shared 42px container" unless css.include?(".agent-row-status {\n  position: relative;\n  display: inline-grid;\n  width: 42px;\n  height: 42px;")
+    raise "delegated status icons must be 20px and centered" unless css.include?(".agent-row-status > .agent-status-icon,\n.agent-row-status > .status-mark {\n  box-sizing: border-box;\n  width: 20px;")
+    raise "delegated count badge must clear the centered icon" unless css.include?("left: calc(50% + 11px);")
     raise "delegated disclosure controls need an integrated parent row" unless css.include?(".agent-delegation-parent-row {")
   end
 

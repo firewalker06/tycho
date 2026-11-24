@@ -67,6 +67,15 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           crossProjectChild.status = "idle";
           parent.delegation.children.push({ key: crossProjectChild.key, agent_key: crossProjectChild.key });
           state.agents.push(crossProjectChild);
+          for (let index = 2; index <= 12; index += 1) {
+            const runningChild = structuredClone(state.agents.find(agent => agent.key === "fixture-child"));
+            runningChild.key = runningChild.resource_key = `fixture-running-${index}`;
+            runningChild.name = `Running delegate ${index}`;
+            runningChild.running = true;
+            runningChild.status = "running";
+            parent.delegation.children.push({ key: runningChild.key, agent_key: runningChild.key });
+            state.agents.push(runningChild);
+          }
           window.collapseFixtureAgents = structuredClone(state.agents);
         }
         state.servers = [{ key: "local", name: "Local", local: true, ready: true, status: "ready" }];
@@ -83,7 +92,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
               !crossProjectChild || !crossProjectChild.closest(".agent-delegation-children").hidden) {
             throw new Error(`Agents sort ${sort} did not group and collapse the running child`);
           }
-          if (sortedCount.textContent.trim() !== "1") throw new Error(`Agents sort ${sort} running count was ${sortedCount.textContent}`);
+          if (sortedCount.textContent.trim() !== "12") throw new Error(`Agents sort ${sort} running count was ${sortedCount.textContent}`);
           if (sort.startsWith("project_") && Number(document.querySelector("#agent-results-summary")?.textContent.match(/^(\d+)/)?.[1]) !== state.agents.length) {
             throw new Error(`Agents project sort result count must include delegated children: expected ${state.agents.length}`);
           }
@@ -103,7 +112,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         let status = agentsTree?.querySelector(".agent-status-icon.running");
         if (!agentsTree || !agentsChild || !badge || !status) throw new Error("Agents list did not show collapsed parent with running count");
         if (!agentsChild.closest(".agent-delegation-children").hidden) throw new Error("Agents list child row was not collapsed");
-        if (badge.textContent.trim() !== "1") throw new Error(`Agents list running count was ${badge.textContent}`);
+        if (badge.textContent.trim() !== "12") throw new Error(`Agents list running count was ${badge.textContent}`);
         const toggle = agentsTree.querySelector("[data-toggle-agent-tree]");
         const mainRow = agentsTree.querySelector(":scope > .agent-delegation-parent-row > [data-open-agent]");
         if (mainRow.parentElement !== toggle.parentElement || mainRow.contains(toggle) || mainRow.querySelector("button button")) {
@@ -114,19 +123,25 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           const rect = node => { const bounds = node.getBoundingClientRect(); return { x: bounds.x, y: bounds.y, right: bounds.right, width: bounds.width, height: bounds.height }; };
           const toggleStyle = getComputedStyle(toggle);
           const treeStyle = getComputedStyle(agentsTree);
+          const statusContainer = mainRow.querySelector(".agent-row-status");
           const statusIcon = mainRow.querySelector(".agent-status-icon.running");
           const countBadge = mainRow.querySelector(".delegated-running-count");
-          if (!statusIcon || !countBadge) throw new Error("Running count must appear with the parent status icon");
+          if (!statusContainer || !statusIcon || !countBadge) throw new Error("Running count must appear with the parent status icon");
+          const containerBounds = rect(statusContainer);
           const iconBounds = rect(statusIcon);
           const badgeBounds = rect(countBadge);
           return { parent: rect(parentRow), main: rect(mainRow), toggle: rect(toggle), tree: rect(agentsTree),
             divider: Number.parseFloat(toggleStyle.borderLeftWidth), outerRight: Number.parseFloat(treeStyle.borderRightWidth),
-            outerTop: Number.parseFloat(treeStyle.borderTopWidth), icon: iconBounds, badge: badgeBounds };
+            outerTop: Number.parseFloat(treeStyle.borderTopWidth), container: containerBounds, icon: iconBounds, badge: badgeBounds };
         })();
         if (Math.abs(rowFacts.main.right - rowFacts.toggle.x) > 1 || Math.abs(rowFacts.main.y - rowFacts.toggle.y) > 1 ||
             Math.abs(rowFacts.main.height - rowFacts.toggle.height) > 1 || Math.abs(rowFacts.toggle.right + rowFacts.outerRight - rowFacts.tree.right) > 1 ||
             Math.abs(rowFacts.toggle.y - rowFacts.tree.y - rowFacts.outerTop) > 1 || rowFacts.toggle.height < 44 || rowFacts.toggle.width < 44 ||
-            rowFacts.divider < 1 || !(rowFacts.badge.x < rowFacts.icon.x + rowFacts.icon.width && rowFacts.badge.right > rowFacts.icon.x)) {
+            rowFacts.divider < 1 || Math.abs(rowFacts.container.width - 42) > 0.5 || Math.abs(rowFacts.container.height - 42) > 0.5 ||
+            Math.abs(rowFacts.icon.width - 20) > 0.5 || Math.abs(rowFacts.icon.height - 20) > 0.5 ||
+            Math.abs((rowFacts.icon.x + rowFacts.icon.width / 2) - (rowFacts.container.x + rowFacts.container.width / 2)) > 0.5 ||
+            Math.abs((rowFacts.icon.y + rowFacts.icon.height / 2) - (rowFacts.container.y + rowFacts.container.height / 2)) > 0.5 ||
+            rowFacts.badge.x < rowFacts.icon.right || rowFacts.badge.height !== 18 || rowFacts.badge.width < 18) {
           throw new Error(`Delegated parent actions or running badge are misaligned: ${JSON.stringify(rowFacts)}`);
         }
         toggle.click();
@@ -186,7 +201,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         state.route = { type: "tab", tab: "now" };
         renderNow();
         const nowTree = document.querySelector(`[data-agent-tree="${CSS.escape(key)}"]`);
-        if (!nowTree || !nowTree.querySelector(".agent-status-icon.running") || nowTree.querySelector(".delegated-running-count")?.textContent.trim() !== "1") {
+        if (!nowTree || !nowTree.querySelector(".agent-status-icon.running") || nowTree.querySelector(".delegated-running-count")?.textContent.trim() !== "12") {
           throw new Error(`Now list did not show delegated running parent and count: root=${key}, root delegation=${JSON.stringify(findAgent(key)?.delegation)}, child=${JSON.stringify(findAgent("fixture-child")?.delegation)}, html=${document.querySelector("#view")?.innerHTML.slice(0, 1800)}`);
         }
         const orphanRow = document.querySelector('[data-open-agent="fixture-orphan"]');
