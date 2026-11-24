@@ -6,6 +6,9 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
   const page = await context.newPage();
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
+  page.on("console", message => {
+    if (message.type() === "error" && !message.text().includes("409 (Conflict)")) errors.push(message.text());
+  });
   const createAgent = async (name, parentAgentKey = "") => {
     const response = await context.request.post(`${baseUrl}/agents`, { data: {
       project_key: "web", template_key: "custom", agent: "codex", name,
@@ -21,6 +24,10 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
   const delegate = page.locator("[data-archive-delegate]");
   assert.equal(await delegate.count(), 1, "Archive dialog must list only the direct active delegate");
   assert.equal(await delegate.isChecked(), true, "Direct delegate must be selected by default");
+  assert.equal(await delegate.evaluate(node => node.closest(".agent-row")?.classList.contains("archive-delegate-row")), true,
+    "Delegate must use the standard agent block with a left checkbox segment");
+  assert.equal(await delegate.evaluate(node => node.parentElement.firstElementChild === node), true,
+    "Delegate checkbox must be the first row segment");
   if (captureDir) await page.screenshot({ path: path.join(captureDir, "archive-delegates-dialog.png") });
 
   await page.locator("[data-open-agent]").filter({ hasText: "Cancel" }).click();
@@ -31,15 +38,19 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
 
   await page.goto(`${baseUrl}/ui#agent/${parent.key}/archive`, { waitUntil: "networkidle" });
   await page.locator("[data-archive-delegate]").uncheck();
+  await page.locator("[data-agent-action='archive']").click();
+  await page.locator("[data-confirmation-accept]").waitFor();
+  assert.match(await page.locator("#confirmation-title").innerText(), /Archive selected agents/);
+  assert.doesNotMatch(await page.locator("#confirmation-description").innerText(), /running|queued|inquiry/i,
+    "Main confirmation must not show work status or prompt for a separate abort decision");
   const archiveRequestPromise = page.waitForRequest(request =>
     new URL(request.url()).pathname.endsWith(`/agents/${parent.key}/archive`) && request.method() === "POST");
-  await page.locator("[data-agent-action='archive']").click();
-  const confirmation = page.locator("[data-confirmation-accept]");
-  if (await confirmation.isVisible().catch(() => false)) await confirmation.click();
+  await page.locator("[data-confirmation-accept]").click();
   const archiveRequest = await Promise.race([
     archiveRequestPromise,
     page.waitForTimeout(3000).then(() => null),
-  ]);
+  ]).catch(() => null);
+  assert.deepEqual(errors, [], `Page errors before archive: ${errors.join("; ")}`);
   assert(archiveRequest, `Archive request missing; button=${await page.locator("[data-agent-action='archive']").count()}, dialog=${await page.locator("#confirmation-dialog").evaluate(node => node.open).catch(() => false)}, growl=${await page.locator("#growl").innerText().catch(() => "")}`);
   await page.waitForFunction(key => !state.agents.some(agent => agent.key === key), parent.key);
   assert.equal(await page.evaluate(key => state.agents.some(agent => agent.key === key), child.key), true,
@@ -52,9 +63,11 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
   await page.goto(`${baseUrl}/ui#agent/${selectedParent.key}/archive`, { waitUntil: "networkidle" });
   assert.equal(await page.locator("[data-archive-delegate]").isChecked(), true,
     "Delegate must remain selected for the default archive action");
+  await page.locator("[data-agent-action='archive']").click();
+  await page.locator("[data-confirmation-accept]").waitFor();
   const bulkRequestPromise = page.waitForRequest(request =>
     new URL(request.url()).pathname.endsWith("/agents/archive") && request.method() === "POST");
-  await page.locator("[data-agent-action='archive']").click();
+  await page.locator("[data-confirmation-accept]").click();
   const bulkRequest = await bulkRequestPromise;
   assert.deepEqual(JSON.parse(bulkRequest.postData()).keys, [selectedParent.key, selectedChild.key],
     "Default archive action must include the parent and all selected delegates");
@@ -123,13 +136,7 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     const rawKey = pathname.split("/").at(-1);
     const record = peerRecords.get(rawKey);
     if (!record) return route.fulfill({ status: 404, json: { error: "Synthetic peer agent missing" } });
-    if (rawKey === "peer-child") {
-      childReads += 1;
-      if (childReads === 2) {
-        record.current_run_id = "synthetic-run-b";
-        record.archive_work_token = "peer-child-run-b";
-      }
-    }
+    if (rawKey === "peer-child") childReads += 1;
     const response = structuredClone(record);
     if (rawKey === "peer-child") {
       response.running = true;
@@ -148,18 +155,26 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
   await page.locator("[data-agent-action='archive']").click();
   await page.locator("[data-confirmation-accept]").waitFor();
   const firstConfirmation = await page.locator("#confirmation-description").innerText();
-  assert.match(firstConfirmation, /Peer running delegate fixture \(running\)/,
-    "Fresh delegate status must appear in the active-work confirmation");
+  assert.match(firstConfirmation, /stop and archive/,
+    "The main confirmation must authorize stopping and archiving selected agents");
+  assert.doesNotMatch(firstConfirmation, /running|queued|inquiry/i,
+    "The confirmation must not expose status details or use a separate abort prompt");
   await page.locator("[data-confirmation-accept]").click();
+  await page.locator("[data-confirmation-accept]").waitFor({ state: "hidden" });
   await page.locator("[data-confirmation-accept]").waitFor();
-  await page.locator("[data-confirmation-accept]").click();
-  await page.locator("[data-confirmation-accept]").waitFor();
+  const retryConfirmation = await page.locator("#confirmation-description").innerText();
+  assert.equal(retryConfirmation, firstConfirmation, "A work race must repeat the same main confirmation");
   await page.locator("[data-confirmation-accept]").click();
   for (let attempt = 0; attempt < 50 && archivePosts < 2; attempt += 1) await page.waitForTimeout(100);
   assert.deepEqual(peerArchivePayloads.at(-1).keys, ["peer-parent", "peer-child"],
     "Peer archive request must use raw keys on the peer server route");
-  assert.equal(childReads, 5, "Held-read and archive-conflict races must each trigger fresh reads");
+  assert.equal(childReads, 2, "Archive-conflict race must trigger fresh reads before retry");
   assert.equal(archivePosts, 2, "A server conflict must not archive until the user confirms again");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${baseUrl}/ui#agent/${retainedParent.key}/archive`, { waitUntil: "networkidle" });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true,
+    "Archive delegate rows must fit the mobile viewport");
+  if (captureDir) await page.screenshot({ path: path.join(captureDir, "archive-delegates-dialog-mobile.png") });
   assert.deepEqual(errors, [], `Unexpected page errors: ${errors.join("; ")}`);
   await context.close();
 };

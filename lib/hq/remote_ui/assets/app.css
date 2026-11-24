@@ -3238,6 +3238,11 @@ button[data-toggle-pr-diff-full-view],
   color: var(--text-muted);
 }
 
+.archive-delegate-row {
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  cursor: pointer;
+}
+
 .archive-delegate-option {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;

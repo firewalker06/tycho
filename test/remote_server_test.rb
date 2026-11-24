@@ -50,6 +50,7 @@ module RemoteServerTest
     assert_remote_archive_reconciles_scheduled_agent_state
     assert_remote_agent_bulk_archive
     assert_archive_confirmation_is_bound_to_current_work
+    assert_guarded_bulk_archive_stops_and_aborts_selected_work
     assert_remote_schedule_session_archive_routes
     assert_remote_agent_clone_archives_source_with_editable_name
     assert_remote_context_pressure_clone_replaces_schedule_target
@@ -2107,6 +2108,72 @@ module RemoteServerTest
       active = service.agents.map { |agent| agent[:key] }
       assert(active.include?(parent[:key]) && active.include?(child[:key]),
              "a work-state conflict must leave every selected agent active")
+    ensure
+      if running_pid
+        begin
+          Process.kill("TERM", -running_pid)
+          Process.wait(running_pid)
+        rescue Errno::ESRCH, Errno::EPERM, Errno::ECHILD
+          nil
+        end
+      end
+    end
+  end
+
+  def assert_guarded_bulk_archive_stops_and_aborts_selected_work
+    running_pid = nil
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace))
+      parent = service.create_agent(
+        "project_key" => "web", "template_key" => "custom", "name" => "Archive workflow parent",
+        "prompt" => "Synthetic archive lifecycle.", "agent" => "codex"
+      )
+      running = service.create_agent(
+        "project_key" => "web", "template_key" => "custom", "name" => "Archive workflow running delegate",
+        "prompt" => "Synthetic running work.", "agent" => "codex", "parent_agent_key" => parent[:key]
+      )
+      queued = service.create_agent(
+        "project_key" => "web", "template_key" => "custom", "name" => "Archive workflow queued delegate",
+        "prompt" => "Synthetic queued work.", "agent" => "codex", "parent_agent_key" => parent[:key]
+      )
+      [parent, running, queued].each { |agent| File.write(agent[:log_path], "#{agent[:name]}\n") }
+      store = HQ::AgentStore.new(service.instance_variable_get(:@projects))
+      store.update_agent!(queued[:key]) do |agent|
+        agent.enqueue_prompt!(id: "archive-queued-work", prompt: "Synthetic queued request", source: "user")
+      end
+      running_pid = Process.spawn(RbConfig.ruby, "-e", "sleep 30", pgroup: true, out: File::NULL, err: File::NULL)
+      records = JSON.parse(File.read(HQ::AGENTS_FILE))
+      records.each do |record|
+        next unless record["key"] == running[:key]
+
+        record["pid"] = running_pid
+        record["started_at"] = Time.now.iso8601
+        record["runs"] << {
+          "started_at" => Time.now.iso8601, "finished_at" => nil, "exit_code" => nil,
+          "status" => "running", "log_path" => record["log_path"], "command" => "synthetic",
+          "run_id" => "synthetic-running-archive"
+        }
+      end
+      File.write(HQ::AGENTS_FILE, JSON.pretty_generate(records))
+      keys = [parent[:key], running[:key], queued[:key]]
+      expected = keys.to_h { |key| [key, service.agent(key)[:archive_work_token]] }
+      response = HQ::RemoteServer.new.send(
+        :route, service, "POST", "/agents/archive",
+        { "keys" => keys, "expected_work_states" => expected }, nil
+      )
+      assert(response.dig(:body, :archived).map { |item| item[:agent_key] } == keys,
+             "expected one confirmed archive to stop and archive every selected agent")
+      assert(service.agents.empty?, "expected all selected agents to leave active state")
+      assert(Process.waitpid(running_pid, Process::WNOHANG) == running_pid,
+             "expected the running delegate process to stop before archive")
+      queued_archive = HQ::AgentArchiveStore.new(root: HQ::AGENT_ARCHIVE_DIR).find(queued[:key])&.agent
+      queued_events = File.readlines(queued_archive.memory_path, chomp: true).reject(&:empty?).map { |line| JSON.parse(line) }
+      queued_event = queued_events.find { |event| event["content"] == "Synthetic queued request" }
+      assert(queued_event && queued_event.dig("metadata", "archived_without_run") == true &&
+               queued_event.dig("metadata", "queue_work_abort_message") == HQ::ManagedAgent::ARCHIVE_ABORT_MESSAGE,
+             "expected pending delegate work to be recorded as aborted in archive history")
     ensure
       if running_pid
         begin
