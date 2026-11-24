@@ -42,9 +42,8 @@ module RemoteUISummaryDelegatedActionsTest
     assets = File.read(File.expand_path("../lib/hq/remote_ui/assets/app.js", __dir__))
     renderer = assets.split("function renderSummaryDelegatedActions", 2).last.to_s.split("\nfunction ", 2).first
     raise "Summary delegated actions must render the shared agent row" unless renderer.include?("renderAgentRow(delegatedAgent")
-    raise "Summary delegated rows must show host, project, and server status" unless assets.include?("if (options.summaryMeta)") &&
-      assets.include?("[serverDisplayName(server), project?.name || agent.project_key, serverHealthLabel(server)]") &&
-      assets.include?(".join(\" - \")")
+    raise "Summary delegated rows must show the project name" unless assets.include?("if (options.summaryMeta)") &&
+      assets.include?("return escapeHtml(project?.name || agent.project_key || \"\");")
     raise "Summary message outcomes must use short labels" unless assets.include?("? \"Queued\" : \"Sent\"")
     styles = File.read(File.expand_path("../lib/hq/remote_ui/assets/app.css", __dir__))
     raise "Summary delegated icons must have no box" unless styles.include?(".summary-delegated-actions .agent-row > .status-mark") &&
