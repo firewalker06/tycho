@@ -76,6 +76,19 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir, metadataFixtur
       assert.equal(g.bottomPadding, g.viewport >= 900 ? 12 : 0, `only medium and wide workspaces get bottom padding: ${JSON.stringify(g)}`);
       assert(Math.abs((g.root.bottom - g.dock.bottom) - (g.viewport >= 900 ? 12 : 0)) < 1.1, `composer keeps expected bottom spacing: ${JSON.stringify(g)}`);
       if (g.viewport >= 900) g.panes.filter(p => p.kind !== "conversation").forEach(p => assert(Math.abs((g.root.bottom - p.bottom) - 12) < 1.1, `visible ${p.kind} panel keeps the 12 px bottom gap: ${JSON.stringify(g)}`));
+      if (open.at(-1) === "focus") {
+        const surface = await page.locator('[data-side-kind="focus"] .agent-focus-panel').evaluate(e => {
+          const style = getComputedStyle(e);
+          return { border: style.borderTopWidth, radius: style.borderTopLeftRadius, background: style.backgroundColor };
+        });
+        if (g.viewport >= 900) {
+          assert.equal(surface.border, "0px", `medium and wide Focus uses the Summary surface: ${JSON.stringify({ width, surface })}`);
+          assert.equal(surface.radius, "0px", `medium and wide Focus has no rounded container: ${JSON.stringify({ width, surface })}`);
+          assert.equal(surface.background, "rgba(0, 0, 0, 0)", `medium and wide Focus has no container background: ${JSON.stringify({ width, surface })}`);
+        } else {
+          assert.equal(surface.border, "1px", "mobile Focus keeps its rounded container");
+        }
+      }
       const last = g.panes.at(-1);
       assert(Math.abs((g.root.right - last.right) - (n - kinds.length) * (expected + 12)) < 1.1, "unused slots remain space on the right");
       assert(!g.overflow && g.pageHeight <= g.height + 1, JSON.stringify(g));
