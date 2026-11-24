@@ -306,6 +306,16 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       assert.equal(comparison.borderRadius, "8px", "badged tree must keep the shared rounded corner");
       assert.equal(comparison.badgeText, "12", "multi-digit badge text must remain visible");
       assert.equal(comparison.badgeWhiteSpace, "nowrap", "multi-digit badge text must stay on one line");
+      const rowFocus = capturePage.locator(`#view [data-agent-tree="${agentKey}"] .agent-delegation-parent-row > [data-open-agent="${agentKey}"]`);
+      await rowFocus.focus();
+      await capturePage.keyboard.press("Tab");
+      await capturePage.keyboard.press("Shift+Tab");
+      const focusFacts = await rowFocus.evaluate(element => {
+        const style = getComputedStyle(element);
+        return { visible: element.matches(":focus-visible"), outline: style.outlineStyle, boxShadow: style.boxShadow };
+      });
+      assert(focusFacts.visible && focusFacts.outline === "none" && focusFacts.boxShadow.includes("inset") &&
+        focusFacts.boxShadow.includes("2px"), `keyboard focus must stay visible inside the clipped row: ${JSON.stringify(focusFacts)}`);
       results.push({ device, outerComparison: comparison });
       await capturePage.screenshot({ path: path.join(captureDir, `${device}-delegated-parent-agents.png`), fullPage: true });
       await capturePage.evaluate(() => navigate({ type: "tab", tab: "now" }));

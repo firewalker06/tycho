@@ -3125,6 +3125,10 @@ button[data-toggle-pr-diff-full-view],
   border-radius: 0;
   box-shadow: none;
 }
+.agent-delegation-parent-row > .agent-row:focus-visible {
+  outline: 0;
+  box-shadow: inset 0 0 0 2px var(--ds-focus-ring);
+}
 
 .agent-delegation-children[hidden] { display: none; }
 .agent-delegation-children { display: grid; }

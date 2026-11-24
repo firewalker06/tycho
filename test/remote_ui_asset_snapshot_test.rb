@@ -63,6 +63,7 @@ module RemoteUIAssetSnapshotTest
     raise "delegated status icons must be 20px and centered" unless css.include?(".agent-row-status > .agent-status-icon,\n.agent-row-status > .status-mark {\n  box-sizing: border-box;\n  width: 20px;")
     raise "delegated count badge must clear the centered icon" unless css.include?("left: calc(50% + 11px);")
     raise "delegated tree paint must clip to its rounded outer bounds" unless css.include?(".resource-block-grid > .agent-delegation-tree {\n  min-width: 0;\n  border: 1px solid var(--border);\n  border-radius: 8px;\n  overflow: hidden;")
+    raise "delegated parent focus must stay visible inside the clipped tree" unless css.include?(".agent-delegation-parent-row > .agent-row:focus-visible {\n  outline: 0;\n  box-shadow: inset 0 0 0 2px var(--ds-focus-ring);")
     raise "delegated disclosure controls need an integrated parent row" unless css.include?(".agent-delegation-parent-row {")
   end
 
