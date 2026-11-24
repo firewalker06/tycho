@@ -43,7 +43,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         const parent = { ...structuredClone(original), name: "Tree parent", unread: true, delegation: { children: [{ key: "fixture-child", agent_key: "fixture-child" }] } };
         const child = (key, name, parentKey, extra = {}) => ({ ...structuredClone(original), key, resource_key: key, name, delegation: { parent: { key: parentKey, agent_key: parentKey, connected: true }, children: [] }, unread: false, running: false, ...extra });
         state.agents = [parent,
-          child("fixture-child", "Hidden child", key),
+          child("fixture-child", "Hidden child", key, { running: true, status: "running" }),
           child("fixture-grandchild", "Nested needle", "fixture-child"),
           child("fixture-peer", "Peer sibling", key, { server_key: "peer" }),
           child("fixture-orphan", "Unknown parent", "missing"),
@@ -54,6 +54,30 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         window.collapseFixtureAgents = structuredClone(state.agents);
       };
       window.installCollapseFixture();
+      window.renderDelegatedListFixtures = () => {
+        state.agents = window.collapseFixtureAgents;
+        state.servers = [{ key: "local", name: "Local", local: true, ready: true, status: "ready" }];
+        state.filters.agents = "";
+        state.agentSort = "relevancy";
+        state.route = { type: "tab", tab: "agents" };
+        renderAgents({ focusFilter: false });
+        const agentsTree = document.querySelector(`[data-agent-tree="${CSS.escape(key)}"]`);
+        const agentsChild = agentsTree?.querySelector('[data-open-agent="fixture-child"]');
+        const badge = agentsTree?.querySelector(".delegated-running-count");
+        const status = agentsTree?.querySelector(".agent-status-icon.running");
+        if (!agentsTree || !agentsChild || !badge || !status) throw new Error("Agents list did not show collapsed parent with running count");
+        if (!agentsChild.closest(".agent-delegation-children").hidden) throw new Error("Agents list child row was not collapsed");
+        if (badge.textContent.trim() !== "1") throw new Error(`Agents list running count was ${badge.textContent}`);
+        const agentsScreenshot = agentsTree.outerHTML;
+        state.agentSort = "relevancy";
+        state.route = { type: "tab", tab: "now" };
+        renderNow();
+        const nowTree = document.querySelector(`[data-agent-tree="${CSS.escape(key)}"]`);
+        if (!nowTree || !nowTree.querySelector(".agent-status-icon.running") || nowTree.querySelector(".delegated-running-count")?.textContent.trim() !== "1") {
+          throw new Error(`Now list did not show delegated running parent and count: root=${key}, root delegation=${JSON.stringify(findAgent(key)?.delegation)}, child=${JSON.stringify(findAgent("fixture-child")?.delegation)}, html=${document.querySelector("#view")?.innerHTML.slice(0, 1800)}`);
+        }
+        return { agentsScreenshot, nowScreenshot: nowTree.outerHTML };
+      };
       state.activityReadyServerKeys.clear();
       state.activityAgents.clear();
       const originalActivity = applyAgentActivity;
@@ -74,6 +98,22 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           { ...local, agents: window.collapseFixtureAgents },
         ] };
       };
+    }, agentKey);
+    const listFixture = await page.evaluate(() => window.renderDelegatedListFixtures());
+    if (captureDir) {
+      await page.evaluate(() => { state.route = { type: "tab", tab: "agents" }; renderAgents({ focusFilter: false }); });
+      await page.screenshot({ path: path.join(captureDir, `${device}-delegated-parent-agents.png`), fullPage: true });
+      await page.evaluate(() => { state.route = { type: "tab", tab: "now" }; renderNow(); });
+      await page.screenshot({ path: path.join(captureDir, `${device}-delegated-parent-now.png`), fullPage: true });
+    }
+    await page.evaluate(key => {
+      const original = structuredClone(findAgent(key));
+      state.agents = [original];
+      state.agentDetails = { [key]: original };
+      state.filters.agents = "";
+      state.agentSort = "relevancy";
+      closeUnreadPanel();
+      renderNow();
     }, agentKey);
     for (const theme of ["dark", "light", "system"]) {
       // Every visible root has linked children. Start at the real shortcut's search focus.

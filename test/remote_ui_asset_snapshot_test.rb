@@ -14,6 +14,7 @@ module RemoteUIAssetSnapshotTest
     assert_initial_loading_shell_contract
     assert_loaded_daemon_keeps_one_asset_build
     assert_delegation_ui_uses_typed_safe_references
+    assert_delegated_running_parent_lists
     assert_delegation_callbacks_render_as_complete_delegated_agent_messages
     assert_delegated_summary_attention_icon_is_in_header
     assert_started_agent_notice_uses_started_label_and_project
@@ -31,6 +32,24 @@ module RemoteUIAssetSnapshotTest
     assert_mobile_dock_and_pending_attachment_layout
     assert_non_assistant_conversation_blocks_are_quiet
     puts "remote_ui_asset_snapshot_test: ok"
+  end
+
+  def assert_delegated_running_parent_lists
+    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
+    css = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.css"))
+    required = [
+      'const sourceAgents = currentAgents().filter(resourceAvailableInNow)',
+      'delegation: { ...(root.delegation || {}), children: delegatedAgents }',
+      'delegated_running_count: runningCount',
+      'aria-expanded="false" aria-label="Show ${escapeAttr(label)}"',
+      'data-toggle-agent-tree',
+      'const tree = REMOTE_HELPERS.groupAgentsByDelegation(quickSwitchPanelAgents()).find(candidate => candidate.root.key === agent.key)',
+      'aria-label="${options.delegatedRunningCount} delegated agents running"',
+    ]
+    missing = required.reject { |fragment| javascript.include?(fragment) }
+    raise "missing delegated running parent list contract: #{missing.join(", ")}" unless missing.empty?
+    raise "delegated rows must start hidden" unless javascript.include?('class="agent-delegation-children" hidden')
+    raise "delegated running counts need a visible badge" unless css.include?(".delegated-running-count {")
   end
 
   def assert_mobile_dock_and_pending_attachment_layout
