@@ -1,4 +1,4 @@
-# Archive delegates change review
+# Archive delegates review handoff
 
 ## Scope
 
@@ -18,6 +18,6 @@ This change adds a selection step to the existing Remote UI archive page for act
 - `bin/test` passed.
 - Screenshot: `docs/screenshots/archive-delegates-dialog.png`.
 
-## Findings
+## Independent review status
 
-No issue found in this review. This report is for independent review on the draft pull request; it does not replace maintainer approval.
+This is a review handoff for the draft pull request. An independent reviewer has not reviewed the change yet. The PR is a draft so a formal PR review has not been started.
