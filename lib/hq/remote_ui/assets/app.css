@@ -10928,9 +10928,6 @@ body:has(.agent-workspace.has-focus-panel) { overflow: hidden; }
   min-height: 0;
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--ds-background-surface);
 }
 .agent-focus-panel-heading {
   display: flex;
@@ -10974,6 +10971,14 @@ body:has(.agent-workspace.has-focus-panel) { overflow: hidden; }
 }
 .agent-focus-empty { color: var(--muted); }
 .agent-focus-scroll > p { padding: 0 16px 16px; }
+
+@media (max-width: 899px) {
+  .agent-focus-panel {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--ds-background-surface);
+  }
+}
 
 @media (min-width: 900px) {
   .agent-workspace.has-focus-panel.content-panels-managed[data-visible-panels="focus"] .agent-detail-pane {
