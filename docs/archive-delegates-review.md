@@ -12,11 +12,14 @@ This change adds a selection step to the existing Remote UI archive page for act
 - The confirmation is bound to a fresh work token for the parent and every selected delegate. The archive store checks all tokens under its exclusive lock before it changes any agent. A mismatch returns a conflict; the UI restores the agents and asks the same general confirmation before retry.
 - A parent and its selected delegates are archived in one locked operation. The parent-only operation uses the same server guard. Peer actions use the owning server route and raw agent keys.
 - Each delegate uses the standard agent row with a checkbox at the left. Exclusions remain in effect while the dialog is open, even if a delegate disappears and returns.
+- Archive delegate rows bypass Agents bulk-selection rendering. Repeated peer conflicts keep server ownership on normalized details and send later detail and archive requests to the peer with raw keys.
+- If archive fails after a process stops, rollback restores archive files and then saves the stopped run and confirmed aborted-work history on the active agent. The error reports stopped keys so the UI can refresh their state.
 
 ## Verification
 
 - Synthetic Chrome fixture: default selection, Cancel, deselection, parent-only archive, selected parent-plus-delegate archive, exclusion persistence across disappearance and return, reset on a new dialog, desktop and mobile layout, peer route and key scope, server conflict, renewed confirmation, and guarded retry passed.
-- Server regressions: a new synthetic run between detail read and locked archive returns a conflict and leaves all selected agents active; confirmed archive stops a synthetic process, archives every selected agent, and records queued work as aborted.
+- Synthetic bulk-mode, two-conflict peer retry, and partial-failure UI checks passed.
+- Server regressions: a new synthetic run between detail read and locked archive returns a conflict and leaves all selected agents active; confirmed archive stops a synthetic process, archives every selected agent, and records queued work as aborted; injected log failure after stop preserves the stopped run and queue disposition while all agents stay active.
 - `bin/test` and exact-head `signoff/tycho-bin-test` are run for the final pushed head.
 - Latest desktop and mobile synthetic screenshots are attached to the pull request. They are not stored in this repository.
 

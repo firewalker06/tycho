@@ -4488,6 +4488,12 @@ module HQ
     rescue AgentStore::ArchiveWorkChanged => e
       raise Error.new("Agent work changed after confirmation. Review it and confirm again.", status: 409,
                       details: { work_changed: true, agent_keys: e.message.split(",") })
+    rescue AgentStore::ArchivePartialFailure => e
+      raise Error.new(e.message, status: 500, details: {
+        archive_partial: true,
+        stopped_agent_keys: e.stopped_agent_keys,
+        affected_agent_keys: e.affected_agent_keys
+      })
     end
 
     def archive_agents(attrs)
@@ -4560,6 +4566,12 @@ module HQ
     rescue AgentStore::ArchiveWorkChanged => e
       raise Error.new("Agent work changed after confirmation. Review it and confirm again.", status: 409,
                       details: { work_changed: true, agent_keys: e.message.split(",") })
+    rescue AgentStore::ArchivePartialFailure => e
+      raise Error.new(e.message, status: 500, details: {
+        archive_partial: true,
+        stopped_agent_keys: e.stopped_agent_keys,
+        affected_agent_keys: e.affected_agent_keys
+      })
     end
 
     def reconcile_archived_schedule_agent(agent)

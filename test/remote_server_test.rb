@@ -51,6 +51,7 @@ module RemoteServerTest
     assert_remote_agent_bulk_archive
     assert_archive_confirmation_is_bound_to_current_work
     assert_guarded_bulk_archive_stops_and_aborts_selected_work
+    assert_partial_archive_failure_preserves_stopped_work
     assert_remote_schedule_session_archive_routes
     assert_remote_agent_clone_archives_source_with_editable_name
     assert_remote_context_pressure_clone_replaces_schedule_target
@@ -2182,6 +2183,89 @@ module RemoteServerTest
         rescue Errno::ESRCH, Errno::EPERM, Errno::ECHILD
           nil
         end
+      end
+    end
+  end
+
+  def assert_partial_archive_failure_preserves_stopped_work
+    running_pid = nil
+    original_archive_logs = HQ::ManagedAgent.instance_method(:archive_logs!)
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      service = HQ::RemoteService.new(registry: registry_for_project(dir, workspace))
+      parent = service.create_agent(
+        "project_key" => "web", "template_key" => "custom", "name" => "Partial archive parent",
+        "prompt" => "Synthetic partial archive.", "agent" => "codex"
+      )
+      running = service.create_agent(
+        "project_key" => "web", "template_key" => "custom", "name" => "Partial archive running delegate",
+        "prompt" => "Synthetic run must stay stopped.", "agent" => "codex", "parent_agent_key" => parent[:key]
+      )
+      [parent, running].each { |agent| File.write(agent[:log_path], "#{agent[:name]}\n") }
+      store = HQ::AgentStore.new(service.instance_variable_get(:@projects))
+      store.update_agent!(running[:key]) do |agent|
+        agent.enqueue_prompt!(id: "partial-archive-queued", prompt: "Synthetic queued work", source: "user")
+      end
+      assert(store.load.find { |agent| agent.key == running[:key] }.queued_prompts.any? { |entry| entry["prompt"] == "Synthetic queued work" },
+             "expected the synthetic pending work to be saved before archive")
+      running_pid = Process.spawn(RbConfig.ruby, "-e", "sleep 30", pgroup: true, out: File::NULL, err: File::NULL)
+      records = JSON.parse(File.read(HQ::AGENTS_FILE))
+      records.each do |record|
+        next unless record["key"] == running[:key]
+
+        record["pid"] = running_pid
+        record["started_at"] = Time.now.iso8601
+        record["runs"] << {
+          "started_at" => Time.now.iso8601, "finished_at" => nil, "exit_code" => nil,
+          "status" => "running", "log_path" => record["log_path"], "command" => "synthetic",
+          "run_id" => "synthetic-partial-archive-run"
+        }
+      end
+      File.write(HQ::AGENTS_FILE, JSON.pretty_generate(records))
+      keys = [parent[:key], running[:key]]
+      expected = keys.to_h { |key| [key, service.agent(key)[:archive_work_token]] }
+      HQ::ManagedAgent.define_method(:archive_logs!) do |root = HQ::AGENT_ARCHIVE_DIR|
+        raise IOError, "Synthetic archive disk failure" if key == running[:key]
+
+        original_archive_logs.bind_call(self, root)
+      end
+      error = begin
+        HQ::RemoteServer.new.send(
+          :route, service, "POST", "/agents/archive",
+          { "keys" => keys, "expected_work_states" => expected }, nil
+        )
+        nil
+      rescue HQ::RemoteServer::Error => exception
+        exception
+      end
+      assert(error && error.status == 500 && error.details[:archive_partial] == true,
+             "expected a failed group archive to report its partial stop outcome")
+      assert(error.details[:stopped_agent_keys] == [running[:key]],
+             "expected the response to identify the delegate that stopped before archive failed")
+      active_keys = service.agents.map { |agent| agent[:key] }
+      assert((keys - active_keys).empty?, "expected rollback to leave every selected agent active")
+      detail = service.agent(running[:key])
+      assert(detail[:running] == false && detail[:status] == "stopped" && detail[:last_result] == "stopped" &&
+               detail[:finished_at] && detail[:last_exit_code] == 143,
+             "expected the saved run summary to stay stopped after archive rollback: #{detail.slice(:running, :status, :last_result, :finished_at, :last_exit_code)}")
+      assert(detail.dig(:prompt_queue, "pending_count") == 0,
+             "expected confirmed pending work to leave the queue after the stop")
+      events = File.readlines(running[:memory_path], chomp: true).reject(&:empty?).map { |line| JSON.parse(line) }
+      queued_event = events.find { |event| event["content"] == "Synthetic queued work" }
+      assert(queued_event && queued_event.dig("metadata", "archived_without_run") == true &&
+               queued_event.dig("metadata", "queue_work_abort_message") == HQ::ManagedAgent::ARCHIVE_ABORT_MESSAGE,
+             "expected queued work to retain its aborted disposition after archive rollback: #{queued_event.inspect}; #{events.inspect}")
+    ensure
+      HQ::ManagedAgent.define_method(:archive_logs!, original_archive_logs)
+    end
+  ensure
+    if running_pid
+      begin
+        Process.kill("TERM", -running_pid)
+        Process.wait(running_pid)
+      rescue Errno::ESRCH, Errno::EPERM, Errno::ECHILD
+        nil
       end
     end
   end

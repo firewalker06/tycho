@@ -7,7 +7,12 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
   page.on("console", message => {
-    if (message.type() === "error" && !message.text().includes("409 (Conflict)")) errors.push(message.text());
+    if (message.type() === "error" && !/409 \(Conflict\)|404 \(Not Found\)|500 \(Internal Server Error\)/.test(message.text())) {
+      errors.push(message.text());
+    }
+  });
+  page.on("response", response => {
+    if (response.status() === 404) errors.push(`HTTP 404 ${response.url()}`);
   });
   const createAgent = async (name, parentAgentKey = "") => {
     const response = await context.request.post(`${baseUrl}/agents`, { data: {
@@ -29,6 +34,18 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
   assert.equal(await delegate.evaluate(node => node.parentElement.firstElementChild === node), true,
     "Delegate checkbox must be the first row segment");
   if (captureDir) await page.screenshot({ path: path.join(captureDir, "archive-delegates-dialog.png") });
+  await page.evaluate(parentKey => {
+    state.bulkArchiveMode = true;
+    renderAgentArchive(parentKey);
+  }, parent.key);
+  assert.equal(await page.locator("[data-archive-delegate]").count(), 1,
+    "Archive delegates must keep their own checkbox while Agents bulk mode is active");
+  assert.equal(await page.locator("[data-select-agent]").count(), 0,
+    "Archive dialog rows must not become Agents bulk-selection rows");
+  await page.evaluate(parentKey => {
+    state.bulkArchiveMode = false;
+    renderAgentArchive(parentKey);
+  }, parent.key);
 
   await page.locator("[data-open-agent]").filter({ hasText: "Cancel" }).click();
   assert.equal(await page.evaluate(key => state.agents.some(agent => agent.key === key), parent.key), true,
@@ -110,34 +127,47 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
   let childReads = 0;
   let archivePosts = 0;
   const peerArchivePayloads = [];
-  await page.route("**/servers/review-peer/agents/**", async route => {
+  const peerDetailPaths = [];
+  const peerArchivePaths = [];
+  await page.route("**/servers/review-peer/**", async route => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
+    if (request.method() === "GET" && pathname === "/servers/review-peer/projects/web") {
+      await route.fulfill({ json: { project: { key: "web", name: "Peer Web", path: "/tmp/synthetic-peer-web" } } });
+      return;
+    }
     if (request.method() === "POST" && pathname === "/servers/review-peer/agents/archive") {
       const payload = request.postDataJSON();
       peerArchivePayloads.push(payload);
+      peerArchivePaths.push(pathname);
       const keys = payload.keys;
       archivePosts += 1;
-      if (archivePosts === 1) {
+      if (archivePosts < 3) {
         const changed = peerRecords.get("peer-child");
-        changed.current_run_id = "synthetic-run-c";
-        changed.archive_work_token = "peer-child-run-c";
+        const run = `synthetic-run-${String.fromCharCode(96 + archivePosts + 2)}`;
+        changed.current_run_id = run;
+        changed.archive_work_token = `peer-child-run-${String.fromCharCode(96 + archivePosts + 2)}`;
         return route.fulfill({ status: 409, json: {
           error: "Agent work changed after confirmation. Review it and confirm again.",
           details: { work_changed: true, agent_keys: ["peer-child"] },
         } });
       }
       assert.deepEqual(payload.expected_work_states, {
-        "peer-parent": "peer-parent-idle", "peer-child": "peer-child-run-c",
-      }, "Retry must bind to the run shown in the latest confirmation");
+        "peer-parent": "peer-parent-idle", "peer-child": "peer-child-run-d",
+      }, "Repeated retry must bind to the run shown in the latest confirmation");
       await route.fulfill({ json: { archived: keys.map(agent_key => ({ agent_key })), skipped: [], failed: [] } });
       return;
     }
     const rawKey = pathname.split("/").at(-1);
+    peerDetailPaths.push(pathname);
     const record = peerRecords.get(rawKey);
     if (!record) return route.fulfill({ status: 404, json: { error: "Synthetic peer agent missing" } });
     if (rawKey === "peer-child") childReads += 1;
     const response = structuredClone(record);
+    response.key = rawKey;
+    delete response.resource_key;
+    delete response.server_key;
+    delete response.server_name;
     if (rawKey === "peer-child") {
       response.running = true;
       response.status = "running";
@@ -165,11 +195,75 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
   const retryConfirmation = await page.locator("#confirmation-description").innerText();
   assert.equal(retryConfirmation, firstConfirmation, "A work race must repeat the same main confirmation");
   await page.locator("[data-confirmation-accept]").click();
-  for (let attempt = 0; attempt < 50 && archivePosts < 2; attempt += 1) await page.waitForTimeout(100);
+  await page.locator("[data-confirmation-accept]").waitFor({ state: "hidden" });
+  await page.locator("[data-confirmation-accept]").waitFor();
+  assert.equal(await page.locator("#confirmation-description").innerText(), firstConfirmation,
+    "A second peer conflict must repeat the same main confirmation");
+  await page.locator("[data-confirmation-accept]").click();
+  for (let attempt = 0; attempt < 50 && archivePosts < 3; attempt += 1) await page.waitForTimeout(100);
   assert.deepEqual(peerArchivePayloads.at(-1).keys, ["peer-parent", "peer-child"],
     "Peer archive request must use raw keys on the peer server route");
-  assert.equal(childReads, 2, "Archive-conflict race must trigger fresh reads before retry");
-  assert.equal(archivePosts, 2, "A server conflict must not archive until the user confirms again");
+  assert.equal(peerArchivePayloads[1].expected_work_states["peer-child"], "peer-child-run-c",
+    "First peer retry must use normalized raw detail from the peer server");
+  assert.equal(peerArchivePayloads[2].expected_work_states["peer-child"], "peer-child-run-d",
+    "Second peer retry must use the latest normalized peer detail");
+  assert.equal(peerArchivePaths.length, 3, "All archive retries must use the peer server route");
+  assert.equal(peerDetailPaths.length, 6, "All refreshed detail requests must use peer raw keys");
+  assert(peerDetailPaths.every(pathname => /^\/servers\/review-peer\/agents\/peer-(parent|child)$/.test(pathname)),
+    `Peer detail retries must use scoped routes with raw keys: ${peerDetailPaths.join(", ")}`);
+  assert.equal(childReads, 3, "Each archive attempt must read the delegate from the peer server");
+  assert.equal(archivePosts, 3, "Two server conflicts must not archive before the latest confirmation");
+
+  const partialParent = await createAgent("Partial archive parent fixture");
+  const partialChild = await createAgent("Partial archive stopped delegate fixture", partialParent.key);
+  const localSource = await page.evaluate(key => structuredClone(findAgent(key)), unrelated.key);
+  const partialParentState = { ...localSource, key: partialParent.key, resource_key: partialParent.key,
+    server_key: "local", name: partialParent.name, delegation: { parent: null, children: [] } };
+  const partialChildState = { ...localSource, key: partialChild.key, resource_key: partialChild.key,
+    server_key: "local", name: partialChild.name,
+    delegation: { parent: { key: partialParent.key, agent_key: partialParent.key }, children: [] } };
+  await page.evaluate(({ parentState, childState }) => {
+    state.agents = [parentState, childState, ...state.agents.filter(agent =>
+      agent.key !== parentState.key && agent.key !== childState.key)];
+    state.agentDetails[parentState.key] = parentState;
+    state.agentDetails[childState.key] = childState;
+    navigate({ type: "agentArchive", key: parentState.key });
+  }, { parentState: partialParentState, childState: partialChildState });
+  assert.equal(await page.locator("[data-archive-delegate]").count(), 1,
+    "Partial-failure fixture must include its selected delegate");
+  const stoppedDetail = await page.evaluate(key => structuredClone(findAgent(key)), partialChild.key);
+  Object.assign(stoppedDetail, {
+    running: false, status: "stopped", last_result: "stopped", last_exit_code: 143,
+    finished_at: new Date().toISOString(), archive_work_token: "synthetic-stopped-token",
+    prompt_queue: { entries: [], pending_count: 0 },
+  });
+  let partialFailureReturned = false;
+  await page.route(`**/agents/${partialChild.key}`, async route => {
+    if (!partialFailureReturned) return route.continue();
+    await route.fulfill({ json: { agent: stoppedDetail } });
+  });
+  await page.route("**/agents/archive", async route => {
+    if (route.request().method() !== "POST") return route.continue();
+    partialFailureReturned = true;
+    await route.fulfill({ status: 500, json: {
+      error: "Synthetic disk failure after process stop",
+      details: { archive_partial: true, stopped_agent_keys: [partialChild.key], affected_agent_keys: [partialChild.key] },
+    } });
+  });
+  await page.locator("[data-agent-action='archive']").click();
+  await page.locator("[data-confirmation-accept]").waitFor();
+  const partialRequest = page.waitForRequest(request =>
+    request.method() === "POST" && new URL(request.url()).pathname === "/agents/archive");
+  await page.locator("[data-confirmation-accept]").click();
+  await partialRequest;
+  await page.waitForFunction(key => state.agentDetails[key]?.status === "stopped" &&
+    state.agentDetails[key]?.last_result === "stopped", partialChild.key);
+  assert.match(await page.locator("#growl").innerText(), /Synthetic disk failure after process stop/,
+    "The archive error must remain visible after the stopped state refresh");
+  assert.equal(await page.evaluate(({ parentKey, childKey }) => state.agents.some(agent => agent.key === parentKey) &&
+    state.agents.some(agent => agent.key === childKey), { parentKey: partialParent.key, childKey: partialChild.key }), true,
+  "A partial archive failure must restore all agents to the active view");
+
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${baseUrl}/ui#agent/${retainedParent.key}/archive`, { waitUntil: "networkidle" });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true,

@@ -23,6 +23,20 @@ module HQ
     StaleScheduleTarget = Class.new(StandardError)
     StoppedScheduleTarget = Class.new(StandardError)
     ArchiveWorkChanged = Class.new(StandardError)
+    class ArchivePartialFailure < StandardError
+      attr_reader :stopped_agent_keys, :affected_agent_keys
+
+      def initialize(error, stopped_agent_keys:, affected_agent_keys:, persistence_error: nil)
+        @stopped_agent_keys = stopped_agent_keys
+        @affected_agent_keys = affected_agent_keys
+        message = if persistence_error
+                    "#{error.message}; could not save stopped agent outcome: #{persistence_error.message}"
+                  else
+                    "#{error.message}; stopped agents remain active with their stop outcome saved"
+                  end
+        super(message)
+      end
+    end
     PALETTE_SIZE = HQ::UI::Rendering::Styles::CHAT_BORDER_PALETTE.length
     SCHEDULE_SYSTEM_PROMPT_TEMPLATE = [
       "This managed agent is owned by the Tycho schedule %{title}.",
@@ -1315,9 +1329,11 @@ module HQ
         end
         source_paths = targets.flat_map(&:log_files)
         transaction = FileTransaction.new([AGENTS_FILE, DELEGATIONS_FILE, *source_paths])
+        stopped_snapshots = {}
         destinations = targets.to_h do |target|
           run_aborted = target.running?
           target.retire_for_archive!
+          stopped_snapshots[target.key] = target.to_hash if run_aborted
           archived_work = target.archive_pending_work!(run_aborted:)
           target.mark_archived_visibility!(!HQ::Visibility.agent_visible?(target, @projects))
           destination = target.archive_logs!(root)
@@ -1329,8 +1345,31 @@ module HQ
         remaining.unshift(replacement) if replacement
         save_unlocked(remaining, allow_large_reduction: true)
         destinations
-      rescue StandardError
+      rescue StandardError => error
         transaction&.rollback
+        unless stopped_snapshots.to_h.empty?
+          begin
+            partial_agents = agents.map do |target|
+              snapshot = stopped_snapshots[target.key]
+              snapshot ? ManagedAgent.from_hash(snapshot) : target
+            end
+            stopped_targets = partial_agents.select { |target| stopped_snapshots.key?(target.key) }
+            aborted_entries = stopped_targets.flat_map do |target|
+              target.archive_pending_work!(run_aborted: true).fetch(:entries)
+            end
+            save_unlocked(partial_agents, allow_large_reduction: true)
+            reconcile_archived_callbacks(aborted_entries)
+          rescue StandardError => persistence_error
+            raise ArchivePartialFailure.new(
+              error, stopped_agent_keys: stopped_snapshots.keys,
+              affected_agent_keys: stopped_snapshots.keys, persistence_error:
+            ), cause: persistence_error
+          end
+          raise ArchivePartialFailure.new(
+            error, stopped_agent_keys: stopped_snapshots.keys,
+            affected_agent_keys: stopped_snapshots.keys
+          )
+        end
         raise
       end
     end
