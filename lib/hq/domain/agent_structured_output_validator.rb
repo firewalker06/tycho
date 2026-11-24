@@ -176,12 +176,16 @@ module HQ
 
     def markdown_link_destinations(value)
       references = {}
-      definition_pattern = /^\s{0,3}\[([^\]]+)\]:\s*(?:<([^>]+)>|(\S+))(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*$/
-      value.scan(definition_pattern).each do |label, angle, plain|
-        references[normalize_reference_label(label)] = angle || plain
-      end
+      source = value.lines.reject do |line|
+        definition = markdown_reference_definition(line)
+        next false unless definition
 
-      source = value.gsub(definition_pattern, "")
+        label, target = definition
+        references[normalize_reference_label(label)] ||= target
+        true
+      end
+      .join
+
       inline = source.scan(/(?<!!)\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)/).map { |angle, plain| angle || plain }
       reference_uses = source.scan(/(?<!!)\[([^\]]+)\]\[([^\]]*)\]/).filter_map do |label, reference|
         references[normalize_reference_label(reference.empty? ? label : reference)]
@@ -193,6 +197,15 @@ module HQ
         double || single || bare
       end
       inline + reference_uses + shortcut_uses + html
+    end
+
+    def markdown_reference_definition(line)
+      content = line.chomp
+      content = content.sub(/\A {0,3}>[ \t]?/, "") while content.match?(/\A {0,3}>/)
+      match = /\A {0,3}\[([^\]]+)\]:[ \t]*(?:<([^>]+)>|(\S+))(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^)]*\)))?[ \t]*\z/.match(content)
+      return unless match
+
+      [match[1], match[2] || match[3]]
     end
 
     def normalize_reference_label(value)
