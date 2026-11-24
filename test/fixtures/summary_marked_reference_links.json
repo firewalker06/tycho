@@ -45,6 +45,18 @@
       "local": true
     },
     {
+      "name": "tab-indented list-nested local target",
+      "markdown": "- [notes]\n\n\t[notes]: docs/a.md",
+      "hrefs": ["docs/a.md"],
+      "local": true
+    },
+    {
+      "name": "escaped closing bracket in inline link label",
+      "markdown": "[lo\\]cal](docs/a.md)",
+      "hrefs": ["docs/a.md"],
+      "local": true
+    },
+    {
       "name": "escaped HTTPS punctuation in reference destination",
       "markdown": "[notes]\n\n[notes]: https://example.test/a\\(b\\)",
       "hrefs": ["https://example.test/a(b)"],

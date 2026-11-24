@@ -6,6 +6,7 @@ require "uri"
 module HQ
   class AgentStructuredOutputValidator
     Result = Struct.new(:valid?, :payload, :errors, :raw_text, keyword_init: true)
+    ESCAPED_BRACKET_SENTINEL = "\uE000"
 
     def initialize(schema:)
       @schema = schema
@@ -177,7 +178,8 @@ module HQ
     def markdown_link_destinations(value)
       references = {}
       source_lines = []
-      lines = markdown_list_context_lines(value.lines)
+      source = markdown_mask_escaped_closing_brackets(value)
+      lines = markdown_list_context_lines(source.lines)
       index = 0
       while index < lines.length
         definition = markdown_reference_definition(lines[index], continuation_line: lines[index + 1])
@@ -193,7 +195,9 @@ module HQ
       end
       source = source_lines.join
 
-      inline = source.scan(/(?<!!)\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)/).map { |angle, plain| angle || plain }
+      inline = source.scan(/(?<!!)\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)/).map do |angle, plain|
+        markdown_restore_escaped_closing_brackets(angle || plain)
+      end
       reference_uses = source.scan(/(?<!!)\[([^\]]+)\]\[([^\]]*)\]/).filter_map do |label, reference|
         references[normalize_reference_label(reference.empty? ? label : reference)]
       end
@@ -201,20 +205,51 @@ module HQ
                             .scan(/(?<!!)\[([^\]]+)\](?![\[(])/)
                             .flatten.filter_map { |label| references[normalize_reference_label(label)] }
       html = source.scan(/<a\b[^>]*\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>/i).map do |double, single, bare|
-        double || single || bare
+        markdown_restore_escaped_closing_brackets(double || single || bare)
       end
       inline + reference_uses + shortcut_uses + html
+    end
+
+    def markdown_mask_escaped_closing_brackets(value)
+      characters = value.each_char.to_a
+      output = +""
+      index = 0
+      while index < characters.length
+        unless characters[index] == "\\"
+          output << characters[index]
+          index += 1
+          next
+        end
+
+        finish = index
+        finish += 1 while characters[finish] == "\\"
+        slashes = finish - index
+        if characters[finish] == "]" && slashes.odd?
+          output << ("\\" * (slashes / 2)) << ESCAPED_BRACKET_SENTINEL
+          index = finish + 1
+        else
+          output << ("\\" * slashes)
+          index = finish
+        end
+      end
+      output
+    end
+
+    def markdown_restore_escaped_closing_brackets(value)
+      value.to_s.gsub(ESCAPED_BRACKET_SENTINEL, "]")
     end
 
     def markdown_list_context_lines(lines)
       list_contexts = []
       lines.map do |line|
-        content = markdown_unquote_reference_line(line)
+        content = markdown_expand_leading_tabs(markdown_unquote_reference_line(line))
         marker = /\A(?<indent> *)(?<marker>[*+-]|\d{1,9}[.)])(?<space>[ \t]+)(?<content>.*)\z/.match(content)
         if marker
           marker_indent = marker[:indent].length
           list_contexts.pop while list_contexts.any? && list_contexts.last[:marker_indent] > marker_indent
-          padding = marker[:space].length <= 4 ? marker[:space].length : 1
+          marker_column = marker_indent + marker[:marker].length
+          whitespace_width = markdown_indent_width(marker[:space], marker_column) - marker_column
+          padding = whitespace_width <= 4 ? whitespace_width : 1
           content_indent = marker_indent + marker[:marker].length + padding
           list_contexts.pop while list_contexts.any? && list_contexts.last[:marker_indent] == marker_indent
           list_contexts << { marker_indent:, content_indent: }
@@ -234,6 +269,17 @@ module HQ
         else
           content
         end
+      end
+    end
+
+    def markdown_expand_leading_tabs(value)
+      indentation = value[/\A[ \t]*/]
+      " " * markdown_indent_width(indentation) + value[indentation.length..]
+    end
+
+    def markdown_indent_width(value, column = 0)
+      value.each_char.reduce(column) do |width, character|
+        character == "\t" ? width + 4 - (width % 4) : width + 1
       end
     end
 
@@ -271,13 +317,13 @@ module HQ
       return if value.empty?
 
       match = /\A<([^>]+)>/.match(value)
-      return match[1] if match
+      return markdown_restore_escaped_closing_brackets(match[1]) if match
 
-      value[/\A\S+/]
+      markdown_restore_escaped_closing_brackets(value[/\A\S+/])
     end
 
     def normalize_reference_label(value)
-      value.to_s.strip.downcase.gsub(/\s+/, " ")
+      markdown_restore_escaped_closing_brackets(value).strip.downcase.gsub(/\s+/, " ")
     end
 
     def markdown_unescape_destination(value)
