@@ -59,7 +59,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir, metadataFixtur
         const style = getComputedStyle(root), r = root.getBoundingClientRect();
         const box = e => { const b = e.getBoundingClientRect(); return { kind: e.dataset.sideKind || "conversation", x: b.x, right: b.right, width: b.width, bottom: b.bottom }; };
         const panes = [...root.querySelectorAll(".agent-conversation-pane,[data-side-kind]")].filter(e => e.getClientRects().length && getComputedStyle(e).display !== "none").map(box);
-        return { viewport: innerWidth, root: { x: r.x, width: r.width, right: r.right }, contentWidth: root.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight), gap: parseFloat(style.columnGap), slots: Number(root.dataset.panelSlots), columns: style.gridTemplateColumns.split(/\s+/).length,
+        return { viewport: innerWidth, root: { x: r.x, width: r.width, right: r.right, bottom: r.bottom }, contentWidth: root.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight), bottomPadding: parseFloat(style.paddingBottom), gap: parseFloat(style.columnGap), slots: Number(root.dataset.panelSlots), columns: style.gridTemplateColumns.split(/\s+/).length,
           panes, overflow: document.documentElement.scrollWidth > innerWidth, pageHeight: document.documentElement.scrollHeight, height: innerHeight,
           navWidth: document.querySelector("#bottom-nav").getBoundingClientRect().width, dock: box(root.querySelector("[data-agent-dock]")) };
       })).jsonValue();
@@ -73,6 +73,9 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir, metadataFixtur
         assert(Math.abs(p.x - (g.root.x + i * (expected + 12))) < 1.1, "occupied slots stay left aligned");
       });
       assert(Math.abs(g.dock.width - expected) < 1.1 && Math.abs(g.dock.x - g.root.x) < 1.1, `composer stays in the Conversation slot: ${JSON.stringify({ expected, g })}`);
+      assert.equal(g.bottomPadding, g.viewport >= 900 ? 12 : 0, `only medium and wide workspaces get bottom padding: ${JSON.stringify(g)}`);
+      assert(Math.abs((g.root.bottom - g.dock.bottom) - (g.viewport >= 900 ? 12 : 0)) < 1.1, `composer keeps expected bottom spacing: ${JSON.stringify(g)}`);
+      if (g.viewport >= 900) g.panes.filter(p => p.kind !== "conversation").forEach(p => assert(Math.abs((g.root.bottom - p.bottom) - 12) < 1.1, `visible ${p.kind} panel keeps the 12 px bottom gap: ${JSON.stringify(g)}`));
       const last = g.panes.at(-1);
       assert(Math.abs((g.root.right - last.right) - (n - kinds.length) * (expected + 12)) < 1.1, "unused slots remain space on the right");
       assert(!g.overflow && g.pageHeight <= g.height + 1, JSON.stringify(g));

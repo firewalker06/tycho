@@ -11353,6 +11353,9 @@ body:has([data-agent-workspace]) .app-shell { height: 100dvh; min-height: 0; ove
   background: var(--panel);
   overscroll-behavior: contain;
 }
+@media (min-width: 900px) {
+  .agent-workspace:is(.has-detail, .conversation-only) { padding-bottom: 12px; }
+}
 .agent-workspace .agent-dock.composer-short-viewport .pending-attachments:not([open]) .pending-attachment-list { display: none; }
 .agent-workspace .agent-dock.composer-short-viewport .pending-attachments:not([open]) { gap: 0; }
 .agent-workspace.conversation-only .agent-conversation-pane { display: grid; grid-column: 1; grid-row: 1; min-height: 0; overflow: hidden; }
