@@ -2789,6 +2789,40 @@ body[data-route-tab="schedules"] .header-more-panel {
   color: var(--muted);
 }
 
+.agent-row-status {
+  position: relative;
+  display: inline-grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  flex: 0 0 42px;
+}
+
+.agent-row-status > .agent-status-icon,
+.agent-row-status > .status-mark {
+  box-sizing: border-box;
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
+}
+
+.agent-row-status > .status-mark {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.agent-row-status > :is(.agent-status-icon, .status-mark) > .ui-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.selectable-agent-row-leading {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .agent-status-icon .ui-icon {
   width: 18px;
   height: 18px;
@@ -3068,6 +3102,74 @@ button[data-toggle-pr-diff-full-view],
   width: calc(100% - min(calc(var(--delegation-depth) * 22px), 66px));
   margin-left: min(calc(var(--delegation-depth) * 22px), 66px);
   border-left: 2px solid color-mix(in srgb, var(--accent) 48%, var(--border));
+}
+
+.agent-delegation-tree {
+  display: grid;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.agent-delegation-parent-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.agent-delegation-parent-row > .agent-row {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.agent-delegation-parent-row > .agent-row:focus-visible {
+  outline: 0;
+  box-shadow: inset 0 0 0 2px var(--ds-focus-ring);
+}
+
+.agent-delegation-children[hidden] { display: none; }
+.agent-delegation-children { display: grid; }
+.agent-delegation-children .agent-row { border-width: 1px 0 0; border-radius: 0; }
+
+.delegation-tree-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 44px;
+  min-height: 44px;
+  align-self: stretch;
+  padding: 4px 8px;
+  border: 0;
+  border-left: 1px solid var(--border);
+  border-radius: 0;
+  color: var(--text);
+}
+
+.delegation-tree-toggle .ui-icon { width: 16px; height: 16px; transition: transform 120ms ease; }
+.delegation-tree-toggle[aria-expanded="true"] .ui-icon { transform: rotate(180deg); }
+
+.delegated-running-count {
+  position: absolute;
+  top: 0;
+  left: calc(50% + 11px);
+  display: inline-grid;
+  box-sizing: border-box;
+  min-width: 18px;
+  height: 18px;
+  width: max-content;
+  padding: 0 3px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .agent-ledger.ui-surface {
@@ -11475,12 +11577,18 @@ body:has(.resource-block-grid, .resource-grid-page) .app-header { max-width: non
 .resource-block-grid > .group-title { grid-column: 1 / -1; padding: 0 0 10px; }
 .resource-block-grid > .empty-row,
 .schedule-list.resource-block-grid > :not(.schedule-row) { grid-column: 1 / -1; }
-.resource-block-grid > .agent-row,
-.resource-block-grid > .agent-delegation-tree {
+.resource-block-grid > .agent-row {
   min-width: 0;
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow: visible;
+  background: var(--panel);
+}
+.resource-block-grid > .agent-delegation-tree {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
   background: var(--panel);
 }
 .resource-block-grid > .agent-row:last-child { border-bottom-width: 1px; }
