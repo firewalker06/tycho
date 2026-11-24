@@ -176,18 +176,23 @@ module HQ
 
     def markdown_link_destinations(value)
       references = {}
-      value.scan(/^\s{0,3}\[([^\]]+)\]:\s*(?:<([^>]+)>|(\S+))(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*$/).each do |label, angle, plain|
+      definition_pattern = /^\s{0,3}\[([^\]]+)\]:\s*(?:<([^>]+)>|(\S+))(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*$/
+      value.scan(definition_pattern).each do |label, angle, plain|
         references[normalize_reference_label(label)] = angle || plain
       end
 
-      inline = value.scan(/(?<!!)\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)/).map { |angle, plain| angle || plain }
-      reference_uses = value.scan(/(?<!!)\[[^\]]*\]\[([^\]]*)\]/).flatten.filter_map do |label|
-        references[normalize_reference_label(label)]
+      source = value.gsub(definition_pattern, "")
+      inline = source.scan(/(?<!!)\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)/).map { |angle, plain| angle || plain }
+      reference_uses = source.scan(/(?<!!)\[([^\]]+)\]\[([^\]]*)\]/).filter_map do |label, reference|
+        references[normalize_reference_label(reference.empty? ? label : reference)]
       end
-      html = value.scan(/<a\b[^>]*\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>/i).map do |double, single, bare|
+      shortcut_uses = source.gsub(/(?<!!)\[[^\]]+\]\[[^\]]*\]/, " ")
+                            .scan(/(?<!!)\[([^\]]+)\](?![\[(])/)
+                            .flatten.filter_map { |label| references[normalize_reference_label(label)] }
+      html = source.scan(/<a\b[^>]*\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>/i).map do |double, single, bare|
         double || single || bare
       end
-      inline + reference_uses + html
+      inline + reference_uses + shortcut_uses + html
     end
 
     def normalize_reference_label(value)
