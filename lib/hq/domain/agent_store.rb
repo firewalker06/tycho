@@ -22,6 +22,7 @@ module HQ
   class AgentStore
     StaleScheduleTarget = Class.new(StandardError)
     StoppedScheduleTarget = Class.new(StandardError)
+    ArchiveWorkChanged = Class.new(StandardError)
     PALETTE_SIZE = HQ::UI::Rendering::Styles::CHAT_BORDER_PALETTE.length
     SCHEDULE_SYSTEM_PROMPT_TEMPLATE = [
       "This managed agent is owned by the Tycho schedule %{title}.",
@@ -1273,8 +1274,9 @@ module HQ
       end
     end
 
-    def archive_agent!(key, root: AGENT_ARCHIVE_DIR)
-      archive_agents!([key], root:).fetch(key.to_s)
+    def archive_agent!(key, root: AGENT_ARCHIVE_DIR, expected_work_token: nil)
+      expected = expected_work_token.nil? ? nil : { key.to_s => expected_work_token }
+      archive_agents!([key], root:, expected_work_states: expected).fetch(key.to_s)
     end
 
     def archive_context_replacement_source!(key, root: AGENT_ARCHIVE_DIR, replacement: nil)
@@ -1288,12 +1290,22 @@ module HQ
       end
     end
 
-    def archive_agents!(keys, root: AGENT_ARCHIVE_DIR, context_replacement: false, replacement: nil)
+    def archive_agents!(keys, root: AGENT_ARCHIVE_DIR, context_replacement: false, replacement: nil,
+                        expected_work_states: nil)
       with_exclusive_lock do
         agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
         requested = Array(keys).map(&:to_s).uniq
         targets = requested.map do |key|
           agents.find { |agent| agent.key == key } || raise(ArgumentError, "Unknown agent: #{key}")
+        end
+        if expected_work_states
+          expected = expected_work_states.to_h.transform_keys(&:to_s)
+          raise ArgumentError, "Archive work confirmation is incomplete" unless expected.keys.sort == requested.sort
+
+          changed = targets.filter_map do |target|
+            target.key unless expected[target.key].to_s == target.archive_work_token
+          end
+          raise ArchiveWorkChanged, changed.join(",") unless changed.empty?
         end
         targets.each { |target| assert_context_replacement_archive_safe_unlocked!(target) } if context_replacement
         if replacement && (!context_replacement || targets.length != 1 ||

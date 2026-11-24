@@ -49,6 +49,7 @@ module RemoteServerTest
     assert_remote_agent_response_style_selection_is_independent
     assert_remote_archive_reconciles_scheduled_agent_state
     assert_remote_agent_bulk_archive
+    assert_archive_confirmation_is_bound_to_current_work
     assert_remote_schedule_session_archive_routes
     assert_remote_agent_clone_archives_source_with_editable_name
     assert_remote_context_pressure_clone_replaces_schedule_target
@@ -2040,6 +2041,72 @@ module RemoteServerTest
       assert(service.agents.empty?, "expected bulk archive to remove every selected agent from active state")
       assert(response.dig(:body, :archived).all? { |item| item[:archive_path].nil? || Dir.exist?(item[:archive_path]) },
              "expected archived agents to report archive destinations when logs existed")
+    ensure
+      if running_pid
+        begin
+          Process.kill("TERM", -running_pid)
+          Process.wait(running_pid)
+        rescue Errno::ESRCH, Errno::EPERM, Errno::ECHILD
+          nil
+        end
+      end
+    end
+  end
+
+  def assert_archive_confirmation_is_bound_to_current_work
+    running_pid = nil
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      write_project_workspace(workspace)
+      registry = registry_for_project(dir, workspace)
+      service = HQ::RemoteService.new(registry:)
+      parent = service.create_agent(
+        "project_key" => "web", "template_key" => "custom", "name" => "Guarded parent",
+        "prompt" => "Synthetic archive race.", "agent" => "codex"
+      )
+      child = service.create_agent(
+        "project_key" => "web", "template_key" => "custom", "name" => "Guarded delegate",
+        "prompt" => "Synthetic archive race.", "agent" => "codex", "parent_agent_key" => parent[:key]
+      )
+      expected = {
+        parent[:key] => service.agent(parent[:key])[:archive_work_token],
+        child[:key] => service.agent(child[:key])[:archive_work_token]
+      }
+      running_pid = Process.spawn(RbConfig.ruby, "-e", "sleep 30", pgroup: true, out: File::NULL, err: File::NULL)
+      records = JSON.parse(File.read(HQ::AGENTS_FILE))
+      records.each do |record|
+        next unless record["key"] == child[:key]
+
+        record["pid"] = running_pid
+        record["started_at"] = Time.now.iso8601
+        record["runs"] << {
+          "started_at" => Time.now.iso8601,
+          "finished_at" => Time.now.iso8601,
+          "exit_code" => 0,
+          "status" => "success",
+          "log_path" => record["log_path"],
+          "command" => "synthetic",
+          "run_id" => "synthetic-new-run"
+        }
+      end
+      File.write(HQ::AGENTS_FILE, JSON.pretty_generate(records))
+
+      error = begin
+        HQ::RemoteServer.new.send(
+          :route, service, "POST", "/agents/archive",
+          { "keys" => [parent[:key], child[:key]], "expected_work_states" => expected }, nil
+        )
+        nil
+      rescue HQ::RemoteServer::Error => exception
+        exception
+      end
+      assert(error && error.status == 409 && error.details[:work_changed] == true,
+             "expected the store lock to reject a delegate run that changed after confirmation")
+      assert(error.details[:agent_keys] == [child[:key]],
+             "expected the conflict to identify the delegate whose run changed")
+      active = service.agents.map { |agent| agent[:key] }
+      assert(active.include?(parent[:key]) && active.include?(child[:key]),
+             "a work-state conflict must leave every selected agent active")
     ensure
       if running_pid
         begin

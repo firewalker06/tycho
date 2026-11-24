@@ -1574,6 +1574,20 @@ module HQ
       own_process_group?(@pid)
     end
 
+    def archive_work_token
+      work_state = {
+        "running" => running?,
+        "run_id" => last_run&.run_id,
+        "run_count" => run_count,
+        "pid" => running? ? @pid : nil,
+        "started_at" => last_run&.started_at&.iso8601,
+        "queued" => queued_prompts.map { |entry| [entry["id"], entry["source"], entry["state"]] },
+        "latest_inquiry_id" => latest_inquiry_id,
+        "suspended_inquiry_id" => suspended_inquiry_id
+      }
+      Digest::SHA256.hexdigest(JSON.generate(work_state))
+    end
+
     def completed_status_available?
       status_file_paths.any? { |path| valid_status_file?(path) }
     end

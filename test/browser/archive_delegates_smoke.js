@@ -68,15 +68,19 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
   const lastCheckbox = page.locator(`[data-archive-delegate][value="${retainedLast.key}"]`);
   await lastCheckbox.uncheck();
   await page.evaluate(({ parentKey, removeKey }) => {
-    state.agents.reverse();
-    renderAgentArchive(parentKey);
     const removed = findAgent(removeKey);
     state.agents = state.agents.filter(agent => agent.key !== removeKey);
     delete state.agentDetails[removeKey];
-    if (removed) renderAgentArchive(parentKey);
-  }, { parentKey: retainedParent.key, removeKey: retainedFirst.key });
+    renderAgentArchive(parentKey);
+    if (removed) state.agents.push(removed);
+    renderAgentArchive(parentKey);
+  }, { parentKey: retainedParent.key, removeKey: retainedLast.key });
   assert.equal(await page.locator(`[data-archive-delegate][value="${retainedLast.key}"]`).isChecked(), false,
-    "Excluded delegate must stay excluded after catalog reorder and removal");
+    "Excluded delegate must stay excluded after it disappears and returns during the dialog");
+  await page.goto(`${baseUrl}/ui#agents`, { waitUntil: "networkidle" });
+  await page.goto(`${baseUrl}/ui#agent/${retainedParent.key}/archive`, { waitUntil: "networkidle" });
+  assert.equal(await page.locator(`[data-archive-delegate][value="${retainedLast.key}"]`).isChecked(), true,
+    "A new dialog lifetime must select the delegate by default");
 
   const source = await page.evaluate(key => structuredClone(findAgent(key)), unrelated.key);
   const peerParent = { ...source, key: "review-peer/peer-parent", resource_key: "peer-parent", name: "Peer archive parent fixture", server_key: "review-peer",
@@ -84,25 +88,52 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
   const peerChild = { ...source, key: "review-peer/peer-child", resource_key: "peer-child", name: "Peer running delegate fixture", server_key: "review-peer",
     server_name: "Review peer", delegation: { parent: { key: peerParent.key, agent_key: "peer-parent", server_key: "review-peer" }, children: [] },
     running: false, status: "idle" };
+  peerParent.archive_work_token = "peer-parent-idle";
+  peerChild.archive_work_token = "peer-child-run-a";
+  peerChild.running = true;
+  peerChild.status = "running";
+  peerChild.current_run_id = "synthetic-run-a";
   const peerRecords = new Map([["peer-parent", peerParent], ["peer-child", peerChild]]);
   let childReads = 0;
+  let archivePosts = 0;
+  const peerArchivePayloads = [];
   await page.route("**/servers/review-peer/agents/**", async route => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
     if (request.method() === "POST" && pathname === "/servers/review-peer/agents/archive") {
-      const keys = request.postDataJSON().keys;
+      const payload = request.postDataJSON();
+      peerArchivePayloads.push(payload);
+      const keys = payload.keys;
+      archivePosts += 1;
+      if (archivePosts === 1) {
+        const changed = peerRecords.get("peer-child");
+        changed.current_run_id = "synthetic-run-c";
+        changed.archive_work_token = "peer-child-run-c";
+        return route.fulfill({ status: 409, json: {
+          error: "Agent work changed after confirmation. Review it and confirm again.",
+          details: { work_changed: true, agent_keys: ["peer-child"] },
+        } });
+      }
+      assert.deepEqual(payload.expected_work_states, {
+        "peer-parent": "peer-parent-idle", "peer-child": "peer-child-run-c",
+      }, "Retry must bind to the run shown in the latest confirmation");
       await route.fulfill({ json: { archived: keys.map(agent_key => ({ agent_key })), skipped: [], failed: [] } });
       return;
     }
     const rawKey = pathname.split("/").at(-1);
     const record = peerRecords.get(rawKey);
     if (!record) return route.fulfill({ status: 404, json: { error: "Synthetic peer agent missing" } });
-    const response = structuredClone(record);
     if (rawKey === "peer-child") {
       childReads += 1;
+      if (childReads === 2) {
+        record.current_run_id = "synthetic-run-b";
+        record.archive_work_token = "peer-child-run-b";
+      }
+    }
+    const response = structuredClone(record);
+    if (rawKey === "peer-child") {
       response.running = true;
       response.status = "running";
-      response.current_run_id = childReads === 1 ? "synthetic-run-before-confirmation" : "synthetic-run-started-during-confirmation";
     }
     await route.fulfill({ json: { agent: response } });
   });
@@ -114,8 +145,6 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
     navigate({ type: "agentArchive", key: parent.key });
   }, { parent: peerParent, child: peerChild });
   await page.locator("[data-agent-action='archive']").waitFor();
-  const peerArchiveRequest = page.waitForRequest(request =>
-    new URL(request.url()).pathname === "/servers/review-peer/agents/archive" && request.method() === "POST");
   await page.locator("[data-agent-action='archive']").click();
   await page.locator("[data-confirmation-accept]").waitFor();
   const firstConfirmation = await page.locator("#confirmation-description").innerText();
@@ -124,10 +153,13 @@ module.exports = async ({ browser, baseUrl, captureDir }) => {
   await page.locator("[data-confirmation-accept]").click();
   await page.locator("[data-confirmation-accept]").waitFor();
   await page.locator("[data-confirmation-accept]").click();
-  const peerRequest = await peerArchiveRequest;
-  assert.deepEqual(peerRequest.postDataJSON().keys, ["peer-parent", "peer-child"],
+  await page.locator("[data-confirmation-accept]").waitFor();
+  await page.locator("[data-confirmation-accept]").click();
+  for (let attempt = 0; attempt < 50 && archivePosts < 2; attempt += 1) await page.waitForTimeout(100);
+  assert.deepEqual(peerArchivePayloads.at(-1).keys, ["peer-parent", "peer-child"],
     "Peer archive request must use raw keys on the peer server route");
-  assert(childReads >= 3, "Status change during confirmation must trigger a fresh read and confirmation");
+  assert.equal(childReads, 5, "Held-read and archive-conflict races must each trigger fresh reads");
+  assert.equal(archivePosts, 2, "A server conflict must not archive until the user confirms again");
   assert.deepEqual(errors, [], `Unexpected page errors: ${errors.join("; ")}`);
   await context.close();
 };
