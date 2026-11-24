@@ -36,6 +36,7 @@ module RemoteUIOptimisticArchiveTest
           state: {
             agents: agents.map(agent => ({ ...agent })),
             agentDetails: {},
+            archiveDelegateExclusions: new Map(),
             activityAgents: new Map(),
             activityRevision: null,
             activityReadyServerKeys: new Set(),

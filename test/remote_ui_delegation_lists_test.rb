@@ -109,6 +109,14 @@ module RemoteUIDelegationListsTest
       const nowRow = context.renderAgentRow(parent, { useStandardRow: true });
       assert.match(nowRow, /data-open-agent="parent"/, "Now standard rows must keep agent navigation in selection mode");
       assert.doesNotMatch(nowRow, /data-select-agent=/, "Now standard rows must not become archive checkboxes");
+      const runningParentRow = context.renderAgentRow(parent, { useStandardRow: true, delegatedRunningCount: 2 });
+      assert.match(runningParentRow, /delegated-running-count[^>]*>2<\/span>/,
+        "standard rows must retain the delegated running count badge");
+      const archiveChildRow = context.renderAgentRow(child, { archiveSelectable: true, selected: true, delegatedRunningCount: 1 });
+      assert.match(archiveChildRow, /data-archive-delegate\b/,
+        "archive rows must keep the separate delegate checkbox");
+      assert.match(archiveChildRow, /delegated-running-count[^>]*>1<\/span>/,
+        "archive rows must also retain the delegated running count badge");
       console.log("remote_ui_delegation_lists_test: explicit sorts, search, running counts, sibling actions, expansion and bulk selection passed");
     JS
 

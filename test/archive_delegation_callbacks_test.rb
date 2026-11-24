@@ -145,9 +145,11 @@ module ArchiveDelegationCallbacksTest
   def assert_remote_ui_contract
     source = File.read(File.expand_path("../lib/hq/remote_ui/assets/app.js", __dir__))
     required = [
-      "Archive with callback history",
-      "data-confirm=\"Archive with",
-      'entry.source === "delegation_callback"'
+      "async function confirmArchiveSelection(agent, delegateKeys)",
+      'entry.source === "delegation_callback"',
+      "state.bulkArchiveMode && !options.useStandardRow && !options.archiveSelectable",
+      "normalizeAgentResource(data.agent, resourceServer(serverKey))",
+      "error.details?.stopped_agent_keys"
     ]
     missing = required.reject { |text| source.include?(text) }
     assert(missing.empty?, "missing callback archive UI contracts: #{missing.join(", ")}")

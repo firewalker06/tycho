@@ -702,7 +702,7 @@ module HQ
         return ok(service.start_agent(key, body, actor:)) if method == "POST" && tail == ["start"]
         return ok(service.stop_agent(key)) if method == "POST" && tail == ["stop"]
         return created(service.clone_agent(key, body)) if method == "POST" && tail == ["clone"]
-        return ok(service.archive_agent(key)) if method == "POST" && tail == ["archive"]
+        return ok(service.archive_agent(key, body)) if method == "POST" && tail == ["archive"]
       end
 
       if parts.length >= 2 && parts.first == "schedules"
@@ -4464,11 +4464,14 @@ module HQ
       agent_payload(target)
     end
 
-    def archive_agent(key)
+    def archive_agent(key, attrs = {})
+      if attrs["guard_work_state"] == true && attrs["expected_work_token"].to_s.empty?
+        raise Error.new("Missing archive work confirmation", status: 400)
+      end
       target = find_agent!(key)
 
       archived_callback_count = target.queued_prompts.count { |entry| entry["source"] == "delegation_callback" }
-      archive_path = @agent_store.archive_agent!(target.key)
+      archive_path = @agent_store.archive_agent!(target.key, expected_work_token: attrs["expected_work_token"])
       @conversation_blocks_cache.delete(target.key)
       @agent_activity_snapshot.remove!(target.key)
       @push_notification_store.reconcile_agent!(target.key, state: "archived", archived_at: Time.now)
@@ -4482,15 +4485,52 @@ module HQ
       }
     rescue ArgumentError => e
       raise Error.new(e.message, status: e.message.start_with?("Unknown agent") ? 404 : 409)
+    rescue AgentStore::ArchiveWorkChanged => e
+      raise Error.new("Agent work changed after confirmation. Review it and confirm again.", status: 409,
+                      details: { work_changed: true, agent_keys: e.message.split(",") })
+    rescue AgentStore::ArchivePartialFailure => e
+      raise Error.new(e.message, status: 500, details: {
+        archive_partial: true,
+        stopped_agent_keys: e.stopped_agent_keys,
+        affected_agent_keys: e.affected_agent_keys
+      })
     end
 
     def archive_agents(attrs)
       payload = attrs || {}
       keys = Array(payload["keys"]).map { |key| key.to_s.strip }.reject(&:empty?).uniq
       raise Error.new("Missing agent keys") if keys.empty?
+      expected = payload["expected_work_states"]
+      raise Error.new("Invalid archive work confirmation", status: 400) unless expected.nil? || expected.is_a?(Hash)
+      if expected && expected.transform_keys(&:to_s).keys.sort != keys.sort
+        raise Error.new("Archive work confirmation is incomplete", status: 400)
+      end
 
       current = load_all_agents
       agents_by_key = current.to_h { |agent| [agent.key, agent] }
+      if expected
+        unknown = keys.reject { |key| agents_by_key.key?(key) }
+        raise Error.new("Unknown agent: #{unknown.first}", status: 404) unless unknown.empty?
+
+        callback_counts = keys.to_h do |key|
+          [key, agents_by_key.fetch(key).queued_prompts.count { |entry| entry["source"] == "delegation_callback" }]
+        end
+        paths = @agent_store.archive_agents!(keys, expected_work_states: expected.transform_keys(&:to_s))
+        archived = keys.map do |key|
+          target = agents_by_key.fetch(key)
+          @conversation_blocks_cache.delete(target.key)
+          @agent_activity_snapshot.remove!(target.key)
+          @push_notification_store.reconcile_agent!(target.key, state: "archived", archived_at: Time.now)
+          {
+            agent_key: key,
+            archive_path: paths.fetch(key),
+            archived_delegation_callback_count: callback_counts.fetch(key),
+            schedule_reconciled: reconcile_archived_schedule_agent(target)
+          }
+        end
+        return { archived:, skipped: [], failed: [], archive_count: archived.length }
+      end
+
       archived = []
       skipped = []
       failed = []
@@ -4523,6 +4563,15 @@ module HQ
         failed: failed,
         archive_count: archived.length
       }
+    rescue AgentStore::ArchiveWorkChanged => e
+      raise Error.new("Agent work changed after confirmation. Review it and confirm again.", status: 409,
+                      details: { work_changed: true, agent_keys: e.message.split(",") })
+    rescue AgentStore::ArchivePartialFailure => e
+      raise Error.new(e.message, status: 500, details: {
+        archive_partial: true,
+        stopped_agent_keys: e.stopped_agent_keys,
+        affected_agent_keys: e.affected_agent_keys
+      })
     end
 
     def reconcile_archived_schedule_agent(agent)
@@ -5685,6 +5734,7 @@ module HQ
         blocked: status == "blocked",
         run_count: agent.run_count,
         current_run_id: agent.last_run&.run_id,
+        archive_work_token: agent.archive_work_token,
         created_at: agent.created_at&.iso8601,
         started_at: agent.started_at&.iso8601,
         finished_at: agent.finished_at&.iso8601,

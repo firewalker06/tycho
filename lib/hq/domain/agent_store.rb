@@ -22,6 +22,21 @@ module HQ
   class AgentStore
     StaleScheduleTarget = Class.new(StandardError)
     StoppedScheduleTarget = Class.new(StandardError)
+    ArchiveWorkChanged = Class.new(StandardError)
+    class ArchivePartialFailure < StandardError
+      attr_reader :stopped_agent_keys, :affected_agent_keys
+
+      def initialize(error, stopped_agent_keys:, affected_agent_keys:, persistence_error: nil)
+        @stopped_agent_keys = stopped_agent_keys
+        @affected_agent_keys = affected_agent_keys
+        message = if persistence_error
+                    "#{error.message}; could not save stopped agent outcome: #{persistence_error.message}"
+                  else
+                    "#{error.message}; stopped agents remain active with their stop outcome saved"
+                  end
+        super(message)
+      end
+    end
     PALETTE_SIZE = HQ::UI::Rendering::Styles::CHAT_BORDER_PALETTE.length
     SCHEDULE_SYSTEM_PROMPT_TEMPLATE = [
       "This managed agent is owned by the Tycho schedule %{title}.",
@@ -1273,8 +1288,9 @@ module HQ
       end
     end
 
-    def archive_agent!(key, root: AGENT_ARCHIVE_DIR)
-      archive_agents!([key], root:).fetch(key.to_s)
+    def archive_agent!(key, root: AGENT_ARCHIVE_DIR, expected_work_token: nil)
+      expected = expected_work_token.nil? ? nil : { key.to_s => expected_work_token }
+      archive_agents!([key], root:, expected_work_states: expected).fetch(key.to_s)
     end
 
     def archive_context_replacement_source!(key, root: AGENT_ARCHIVE_DIR, replacement: nil)
@@ -1288,12 +1304,22 @@ module HQ
       end
     end
 
-    def archive_agents!(keys, root: AGENT_ARCHIVE_DIR, context_replacement: false, replacement: nil)
+    def archive_agents!(keys, root: AGENT_ARCHIVE_DIR, context_replacement: false, replacement: nil,
+                        expected_work_states: nil)
       with_exclusive_lock do
         agents, = load_with_poll_events_unlocked(process_delegations: false, dispatch_prompt_queues: false)
         requested = Array(keys).map(&:to_s).uniq
         targets = requested.map do |key|
           agents.find { |agent| agent.key == key } || raise(ArgumentError, "Unknown agent: #{key}")
+        end
+        if expected_work_states
+          expected = expected_work_states.to_h.transform_keys(&:to_s)
+          raise ArgumentError, "Archive work confirmation is incomplete" unless expected.keys.sort == requested.sort
+
+          changed = targets.filter_map do |target|
+            target.key unless expected[target.key].to_s == target.archive_work_token
+          end
+          raise ArchiveWorkChanged, changed.join(",") unless changed.empty?
         end
         targets.each { |target| assert_context_replacement_archive_safe_unlocked!(target) } if context_replacement
         if replacement && (!context_replacement || targets.length != 1 ||
@@ -1303,9 +1329,16 @@ module HQ
         end
         source_paths = targets.flat_map(&:log_files)
         transaction = FileTransaction.new([AGENTS_FILE, DELEGATIONS_FILE, *source_paths])
+        archive_snapshots = targets.to_h do |target|
+          [target.key, Marshal.load(Marshal.dump(target.to_hash))]
+        end
+        stopped_snapshots = {}
         destinations = targets.to_h do |target|
           run_aborted = target.running?
           target.retire_for_archive!
+          if run_aborted
+            stopped_snapshots[target.key] = Marshal.load(Marshal.dump(target.to_hash))
+          end
           archived_work = target.archive_pending_work!(run_aborted:)
           target.mark_archived_visibility!(!HQ::Visibility.agent_visible?(target, @projects))
           destination = target.archive_logs!(root)
@@ -1317,8 +1350,31 @@ module HQ
         remaining.unshift(replacement) if replacement
         save_unlocked(remaining, allow_large_reduction: true)
         destinations
-      rescue StandardError
+      rescue StandardError => error
         transaction&.rollback
+        unless stopped_snapshots.to_h.empty?
+          begin
+            partial_agents = agents.map do |target|
+              snapshot = stopped_snapshots.to_h[target.key] || archive_snapshots.to_h[target.key]
+              snapshot ? ManagedAgent.from_hash(snapshot) : target
+            end
+            stopped_targets = partial_agents.select { |target| stopped_snapshots.key?(target.key) }
+            aborted_entries = stopped_targets.flat_map do |target|
+              target.archive_pending_work!(run_aborted: true).fetch(:entries)
+            end
+            save_unlocked(partial_agents, allow_large_reduction: true)
+            reconcile_archived_callbacks(aborted_entries)
+          rescue StandardError => persistence_error
+            raise ArchivePartialFailure.new(
+              error, stopped_agent_keys: stopped_snapshots.keys,
+              affected_agent_keys: stopped_snapshots.keys, persistence_error:
+            ), cause: persistence_error
+          end
+          raise ArchivePartialFailure.new(
+            error, stopped_agent_keys: stopped_snapshots.keys,
+            affected_agent_keys: stopped_snapshots.keys
+          )
+        end
         raise
       end
     end
