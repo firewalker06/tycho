@@ -116,6 +116,10 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir, metadataFixtur
           fs.mkdirSync(captureDir, { recursive: true });
           await page.screenshot({ path: path.join(captureDir, "fixed-slots-large-two-panels.png") });
         }
+        if (captureDir && theme === "dark" && rail === "compact" && width === 1100 && open.join(" ") === "focus") {
+          fs.mkdirSync(captureDir, { recursive: true });
+          await page.screenshot({ path: path.join(captureDir, "fixed-slots-medium-focus.png") });
+        }
         if (captureDir && theme === "dark" && rail === "compact" && width === 1920 && !open.length) await page.screenshot({ path: path.join(captureDir, "fixed-slots-large-one-panel.png") });
         if (captureDir && theme === "dark" && rail === "none" && width === 901 && !open.length) {
           fs.mkdirSync(captureDir, { recursive: true });
