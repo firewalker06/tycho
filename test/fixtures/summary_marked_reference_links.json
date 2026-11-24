@@ -1,0 +1,42 @@
+{
+  "renderer": "Marked 18.0.3",
+  "renderer_url": "https://cdn.jsdelivr.net/npm/marked@18.0.3/lib/marked.umd.js",
+  "cases": [
+    {
+      "name": "ordinary unindented local target",
+      "markdown": "[notes]\n\n[notes]:\ndocs/notes.md",
+      "hrefs": ["docs/notes.md"],
+      "local": true
+    },
+    {
+      "name": "ordinary unindented external target",
+      "markdown": "[notes][]\n\n[notes]:\nhttps://example.test/notes",
+      "hrefs": ["https://example.test/notes"],
+      "local": false
+    },
+    {
+      "name": "first unindented local definition takes precedence",
+      "markdown": "[notes][]\n\n[notes]:\ndocs/notes.md\n[notes]: https://example.test/notes",
+      "hrefs": ["docs/notes.md"],
+      "local": true
+    },
+    {
+      "name": "first unindented external definition takes precedence",
+      "markdown": "[notes][]\n\n[notes]:\nhttps://example.test/notes\n[notes]: docs/notes.md",
+      "hrefs": ["https://example.test/notes"],
+      "local": false
+    },
+    {
+      "name": "nested blockquote unindented local target",
+      "markdown": "> > [notes]\n> >\n> > [notes]:\n> > docs/notes.md",
+      "hrefs": ["docs/notes.md"],
+      "local": true
+    },
+    {
+      "name": "nested blockquote first external definition takes precedence",
+      "markdown": "> > [notes][]\n> >\n> > [notes]:\n> > https://example.test/notes\n> > [notes]: docs/notes.md",
+      "hrefs": ["https://example.test/notes"],
+      "local": false
+    }
+  ]
+}

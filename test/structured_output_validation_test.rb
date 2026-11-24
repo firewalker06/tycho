@@ -13,6 +13,7 @@ module StructuredOutputValidationTest
   module_function
 
   FIXTURE_ROOT = File.expand_path("fixtures/structured_output", __dir__)
+  MARKED_REFERENCE_FIXTURE = File.expand_path("fixtures/summary_marked_reference_links.json", __dir__)
   SCHEMA_PATH = File.expand_path("../config/schemas/agent_result.json", __dir__)
 
   def run!
@@ -146,6 +147,25 @@ module StructuredOutputValidationTest
                "expected Markdown local targets in both Summary locations to be rejected: #{markdown.inspect}")
       else
         assert(result.valid?, "expected valid external or code-only Markdown to pass: #{markdown.inspect}: #{result.errors.inspect}")
+      end
+    end
+
+    renderer_fixtures = JSON.parse(File.read(MARKED_REFERENCE_FIXTURE))
+    renderer_fixtures.fetch("cases").each do |fixture|
+      result = validator.validate(
+        "status" => "success", "summary" => fixture.fetch("markdown"),
+        "summary_sections" => [
+          { "type" => "text", "text" => fixture.fetch("markdown"), "url" => nil, "attachment" => nil }
+        ], "inquiry" => nil, "attachments" => nil, "memory_handoff" => nil
+      )
+      if fixture.fetch("local")
+        paths = result.errors.map { |item| item["path"] }
+        assert(paths.any? { |path| path.start_with?("$.summary.link") } &&
+               paths.any? { |path| path.start_with?("$.summary_sections[0].text.link") },
+               "expected renderer-derived local reference to fail in both Summary fields (#{fixture.fetch("name")}, hrefs: #{fixture.fetch("hrefs")})")
+      else
+        assert(result.valid?,
+               "expected renderer-derived external reference to pass (#{fixture.fetch("name")}, hrefs: #{fixture.fetch("hrefs")}); errors: #{result.errors.inspect}")
       end
     end
   end

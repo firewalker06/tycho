@@ -216,13 +216,17 @@ module HQ
       consumed = 1
       if target.nil?
         continuation = markdown_unquote_reference_line(continuation_line) if continuation_line
-        return [label, nil, consumed] unless continuation&.match?(/\A {1,}\S/)
+        return [label, nil, consumed] unless continuation && !markdown_reference_definition_start?(continuation)
 
         target = markdown_reference_target(continuation.strip)
         consumed = 2 if target
       end
 
       [label, target, consumed]
+    end
+
+    def markdown_reference_definition_start?(line)
+      line.match?(/\A {0,3}\[[^\]]+\]:/)
     end
 
     def markdown_unquote_reference_line(line)
