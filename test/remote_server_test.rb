@@ -2762,6 +2762,12 @@ module RemoteServerTest
       agent = service.create_agent("project_key" => "web", "template_key" => "custom", "name" => "Focus fixture", "prompt" => "Synthetic only")
       key = agent[:key]
       assert(agent[:focus]["revision"] == 0, "new agent Focus must be empty")
+      long_legacy_subtitle = "x" * 81
+      File.write(managed_focus_path = HQ::AgentStore.new(registry.projects).load.find { |entry| entry.key == key }.focus_path,
+                 JSON.generate("revision" => 0, "updated_at" => nil, "sections" => [{ "title" => "Legacy", "subtitle" => long_legacy_subtitle, "icon" => "note", "items" => [] }]))
+      assert(service.agent_focus(key)["sections"][0]["subtitle"] == long_legacy_subtitle,
+             "existing Focus subtitles over the new limit must remain readable")
+      File.delete(managed_focus_path)
       sections = [{ "title" => "Ready for Review", "icon" => "todo_done", "items" => [
         { "title" => "Review changes", "subtitle" => "PR is ready", "attachments" => [{ "type" => "link", "title" => "PR", "url" => "https://github.com/example/web/pull/12" }] }
       ] }]
@@ -2772,10 +2778,58 @@ module RemoteServerTest
       saved = service.update_agent_focus(key, "sections" => sections, "revision" => 0)
       assert(saved["revision"] == 1, "Focus revision must advance")
       assert(service.update_agent_focus(key, "sections" => sections, "revision" => 0) == saved, "exact retries must be safe")
+      at_limit = [{ "title" => "Limit", "subtitle" => "x" * 80, "items" => [{ "title" => "Item", "subtitle" => "y" * 80 }] }]
+      limit_saved = service.update_agent_focus(key, "sections" => at_limit, "revision" => 1)
+      assert(limit_saved["sections"][0]["subtitle"].length == 80 && limit_saved["sections"][0]["items"][0]["subtitle"].length == 80,
+             "80-character Focus subtitles must be accepted")
+      legacy_sections = [
+        { "title" => "Legacy section", "subtitle" => "s" * 81, "icon" => "note", "items" => [
+          Marshal.load(Marshal.dump(sections[0]["items"][0])).merge("subtitle" => "i" * 85),
+          { "title" => "Other item", "subtitle" => "Short item", "attachments" => [] }
+        ] },
+        { "title" => "Other section", "subtitle" => "Short section", "icon" => "blocked", "items" => [] }
+      ]
+      File.write(managed.focus_path, JSON.generate("revision" => 2, "updated_at" => Time.now.utc.iso8601(6), "sections" => legacy_sections))
+      assert(service.agent_focus(key)["sections"] == legacy_sections, "legacy long section and item subtitles must remain readable")
+      edited_legacy_sections = [
+        { "title" => "Inserted section", "subtitle" => "Short inserted section", "icon" => "note", "items" => [] },
+        legacy_sections[1],
+        legacy_sections[0].merge("items" => [legacy_sections[0]["items"][1],
+          { "title" => "Inserted item", "subtitle" => "Short inserted item", "attachments" => [] },
+          legacy_sections[0]["items"][0]])
+      ]
+      saved = service.update_agent_focus(key, "sections" => edited_legacy_sections, "revision" => 2)
+      assert(saved["revision"] == 3, "inserting and reordering unrelated content must advance the revision once")
+      assert(saved["sections"][2]["subtitle"] == legacy_sections[0]["subtitle"] &&
+             saved["sections"][2]["items"][2]["subtitle"] == legacy_sections[0]["items"][0]["subtitle"],
+             "insertion and reordering must preserve legacy section and item subtitles")
+      [
+        [{ "title" => "New section", "subtitle" => "x" * 81, "items" => [] }],
+        [{ "title" => "New section", "items" => [{ "title" => "New item", "subtitle" => "x" * 81 }] }],
+        [legacy_sections[0].merge("subtitle" => "x" * 81), legacy_sections[1]],
+        [legacy_sections[0].merge("items" => [legacy_sections[0]["items"][0].merge("subtitle" => "x" * 81), legacy_sections[0]["items"][1]]), legacy_sections[1]],
+        edited_legacy_sections + [Marshal.load(Marshal.dump(legacy_sections[0]))],
+        [legacy_sections[0].merge("items" => legacy_sections[0]["items"] + [Marshal.load(Marshal.dump(legacy_sections[0]["items"][0]))]), legacy_sections[1]]
+      ].each do |invalid_sections|
+        begin
+          service.update_agent_focus(key, "sections" => invalid_sections, "revision" => 3)
+          raise "new or changed Focus subtitle over 80 characters was accepted"
+        rescue HQ::RemoteServer::Error => e
+          assert(e.status == 422 && e.message.include?("80 characters"), "new or changed overlong Focus subtitle must return a clear validation error")
+        end
+      end
+      assert(service.agent_focus(key)["revision"] == 3, "rejected subtitle edits must not change the revision")
+      begin
+        service.update_agent_focus(key, "sections" => [{ "title" => "Stale", "subtitle" => "z" * 81, "items" => [] }], "revision" => 2)
+        raise "stale Focus write with an overlong subtitle was accepted"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409, "stale Focus writes must keep the revision conflict response")
+      end
+      assert(service.agent_focus(key)["revision"] == 3, "stale Focus writes must not change the revision")
       fresh = HQ::RemoteService.new(registry: registry)
       projected = fresh.agent(key)[:focus]
-      assert(projected["sections"][0]["items"][0]["title"] == "Review changes", "Focus must survive service reload")
-      file = projected["sections"][0]["items"][0]["attachments"].last
+      assert(projected["sections"][2]["items"][2]["title"] == "Review changes", "Focus must survive service reload")
+      file = projected["sections"][2]["items"][2]["attachments"].last
       assert(file["blob_path"].to_s.start_with?("/attachments/"), "Focus files must use the existing attachment endpoint")
       assert(file["title"] == "Read report", "Focus attachment title must be retained")
       begin
@@ -2793,14 +2847,14 @@ module RemoteServerTest
         assert(JSON.parse(output.string) == saved, "CLI and API must share Focus")
         path = File.join(dir, "focus-input.json")
         File.write(path, "[]")
-        assert(HQ::CLICommand.agent_focus(key, { file: path, revision: 1 }, out: StringIO.new) == 0, "Focus CLI replacement must succeed")
+        assert(HQ::CLICommand.agent_focus(key, { file: path, revision: 3 }, out: StringIO.new) == 0, "Focus CLI replacement must succeed")
         assert(service.agent_focus(key)["sections"].empty?, "empty sections must clear Focus")
       end
       service.archive_agent(key)
       archived = HQ::RemoteService.new(registry: registry)
-      assert(archived.agent_focus(key)["revision"] == 2, "Focus must remain readable in archive history")
+      assert(archived.agent_focus(key)["revision"] == 4, "Focus must remain readable in archive history")
       begin
-        archived.update_agent_focus(key, "sections" => sections, "revision" => 2)
+        archived.update_agent_focus(key, "sections" => sections, "revision" => 4)
         raise "archived Focus changed"
       rescue HQ::RemoteServer::Error => e
         assert(e.status == 409, "archived Focus must be read-only")
