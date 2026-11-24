@@ -11573,12 +11573,18 @@ body:has(.resource-block-grid, .resource-grid-page) .app-header { max-width: non
 .resource-block-grid > .group-title { grid-column: 1 / -1; padding: 0 0 10px; }
 .resource-block-grid > .empty-row,
 .schedule-list.resource-block-grid > :not(.schedule-row) { grid-column: 1 / -1; }
-.resource-block-grid > .agent-row,
-.resource-block-grid > .agent-delegation-tree {
+.resource-block-grid > .agent-row {
   min-width: 0;
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow: visible;
+  background: var(--panel);
+}
+.resource-block-grid > .agent-delegation-tree {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
   background: var(--panel);
 }
 .resource-block-grid > .agent-row:last-child { border-bottom-width: 1px; }
