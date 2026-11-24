@@ -161,16 +161,42 @@ module HQ
       end
       return [] unless value.is_a?(String)
 
-      value.scan(/\[[^\]]*\]\(([^)]+)\)/).flatten.each_with_index.filter_map do |target, index|
+      source = markdown_without_code(value)
+      markdown_link_destinations(source).each_with_index.filter_map do |target, index|
         next if valid_http_url?(target)
 
         local_link_error("#{path}.link[#{index}]")
       end
     end
 
+    def markdown_without_code(value)
+      value.gsub(/^\s*(`{3,}|~{3,}).*?^\s*\1\s*$/m, "")
+           .gsub(/(`+)(?!`).*?\1(?!`)/m, "")
+    end
+
+    def markdown_link_destinations(value)
+      references = {}
+      value.scan(/^\s{0,3}\[([^\]]+)\]:\s*(?:<([^>]+)>|(\S+))(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*$/).each do |label, angle, plain|
+        references[normalize_reference_label(label)] = angle || plain
+      end
+
+      inline = value.scan(/(?<!!)\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)/).map { |angle, plain| angle || plain }
+      reference_uses = value.scan(/(?<!!)\[[^\]]*\]\[([^\]]*)\]/).flatten.filter_map do |label|
+        references[normalize_reference_label(label)]
+      end
+      html = value.scan(/<a\b[^>]*\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>/i).map do |double, single, bare|
+        double || single || bare
+      end
+      inline + reference_uses + html
+    end
+
+    def normalize_reference_label(value)
+      value.to_s.strip.downcase.gsub(/\s+/, " ")
+    end
+
     def local_link_error(path)
       error("local_link_not_allowed", path,
-            "Local links are not supported in Summary. Add the local file as a file attachment with its path.")
+            "Summary link targets must use HTTP(S). For a local file, add a file attachment with its path.")
     end
 
     def attachment_target_errors(attachment, path)

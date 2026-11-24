@@ -112,6 +112,31 @@ module StructuredOutputValidationTest
       ], "inquiry" => nil, "attachments" => nil, "memory_handoff" => nil
     )
     assert(external_markdown.valid?, "expected external Markdown and structured links to remain valid: #{external_markdown.errors.inspect}")
+
+    markdown_variants = [
+      "[local][notes]\n\n[notes]: docs/notes.md",
+      '<a href="docs/notes.md">local file</a>',
+      '[external](https://example.test/notes "Notes")',
+      "[external](<https://example.test/notes>)",
+      "`[example](docs/notes.md)`\n\n```html\n<a href=\"docs/notes.md\">code</a>\n```"
+    ]
+    markdown_variants.each_with_index do |markdown, index|
+      result = validator.validate(
+        "status" => "success", "summary" => markdown,
+        "summary_sections" => [
+          { "type" => "text", "text" => markdown, "url" => nil, "attachment" => nil }
+        ], "inquiry" => nil, "attachments" => nil, "memory_handoff" => nil
+      )
+      local_target = index < 2
+      if local_target
+        paths = result.errors.map { |item| item["path"] }
+        assert(paths.any? { |path| path.start_with?("$.summary.link") } &&
+               paths.any? { |path| path.start_with?("$.summary_sections[0].text.link") },
+               "expected Markdown local targets in both Summary locations to be rejected: #{markdown.inspect}")
+      else
+        assert(result.valid?, "expected valid external or code-only Markdown to pass: #{markdown.inspect}: #{result.errors.inspect}")
+      end
+    end
   end
 
   def assert_native_codex_schema_split_contract
