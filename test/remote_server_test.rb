@@ -2289,7 +2289,10 @@ module RemoteServerTest
       [parent, running].each { |agent| File.write(agent[:log_path], "#{agent[:name]}\n") }
       store = HQ::AgentStore.new(service.instance_variable_get(:@projects))
       store.update_agent!(parent[:key]) do |agent|
-        agent.enqueue_prompt!(id: "parent-queued-during-partial-archive", prompt: "Keep this parent work", source: "user")
+        agent.enqueue_prompt!(id: "parent-batch-entry-one", prompt: "Keep batch entry one", source: "user")
+        agent.enqueue_prompt!(id: "parent-batch-entry-two", prompt: "Keep batch entry two", source: "user")
+        agent.open_queue_work_batch!
+        agent.enqueue_prompt!(id: "parent-ordinary-queued-prompt", prompt: "Keep ordinary queued work", source: "user")
       end
       parent_before = service.agent(parent[:key])
       running_pid = Process.spawn(RbConfig.ruby, "-e", "sleep 30", pgroup: true, out: File::NULL, err: File::NULL)
@@ -2327,14 +2330,24 @@ module RemoteServerTest
       active_keys = service.agents.map { |agent| agent[:key] }
       assert((keys - active_keys).empty?, "expected failed group archive to keep parent and child active")
       parent_detail = service.agent(parent[:key])
-      assert(parent_detail.dig(:prompt_queue, "pending_count") == 1,
-             "expected parent queued work to remain pending after child archive failure: #{parent_detail[:prompt_queue].inspect}")
+      assert(parent_detail.dig(:prompt_queue, "pending_count") == 3,
+             "expected ordinary parent queued work to remain pending after child archive failure: #{parent_detail[:prompt_queue].inspect}")
+      parent_agent = store.load.find { |agent| agent.key == parent[:key] }
+      restored_batch = parent_agent.active_queue_work
+      assert(restored_batch && restored_batch["state"] == "open" &&
+               HQ::QueueWork.unresolved_ids(restored_batch).sort == %w[parent-batch-entry-one parent-batch-entry-two],
+             "expected the full parent batch to remain unresolved after child archive failure: #{restored_batch.inspect}")
+      ordinary_entry = parent_agent.queued_prompts.find { |entry| entry["id"] == "parent-ordinary-queued-prompt" }
+      assert(ordinary_entry && ordinary_entry["state"] == "queued",
+             "expected ordinary queued prompt behavior to remain unchanged")
       assert(parent_detail[:last_result] == parent_before[:last_result] && parent_detail[:finished_at] == parent_before[:finished_at],
              "expected parent run outcome to remain unchanged")
       parent_events = File.readlines(parent[:memory_path], chomp: true).reject(&:empty?).map { |line| JSON.parse(line) }
-      queued_event = parent_events.find { |event| event["content"] == "Keep this parent work" }
-      assert(queued_event.nil? || queued_event.dig("metadata", "archived_without_run") != true,
-             "expected parent queue history not to show an abort before archive completed: #{queued_event.inspect}")
+      aborted_early = parent_events.find do |event|
+        %w[Keep\ batch\ entry\ one Keep\ batch\ entry\ two Keep\ ordinary\ queued\ work].include?(event["content"]) &&
+          event.dig("metadata", "archived_without_run") == true
+      end
+      assert(aborted_early.nil?, "expected parent queue history not to show abort before archive completed: #{aborted_early.inspect}")
 
       HQ::ManagedAgent.define_method(:archive_logs!, original_archive_logs)
       retry_expected = keys.to_h { |key| [key, service.agent(key)[:archive_work_token]] }
@@ -2342,10 +2355,14 @@ module RemoteServerTest
       assert(result[:archive_count] == 2, "expected retry to archive parent and child")
       archived_parent = HQ::AgentArchiveStore.new(root: HQ::AGENT_ARCHIVE_DIR).find(parent[:key])&.agent
       archived_events = File.readlines(archived_parent.memory_path, chomp: true).reject(&:empty?).map { |line| JSON.parse(line) }
-      archived_queue_event = archived_events.find { |event| event["content"] == "Keep this parent work" }
-      assert(archived_parent.queued_prompts.empty? && archived_queue_event&.dig("metadata", "archived_without_run") == true &&
-               archived_queue_event.dig("metadata", "queue_work_abort_message") == HQ::ManagedAgent::ARCHIVE_ABORT_MESSAGE,
-             "expected retry to archive the parent queue with canonical abort history")
+      expected_queue_contents = ["Keep batch entry one", "Keep batch entry two", "Keep ordinary queued work"]
+      archived_queue_events = archived_events.select { |event| expected_queue_contents.include?(event["content"]) }
+      assert(archived_parent.queued_prompts.empty? && archived_queue_events.length == expected_queue_contents.length &&
+               archived_queue_events.all? do |event|
+                 event.dig("metadata", "archived_without_run") == true &&
+                   event.dig("metadata", "queue_work_abort_message") == HQ::ManagedAgent::ARCHIVE_ABORT_MESSAGE
+               end,
+             "expected retry to archive the full batch and ordinary queue with canonical abort history: #{archived_queue_events.inspect}")
     ensure
       HQ::ManagedAgent.define_method(:archive_logs!, original_archive_logs)
     end

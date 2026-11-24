@@ -1329,12 +1329,16 @@ module HQ
         end
         source_paths = targets.flat_map(&:log_files)
         transaction = FileTransaction.new([AGENTS_FILE, DELEGATIONS_FILE, *source_paths])
-        archive_snapshots = targets.to_h { |target| [target.key, target.to_hash] }
+        archive_snapshots = targets.to_h do |target|
+          [target.key, Marshal.load(Marshal.dump(target.to_hash))]
+        end
         stopped_snapshots = {}
         destinations = targets.to_h do |target|
           run_aborted = target.running?
           target.retire_for_archive!
-          stopped_snapshots[target.key] = target.to_hash if run_aborted
+          if run_aborted
+            stopped_snapshots[target.key] = Marshal.load(Marshal.dump(target.to_hash))
+          end
           archived_work = target.archive_pending_work!(run_aborted:)
           target.mark_archived_visibility!(!HQ::Visibility.agent_visible?(target, @projects))
           destination = target.archive_logs!(root)

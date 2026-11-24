@@ -1202,6 +1202,7 @@ module HQ
 
       memory = AgentMemory.new(self)
       archived_entries = []
+      marked_queue_reads = []
       batches.each do |batch|
         unresolved = QueueWork.unresolved_ids(batch)
         next if unresolved.empty?
@@ -1220,14 +1221,28 @@ module HQ
             "queue_work_entry_id" => entry["id"].to_s
           )
           metadata["queued_at"] = entry["accepted_at"] unless entry["accepted_at"].to_s.empty?
-          marked = memory.mark_user_message_archived_without_run!(
-            { "queue_work_batch_id" => batch["id"] }, queued_at: entry["accepted_at"],
+          entry_marked = memory.mark_user_message_archived_without_run!(
+            {
+              "queue_work_batch_id" => batch["id"],
+              "queue_work_entry_id" => entry["id"].to_s
+            }, queued_at: entry["accepted_at"],
             delivery_state:, abort_message: message
           )
-          memory.append_user_message!(
-            entry.fetch("prompt"), created_at: archived_at, attachments: entry["attachments"], metadata:,
-            event_id: metadata["prompt_arrival_event_id"]
-          ) unless marked
+          batch_read_marked = false
+          if !entry_marked && !marked_queue_reads.include?(batch["id"]) && !batch["read_id"].to_s.empty?
+            batch_read_marked = memory.mark_user_message_archived_without_run!(
+              { "queue_work_batch_id" => batch["id"] }, queued_at: entry["accepted_at"],
+              delivery_state:, abort_message: message
+            )
+            marked_queue_reads << batch["id"] if batch_read_marked
+          end
+          represented_by_read = !batch["read_id"].to_s.empty? && marked_queue_reads.include?(batch["id"])
+          unless entry_marked || batch_read_marked || represented_by_read
+            memory.append_user_message!(
+              entry.fetch("prompt"), created_at: archived_at, attachments: entry["attachments"], metadata:,
+              event_id: metadata["prompt_arrival_event_id"]
+            )
+          end
         end
         dispositions = entries.map do |entry|
           outcome = if delivered
