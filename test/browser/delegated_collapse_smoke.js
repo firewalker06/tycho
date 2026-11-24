@@ -57,6 +57,18 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       window.installCollapseFixture();
       window.renderDelegatedListFixtures = () => {
         state.agents = window.collapseFixtureAgents;
+        if (!state.agents.some(agent => agent.key === "fixture-cross-project")) {
+          const parent = state.agents.find(agent => agent.key === key);
+          const crossProjectChild = structuredClone(state.agents.find(agent => agent.key === "fixture-child"));
+          crossProjectChild.key = crossProjectChild.resource_key = "fixture-cross-project";
+          crossProjectChild.name = "Cross project delegate";
+          crossProjectChild.project_key = "fixture-other-project";
+          crossProjectChild.running = false;
+          crossProjectChild.status = "idle";
+          parent.delegation.children.push({ key: crossProjectChild.key, agent_key: crossProjectChild.key });
+          state.agents.push(crossProjectChild);
+          window.collapseFixtureAgents = structuredClone(state.agents);
+        }
         state.servers = [{ key: "local", name: "Local", local: true, ready: true, status: "ready" }];
         state.filters.agents = "";
         state.route = { type: "tab", tab: "agents" };
@@ -65,11 +77,16 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           renderAgents({ focusFilter: false });
           const sortedTree = document.querySelector(`[data-agent-tree="${CSS.escape(key)}"]`);
           const sortedChild = sortedTree?.querySelector('[data-open-agent="fixture-child"]');
+          const crossProjectChild = sortedTree?.querySelector('[data-open-agent="fixture-cross-project"]');
           const sortedCount = sortedTree?.querySelector(".delegated-running-count");
-          if (!sortedTree || !sortedChild || !sortedCount || !sortedChild.closest(".agent-delegation-children").hidden) {
+          if (!sortedTree || !sortedChild || !sortedCount || !sortedChild.closest(".agent-delegation-children").hidden ||
+              !crossProjectChild || !crossProjectChild.closest(".agent-delegation-children").hidden) {
             throw new Error(`Agents sort ${sort} did not group and collapse the running child`);
           }
           if (sortedCount.textContent.trim() !== "1") throw new Error(`Agents sort ${sort} running count was ${sortedCount.textContent}`);
+          if (sort.startsWith("project_") && Number(document.querySelector("#agent-results-summary")?.textContent.match(/^(\d+)/)?.[1]) !== state.agents.length) {
+            throw new Error(`Agents project sort result count must include delegated children: expected ${state.agents.length}`);
+          }
         }
         state.agentSort = "agent_name_asc";
         state.filters.agents = "Hidden child";
@@ -152,10 +169,16 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
             !bulkTree.querySelector(`[data-select-agent="${CSS.escape(key)}"]`).checked) {
           throw new Error("Bulk parent and delegated child selections must persist across rerender");
         }
-        state.bulkArchiveMode = false;
-        state.bulkArchiveSelection.clear();
         state.expandedAgentTreeKeys.delete(key);
         state.agentSort = "relevancy";
+        state.route = { type: "tab", tab: "now" };
+        renderNow();
+        if (!document.querySelector(`[data-open-agent="${CSS.escape(key)}"]`) ||
+            document.querySelectorAll("[data-select-agent]").length !== 0) {
+          throw new Error("Agents selection mode must keep agent links and omit checkboxes in Now");
+        }
+        state.bulkArchiveMode = false;
+        state.bulkArchiveSelection.clear();
         state.route = { type: "tab", tab: "agents" };
         renderAgents({ focusFilter: false });
         agentsTree = document.querySelector(`[data-agent-tree="${CSS.escape(key)}"]`);

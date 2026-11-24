@@ -53,7 +53,11 @@ module RemoteUIAssetSnapshotTest
     raise "missing delegated running parent list contract: #{missing.join(", ")}" unless missing.empty?
     raise "delegation controls must use sibling buttons" unless javascript.include?('<div class="agent-delegation-parent-row">')
     raise "delegated rows must restore their disclosure state" unless javascript.include?('class="agent-delegation-children"${expanded ? "" : " hidden"}')
-    raise "bulk mode must keep selection controls in standard grouped rows" unless javascript.include?("if (state.bulkArchiveMode) return renderSelectableAgentRow(agent, options);")
+    raise "bulk mode must preserve standard rows outside Agents" unless javascript.include?("if (state.bulkArchiveMode && !options.useStandardRow) return renderSelectableAgentRow(agent, options);")
+    raise "project groups must receive complete delegation trees rooted by project" unless javascript.include?("const projectAgents = query\n    ? agents\n    : REMOTE_HELPERS.groupAgentsByDelegation(agents, compareAgentsForCurrentSort)")
+    raise "Now agent rows must request the standard row renderer" unless javascript.include?('}, "", { serverIcon: true, useStandardRow: true })).join("")')
+    raise "project detail rows must keep navigation during Agents selection mode" unless javascript.include?('agents.map(agent => renderAgentRow(agent, { useStandardRow: true }))')
+    raise "Agents project rows must use selectable tree rows" unless javascript.include?("trees.map(tree => renderAgentTree(tree, query)).join(\"\")")
     raise "delegated running counts need a visible badge" unless css.include?(".delegated-running-count {")
     raise "delegated disclosure controls need an integrated parent row" unless css.include?(".agent-delegation-parent-row {")
   end
