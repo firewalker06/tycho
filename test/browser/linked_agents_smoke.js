@@ -17,7 +17,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       window.linkedFixtureOwner = structuredClone(findAgent(key));
       window.installLinkedFixture = (mode = "mixed") => {
         const owner = structuredClone(window.linkedFixtureOwner);
-        const ref = (key, name, extra = {}) => ({ key, agent_key: key, name, server_key: "local", state: "active", connected: true, status: "succeeded", ...extra });
+        const ref = (key, name, extra = {}) => ({ key, agent_key: key, name, server_key: "local", project_key: "fixture-web", state: "active", connected: true, status: "succeeded", ...extra });
         const refs = [
           ref("fixture-idle", "Linked idle", { status: "idle" }),
           ref("fixture-input", "Linked awaiting input", { status: "awaiting-input", owner: "user" }),
@@ -27,6 +27,8 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           ref("fixture-unknown", "Unknown catalog entry", { state: "missing", status: "" }),
         ];
         owner.delegation = { children: mode === "old" ? refs.slice(3, 5) : mode === "empty" ? [] : refs };
+        state.projects = state.projects.filter(project => project.key !== "fixture-web");
+        state.projects.push({ key: "fixture-web", resource_key: "fixture-web", server_key: "local", name: "Web" });
         state.agents = state.agents.filter(agent => !agent.key.startsWith("fixture-"));
         window.linkedFixtureAgents = refs.filter(ref => ref.state === "active").map(reference => ({ ...reference, archived: false, running: reference.status === "running", delegation: { parent: { key: owner.key, owner: reference.owner } } }));
         state.agents.push(...structuredClone(window.linkedFixtureAgents));
@@ -50,6 +52,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           agent_key: `fixture-long-${index}`,
           name: `Long list child ${index + 1}`,
           server_key: "local",
+          project_key: "fixture-web",
           state: "active",
           connected: true,
           status: "idle",
@@ -124,6 +127,8 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       const summary = flyout.locator(".linked-agent-history > summary");
       assert.equal(await summary.innerText(), "Archived or disconnected (2)");
       for (const key of ["idle", "input", "running"]) assert(await flyout.locator(`[data-open-agent='fixture-${key}']`).isVisible(), `linked ${key} stays visible`);
+      assert.equal(await flyout.locator("[data-open-agent='fixture-idle'] .agent-reference-copy > span").innerText(), " · Web", "delegated rows show project name instead of server presence");
+      assert(!await flyout.getByText("Online", { exact: true }).count(), "delegated rows do not show online presence");
       assert(await flyout.getByText("Unknown catalog entry", { exact: true }).isVisible());
       assert(!await flyout.getByText("Archived review", { exact: true }).isVisible());
       assert(!await flyout.getByText("Disconnected reports", { exact: true }).isVisible());

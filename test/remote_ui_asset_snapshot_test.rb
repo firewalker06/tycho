@@ -17,6 +17,7 @@ module RemoteUIAssetSnapshotTest
     assert_delegation_callbacks_render_as_complete_delegated_agent_messages
     assert_delegated_summary_attention_icon_is_in_header
     assert_started_agent_notice_uses_started_label_and_project
+    assert_delegated_agent_references_show_project_names
     assert_focused_detail_close_control
     assert_archived_agents_are_reference_only_and_read_only
     assert_agent_status_icons_use_lucide_without_badges
@@ -161,7 +162,7 @@ module RemoteUIAssetSnapshotTest
       '<span class="delegation-event-brand">${block.metadata.event === "agent_created" ? "CREATED" : "STARTED"}</span>',
       'renderAgentReference(reference, { projectName })',
       'return findProject(key)?.name || key;',
-      '${projectPart} · ${escapeHtml(serverHealth)}'
+      '${escapeHtml(projectName || serverDisplayName(server))}${escapeHtml(reportStatus)}'
     ]
     missing = required.reject { |fragment| javascript.include?(fragment) || notice_renderer.include?(fragment) }
     raise "missing started agent notice contract: #{missing.join(", ")}" unless missing.empty?
@@ -173,6 +174,21 @@ module RemoteUIAssetSnapshotTest
       sent_branch.include?('${queued ? "QUEUED" : "SENT"}')
     raise "notice icon still has a border" unless css.include?(".delegation-notice-event .agent-reference .status-mark {") &&
       css[/\.delegation-notice-event \.agent-reference \.status-mark \{.*?\}/m].to_s.include?("border: 0;")
+  end
+
+  def assert_delegated_agent_references_show_project_names
+    javascript = File.read(File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js"))
+    renderer = javascript[/function renderAgentReference\(reference, options = \{\}\).*?^}/m].to_s
+    relationship = javascript[/function renderAgentRelationshipRow\(ownerAgent, reference, childKey,.*?^}/m].to_s
+    required = [
+      "const projectName = options.projectName || startedProjectName(reference);",
+      "${escapeHtml(projectName || serverDisplayName(server))}${escapeHtml(reportStatus)}",
+      "const childProject = child?.project_key ? findProject(child.project_key) : null;",
+      'renderAgentReference(reference, { embedded: true, relationshipRole, projectName })'
+    ]
+    missing = required.reject { |fragment| renderer.include?(fragment) || relationship.include?(fragment) }
+    raise "delegated agent references must show project names: #{missing.join(", ")}" unless missing.empty?
+    raise "delegated agent references still show online status" if renderer.include?('${escapeHtml(serverHealth)}')
   end
 
   def assert_delegated_summary_attention_icon_is_in_header
@@ -479,7 +495,7 @@ module RemoteUIAssetSnapshotTest
       'delegationOrderedAgents(agents)',
       'data-set-delegation-connection',
       'iconSvg(connected ? "unlink" : "link")',
-      'renderAgentReference(reference, { embedded: true, relationshipRole })',
+      'renderAgentReference(reference, { embedded: true, relationshipRole, projectName })',
       'function updateDelegationConnection',
       '/delegation`, { connected: nextConnected }',
       'agent?.archived) return { dock: "", overlay: "" }'

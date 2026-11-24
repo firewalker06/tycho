@@ -16,6 +16,12 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     await page.goto(`${baseUrl}/ui#agent/${agentKey}`, { waitUntil: "networkidle" });
     const card = page.locator(".message.run_summary").filter({ hasText: "Review work is complete." }).first();
     await card.waitFor({ state: "visible" });
+    await page.evaluate(() => {
+      state.projects = state.projects.map(project => project.key === "local/web" ? { ...project, name: "Web" } : project);
+      state.projectDetails["local/web"] = { key: "local/web", resource_key: "web", server_key: "local", name: "Web" };
+      state.renderedViewHtml = "";
+      render();
+    });
     const trigger = card.getByRole("button", { name: "Show delegated actions (5)", exact: true });
     const open = card.getByRole("button", { name: "Open full summary", exact: true });
     assert.equal(await open.innerText(), "", "Summary button must be icon only");
@@ -48,7 +54,8 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       assert.equal(await actions.locator(".agent-row").filter({ hasText: "Pending review" }).locator(".summary-delegated-action-outcome").filter({ hasText: "Started" }).count(), 0);
       assert.equal(await actions.locator('[data-open-agent="web-agent-api-review"]').count(), 3);
       assert.equal(await actions.locator(".agent-row.unavailable").count(), 2);
-      assert.equal(await actions.getByText("Host - Web - Online", { exact: true }).count(), 5, "Each delegated row shows host, project, and server status");
+      assert.deepEqual(await actions.locator(".agent-row .row-title > span").evaluateAll(elements => elements.map(element => element.innerText)), Array(5).fill("Web"), "Each delegated row shows its project name");
+      assert.equal(await actions.getByText("Online", { exact: true }).count(), 0, "Delegated rows omit online presence");
       assert.equal(await actions.locator(".agent-row > .status-mark").count(), 2);
       assert(await actions.locator(".agent-row > .status-mark").first().evaluate(element => {
         const style = getComputedStyle(element);
