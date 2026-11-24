@@ -231,10 +231,29 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     }, agentKey);
     const listFixture = await page.evaluate(() => window.renderDelegatedListFixtures());
     if (captureDir) {
-      await page.evaluate(() => { state.route = { type: "tab", tab: "agents" }; renderAgents({ focusFilter: false }); });
-      await page.screenshot({ path: path.join(captureDir, `${device}-delegated-parent-agents.png`), fullPage: true });
-      await page.evaluate(() => { state.route = { type: "tab", tab: "now" }; renderNow(); });
-      await page.screenshot({ path: path.join(captureDir, `${device}-delegated-parent-now.png`), fullPage: true });
+      const captureAgents = await page.evaluate(() => structuredClone(window.collapseFixtureAgents));
+      const capturePage = await context.newPage();
+      await capturePage.goto(`${baseUrl}/ui#agents`, { waitUntil: "networkidle" });
+      await capturePage.evaluate(agents => {
+        state.agents = agents;
+        state.agentDetails = Object.fromEntries(agents.map(agent => [agent.key, agent]));
+        state.filters.agents = "";
+        state.agentSort = "relevancy";
+        state.bulkArchiveMode = false;
+        state.bulkArchiveSelection.clear();
+        state.activityReadyServerKeys.clear();
+        state.activityAgents.clear();
+        render();
+      }, captureAgents);
+      await capturePage.waitForFunction(key => document.body.dataset.routeTab === "agents" &&
+        document.querySelector(`#view [data-agent-tree="${CSS.escape(key)}"]`), agentKey);
+      await capturePage.screenshot({ path: path.join(captureDir, `${device}-delegated-parent-agents.png`), fullPage: true });
+      await capturePage.evaluate(() => navigate({ type: "tab", tab: "now" }));
+      await capturePage.waitForFunction(key => document.body.dataset.routeTab === "now" &&
+        document.querySelector(`#view [data-agent-tree="${CSS.escape(key)}"]`) &&
+        document.querySelector("#screen-title")?.textContent.includes("Needs attention"), agentKey);
+      await capturePage.screenshot({ path: path.join(captureDir, `${device}-delegated-parent-now.png`), fullPage: true });
+      await capturePage.close();
     }
     await page.evaluate(key => {
       const original = structuredClone(findAgent(key));
