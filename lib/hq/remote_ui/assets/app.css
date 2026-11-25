@@ -10210,10 +10210,11 @@ body:has(.inquiry-form-full-screen) {
     white-space: nowrap;
   }
 
-  .subtitle-polling-paused .subtitle-status-text {
+  .app-header.detail-header .subtitle-status-text {
     overflow: visible;
     text-overflow: clip;
     white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .content {
