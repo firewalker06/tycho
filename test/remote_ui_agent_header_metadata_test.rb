@@ -11,7 +11,7 @@ module RemoteUIAgentHeaderMetadataTest
 
   def run!
     css = File.read(CSS_PATH)
-    wrap_rule = css[/\.app-header\.detail-header \.subtitle-status-text \{([^}]*)\}/, 1]
+    wrap_rule = css[/^[ \t]*\.app-header\.detail-header \.subtitle-status-text \{([^}]*)\}/, 1]
     unless wrap_rule&.include?("white-space: normal") && wrap_rule.include?("overflow-wrap: anywhere")
       raise "mobile detail-header metadata must wrap without clipping"
     end
