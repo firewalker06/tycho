@@ -7,8 +7,15 @@ module RemoteUIAgentHeaderMetadataTest
 
   ROOT = File.expand_path("..", __dir__)
   APP_PATH = File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.js")
+  CSS_PATH = File.join(ROOT, "lib", "hq", "remote_ui", "assets", "app.css")
 
   def run!
+    css = File.read(CSS_PATH)
+    wrap_rule = css[/\.app-header\.detail-header \.subtitle-status-text \{([^}]*)\}/, 1]
+    unless wrap_rule&.include?("white-space: normal") && wrap_rule.include?("overflow-wrap: anywhere")
+      raise "mobile detail-header metadata must wrap without clipping"
+    end
+
     script = <<~'JAVASCRIPT'
       const fs = require("fs");
       const vm = require("vm");

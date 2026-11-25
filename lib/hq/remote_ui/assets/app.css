@@ -10210,7 +10210,7 @@ body:has(.inquiry-form-full-screen) {
     white-space: nowrap;
   }
 
-  body:has([data-agent-workspace]) .app-header.detail-header .subtitle-status-text {
+  .app-header.detail-header .subtitle-status-text {
     overflow: visible;
     text-overflow: clip;
     white-space: normal;
