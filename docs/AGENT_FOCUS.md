@@ -7,9 +7,17 @@ and Summary keep the run history. Focus keeps the latest actionable state.
 The Remote UI shows non-empty Focus in its own peer panel on Conversation.
 Focus is outside the message list and has its own scroll area. Each section has
 a title, optional subtitle, icon, and ordered items. Each item has a title,
-optional subtitle, and attachment links. Empty sections show “No items”. There
-is no default Focus panel or shortcut when the document is absent or empty.
-The Side Conversations switcher can still open an empty Focus panel.
+optional subtitle, completion state, and attachment links. Empty sections show
+“No items”. There is no default Focus panel or shortcut when the document is
+absent or empty. The Side Conversations switcher can still open an empty Focus
+panel.
+
+The Focus panel can edit group and item titles and descriptions, add an item,
+delete a group, or clear all groups and items. Clearing also deletes completed
+work. Users can complete one item or complete/reopen every item in a group. A
+group with all items complete moves below active groups under **Completed** and
+collapses automatically. Users can expand completed groups. The Completed
+heading is hidden when it has no groups.
 
 ## Panel behavior
 
@@ -51,10 +59,12 @@ file contains the **sections array**, not the response object:
     "title": "Ready for Review",
     "subtitle": "Your next actions",
     "icon": "todo_done",
+    "completed": false,
     "items": [
       {
         "title": "Fix user registration",
         "subtitle": "PR #12 is ready",
+        "completed": false,
         "attachments": [
           {
             "type": "link",
@@ -76,8 +86,9 @@ file contains the **sections array**, not the response object:
 
 Supported icons are `todo_done`, `todo_working`, `todo_pending`, `blocked`, and
 `note`. The default is `note`. Titles are required. Subtitles can be omitted or
-null. Items must be an array. Attachments default to an empty array. Text is plain
-text; markup is displayed as text. Array order is display order.
+null. Group and item `completed` fields are optional booleans and default to
+false. Items must be an array. Attachments default to an empty array. Text is
+plain text; markup is displayed as text. Array order is display order.
 
 Link attachments require HTTP or HTTPS URLs without embedded credentials.
 A file attachment uses `{"type":"file","title":"Report","path":"report.md"}`.

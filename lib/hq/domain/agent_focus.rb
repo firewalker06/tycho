@@ -65,7 +65,8 @@ module HQ
       raise Error, "Focus exceeds #{MAX_BYTES} bytes" if JSON.generate(sections).bytesize > MAX_BYTES
       count = 0
       normalized = sections.map do |section|
-        object!(section, %w[title subtitle icon items])
+        object!(section, %w[title subtitle icon items completed])
+        completed = completed_value(section)
         icon = section["icon"] || "note"
         raise Error, "Unknown Focus icon: #{icon}" unless ICONS.include?(icon)
         items = section["items"]
@@ -76,6 +77,7 @@ module HQ
           "title" => text(section["title"], required: true),
           "subtitle" => subtitle(section["subtitle"]),
           "icon" => icon,
+          **(completed ? { "completed" => true } : {}),
           "items" => items.map { |item| normalize_item(item, check_files:) }
         }
       end
@@ -84,14 +86,23 @@ module HQ
     end
 
     def normalize_item(item, check_files:)
-      object!(item, %w[title subtitle attachments])
+      object!(item, %w[title subtitle attachments completed])
+      completed = completed_value(item)
       attachments = item["attachments"] || []
       raise Error, "Focus item must have at most 10 attachments" unless attachments.is_a?(Array) && attachments.length <= 10
       {
         "title" => text(item["title"], required: true),
         "subtitle" => subtitle(item["subtitle"]),
+        **(completed ? { "completed" => true } : {}),
         "attachments" => attachments.map { |attachment| normalize_attachment(attachment, check_files:) }
       }
+    end
+
+    def completed_value(entry)
+      return false unless entry.key?("completed")
+      return entry["completed"] if [true, false].include?(entry["completed"])
+
+      raise Error, "Focus completion must be a boolean"
     end
 
     def subtitle(value)

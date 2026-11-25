@@ -3175,9 +3175,39 @@ module RemoteServerTest
         assert(HQ::CLICommand.agent_focus(key, { file: path, revision: 3 }, out: StringIO.new) == 0, "Focus CLI replacement must succeed")
         assert(service.agent_focus(key)["sections"].empty?, "empty sections must clear Focus")
       end
+      completed = [{ "title" => "Done", "icon" => "todo_done", "completed" => true, "items" => [
+        { "title" => "Finished item", "completed" => true, "attachments" => [] }
+      ] }]
+      completed_saved = service.update_agent_focus(key, "sections" => completed, "revision" => 4)
+      assert(completed_saved["revision"] == 5 && completed_saved["sections"][0]["completed"] && completed_saved["sections"][0]["items"][0]["completed"],
+             "completed groups and items must persist through the revisioned API")
+      begin
+        service.update_agent_focus(key, "sections" => [{ "title" => "Bad state", "completed" => "yes", "items" => [] }], "revision" => 5)
+        raise "invalid Focus completion state accepted"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 422, "invalid completion values must be rejected")
+      end
+      begin
+        service.update_agent_focus(key, "sections" => [], "revision" => 4)
+        raise "stale completion replacement accepted"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409, "completion changes must retain Focus revision conflicts")
+      end
+      with_env_values("TYCHO_CONFIG_PATH" => File.join(dir, "hq.yml"), "TYCHO_SYSTEM_PROMPTS_PATH" => File.join(dir, "system_prompts.yml")) do
+        output = StringIO.new
+        assert(HQ::CLICommand.agent_focus(key, { json: true }, out: output) == 0, "Focus CLI must read completed data")
+        assert(JSON.parse(output.string) == completed_saved, "Focus CLI must preserve completion state")
+        input = File.join(dir, "completed-focus.json")
+        File.write(input, JSON.generate(completed))
+        assert(HQ::CLICommand.agent_focus(key, { file: input, revision: 5 }, out: StringIO.new) == 0,
+               "Focus CLI must accept completed data with the current revision")
+        File.write(input, JSON.generate([{ "title" => "Conflicting edit", "items" => [] }]))
+        assert(HQ::CLICommand.agent_focus(key, { file: input, revision: 4 }, out: StringIO.new, err: StringIO.new) != 0,
+               "stale Focus CLI edits must retain revision conflicts")
+      end
       service.archive_agent(key)
       archived = HQ::RemoteService.new(registry: registry)
-      assert(archived.agent_focus(key)["revision"] == 4, "Focus must remain readable in archive history")
+      assert(archived.agent_focus(key)["revision"] == 5, "Focus must remain readable in archive history")
       begin
         archived.update_agent_focus(key, "sections" => sections, "revision" => 4)
         raise "archived Focus changed"
