@@ -11037,8 +11037,19 @@ rescue Errno::ESRCH, Errno::ECHILD
   nil
 end
 
+summary_attachment_workspace_alias_root = nil
+at_exit { FileUtils.rm_rf(summary_attachment_workspace_alias_root) if summary_attachment_workspace_alias_root }
+
 Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
   fixture = write_fixture(dir)
+  if ENV["TYCHO_REMOTE_UI_SUMMARY_ATTACHMENT_LAYOUT_ONLY"] == "1"
+    summary_attachment_workspace_alias_root = File.join("/tmp", "tycho-919-#{Process.pid}")
+    raise "Synthetic workspace alias already exists" if File.exist?(summary_attachment_workspace_alias_root)
+
+    summary_attachment_workspace = File.join(summary_attachment_workspace_alias_root, "personal", "secondbrain")
+    FileUtils.mkdir_p(File.dirname(summary_attachment_workspace))
+    File.symlink(fixture.fetch(:workspace), summary_attachment_workspace)
+  end
   metadata_fixture = write_project_metadata_lifecycle_fixture(dir, fixture) if ENV["TYCHO_REMOTE_UI_METADATA_LIFECYCLE_ONLY"] == "1"
   agent_key = write_delegated_summary_fixture(fixture) if ENV["TYCHO_REMOTE_UI_ACTION_STRIP_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_DELEGATED_SUMMARY_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_BUTTON_BORDERS_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_UTILITY_BORDERS_ONLY"] == "1"
   if ENV["TYCHO_REMOTE_UI_SUMMARY_IDLE_STOP_ONLY"] == "1"
@@ -11074,6 +11085,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
   env["TYCHO_REMOTE_UI_INQUIRY_LONG_FORM"] = "1" if ENV["TYCHO_REMOTE_UI_INQUIRY_LONG_FORM"] == "1"
   env["TYCHO_REMOTE_UI_INQUIRY_FOCUS_ONLY"] = "1" if ENV["TYCHO_REMOTE_UI_INQUIRY_FOCUS_ONLY"] == "1"
   env["TYCHO_REMOTE_UI_INQUIRY_INITIAL_POSITION_ONLY"] = "1" if ENV["TYCHO_REMOTE_UI_INQUIRY_INITIAL_POSITION_ONLY"] == "1"
+  env["TYCHO_REMOTE_UI_SUMMARY_ATTACHMENT_LAYOUT_WORKSPACE_ALIAS"] = summary_attachment_workspace if summary_attachment_workspace
 
   if ENV["TYCHO_REMOTE_UI_INQUIRY_RECEIPT_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_INQUIRY_CARD_PADDING_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_INQUIRY_FOCUS_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_INQUIRY_INITIAL_POSITION_ONLY"] == "1"
     out, status = Open3.capture2e(env, RbConfig.ruby, "test/browser/inquiry_receipt_fixture.rb", fixture.fetch(:workspace), chdir: ROOT)

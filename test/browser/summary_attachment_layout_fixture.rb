@@ -6,15 +6,24 @@ module SummaryAttachmentLayoutFixture
   module_function
 
   def build(root, workspace)
-    FileUtils.mkdir_p(File.join(workspace, "exports", "updated", "review", "final"))
-    names = [
-      "2026-11-24-Mixed-Tycho_and_Review_Work.md",
-      "2026-11-24_to_2026-11-24-Memory.md"
+    workspace = ENV.fetch("TYCHO_REMOTE_UI_SUMMARY_ATTACHMENT_LAYOUT_WORKSPACE_ALIAS", workspace)
+    files = [
+      ["daily", "2026-11-24-Mixed-Tycho_and_Review_Work.md"],
+      ["weekly", "2026-11-24_to_2026-11-24-Memory.md"],
+      ["activities", "2026-11-24.md"]
     ]
-    paths = names.map { |name| File.join(workspace, "journals", "daily", "2026-11-24", name) }
-    FileUtils.mkdir_p(File.dirname(paths.first))
-    paths.each { |path| File.write(path, "Synthetic attachment content\n") }
-    titles = ["Nov 24 daily journal", "Nov 24 memory synthesis"]
+    paths = files.map do |period, name|
+      if period == "activities"
+        File.join(workspace, "memory", "activities", "2026", "11", name)
+      else
+        File.join(workspace, "journals", period, "2026-11-24", name)
+      end
+    end
+    paths.each { |path| FileUtils.mkdir_p(File.dirname(path)) }
+    [518, 83 * 1024, 72 * 1024].zip(paths).each do |size, path|
+      File.write(path, "x" * size)
+    end
+    titles = ["Nov 24 daily journal", "Nov 24 memory synthesis", "Nov 24 Activity record"]
     attachments = titles.zip(paths).map { |title, path| { "type" => "file", "title" => title, "path" => path } }
     agent = HQ::ManagedAgent.new(
       key: "web-agent-summary-layout", name: "Summary attachment layout", project_key: "web", template_key: "custom",
