@@ -5937,10 +5937,7 @@ details.queue-read-block:not([open]) > .queue-read-body {
 }
 
 .summary-attachment-item {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  grid-auto-flow: column;
-  grid-auto-columns: auto;
+  display: flex;
   align-items: stretch;
   gap: 0;
   min-width: 0;
@@ -5956,6 +5953,8 @@ details.queue-read-block:not([open]) > .queue-read-body {
   border-radius: 0;
   background: transparent;
 }
+.summary-attachment-item > .summary-attachment-row { flex: 1 1 auto; }
+.summary-attachment-item > .ui-icon-button { flex: 0 0 auto; }
 .summary-attachment-item > :first-child { border-radius: 7px 0 0 7px; }
 .summary-attachment-item > :last-child { border-radius: 0 7px 7px 0; }
 .summary-attachment-item > :only-child { border-radius: 7px; }

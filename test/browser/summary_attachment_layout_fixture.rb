@@ -1,0 +1,55 @@
+# frozen_string_literal: true
+
+require_relative "../../lib/hq/domain/managed_agent"
+
+module SummaryAttachmentLayoutFixture
+  module_function
+
+  def build(root, workspace)
+    workspace = ENV.fetch("TYCHO_REMOTE_UI_SUMMARY_ATTACHMENT_LAYOUT_WORKSPACE_ALIAS", workspace)
+    files = [
+      ["daily", "2026-11-24-Mixed-Tycho_and_Review_Work.md"],
+      ["weekly", "2026-11-24_to_2026-11-24-Memory.md"],
+      ["activities", "2026-11-24.md"]
+    ]
+    paths = files.map do |period, name|
+      if period == "activities"
+        File.join(workspace, "memory", "activities", "2026", "11", name)
+      else
+        File.join(workspace, "journals", period, "2026-11-24", name)
+      end
+    end
+    paths.each { |path| FileUtils.mkdir_p(File.dirname(path)) }
+    [518, 83 * 1024, 72 * 1024].zip(paths).each do |size, path|
+      File.write(path, "x" * size)
+    end
+    titles = ["Nov 24 daily journal", "Nov 24 memory synthesis", "Nov 24 Activity record"]
+    attachments = titles.zip(paths).map { |title, path| { "type" => "file", "title" => title, "path" => path } }
+    agent = HQ::ManagedAgent.new(
+      key: "web-agent-summary-layout", name: "Summary attachment layout", project_key: "web", template_key: "custom",
+      workspace:, prompt: "Synthetic long attachment fixture", agent: "codex", model: "gpt-6.1-sol",
+      log_path: File.join(root, "agents", "summary-layout.raw.log")
+    )
+    result = HQ::AgentResultNormalizer.new(workspace:).normalize_structured_result(
+      "status" => "success", "summary" => "Long attachment layout fixture.", "attachments" => attachments,
+      "summary_sections" => [
+        { "type" => "text", "text" => "Delayed update layout fixture." },
+        *attachments.map { |attachment| { "type" => "attachment", "attachment" => attachment } }
+      ]
+    )
+    2.times do |index|
+      time = Time.utc(2026, 11, 22, 4, index)
+      agent.runs << HQ::ManagedAgent::AgentRun.new(run_id: "layout-#{index + 1}", started_at: time,
+                                                finished_at: time + 10, status: "success", exit_code: 0)
+      HQ::AgentMemory.new(agent).append_run_summary!(
+        summary: result.fetch("summary"), status: "success", created_at: time + 10,
+        metadata: result.slice("attachments", "summary_sections").merge("summary_id" => "layout-#{index + 1}", "run_id" => "layout-#{index + 1}", "run_number" => index + 1)
+      )
+    end
+    agent.structured_result = result
+    agent.summary = result.fetch("summary")
+    File.write(File.join(root, "managed_agents.json"), JSON.generate([agent.to_hash]))
+  end
+end
+
+SummaryAttachmentLayoutFixture.build(ENV.fetch("TYCHO_LOGS_ROOT"), ARGV.fetch(0)) if $PROGRAM_NAME == __FILE__

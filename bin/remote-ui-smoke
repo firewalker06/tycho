@@ -616,7 +616,7 @@ def run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_
     const smoke = require(#{File.join(ROOT, "test", "browser", "#{test_name}.js").inspect});
     const inquiryFixture = #{inquiry_fixture.strip};
     (async () => {
-      const browser = process.env.TYCHO_REMOTE_UI_INQUIRY_INITIAL_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_FOCUS_REFRESH_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_COMPOSER_MENUS_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_RESOURCE_GRID_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_INQUIRY_PANEL_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_SUMMARY_VIEW_MODES_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_MOBILE_PROMPT_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_FIXED_SLOTS_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_FOCUS_ATTACHMENTS_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_PANEL_PLACEMENT_WEBKIT === "1" || (#{test_name == "side_conversation_top_smoke"} && process.env.TYCHO_REMOTE_UI_SIDE_TOP_WEBKIT === "1") || (#{test_name == "side_conversation_bounds_smoke"} && process.env.TYCHO_REMOTE_UI_SIDE_BOUNDS_WEBKIT === "1")
+      const browser = process.env.TYCHO_REMOTE_UI_INQUIRY_INITIAL_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_FOCUS_REFRESH_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_COMPOSER_MENUS_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_RESOURCE_GRID_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_INQUIRY_PANEL_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_SUMMARY_VIEW_MODES_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_MOBILE_PROMPT_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_FIXED_SLOTS_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_FOCUS_ATTACHMENTS_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_PANEL_PLACEMENT_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_SUMMARY_ATTACHMENT_LAYOUT_WEBKIT === "1" || (#{test_name == "side_conversation_top_smoke"} && process.env.TYCHO_REMOTE_UI_SIDE_TOP_WEBKIT === "1") || (#{test_name == "side_conversation_bounds_smoke"} && process.env.TYCHO_REMOTE_UI_SIDE_BOUNDS_WEBKIT === "1")
         ? await webkit.launch({ headless: true })
         : await chromium.launch({ executablePath: #{browser.inspect}, headless: true });
       try {
@@ -11037,8 +11037,19 @@ rescue Errno::ESRCH, Errno::ECHILD
   nil
 end
 
+summary_attachment_workspace_alias_root = nil
+at_exit { FileUtils.rm_rf(summary_attachment_workspace_alias_root) if summary_attachment_workspace_alias_root }
+
 Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
   fixture = write_fixture(dir)
+  if ENV["TYCHO_REMOTE_UI_SUMMARY_ATTACHMENT_LAYOUT_ONLY"] == "1"
+    summary_attachment_workspace_alias_root = File.join("/tmp", "tycho-919-#{Process.pid}")
+    raise "Synthetic workspace alias already exists" if File.exist?(summary_attachment_workspace_alias_root)
+
+    summary_attachment_workspace = File.join(summary_attachment_workspace_alias_root, "personal", "secondbrain")
+    FileUtils.mkdir_p(File.dirname(summary_attachment_workspace))
+    File.symlink(fixture.fetch(:workspace), summary_attachment_workspace)
+  end
   metadata_fixture = write_project_metadata_lifecycle_fixture(dir, fixture) if ENV["TYCHO_REMOTE_UI_METADATA_LIFECYCLE_ONLY"] == "1"
   agent_key = write_delegated_summary_fixture(fixture) if ENV["TYCHO_REMOTE_UI_ACTION_STRIP_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_DELEGATED_SUMMARY_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_BUTTON_BORDERS_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_UTILITY_BORDERS_ONLY"] == "1"
   if ENV["TYCHO_REMOTE_UI_SUMMARY_IDLE_STOP_ONLY"] == "1"
@@ -11074,6 +11085,7 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
   env["TYCHO_REMOTE_UI_INQUIRY_LONG_FORM"] = "1" if ENV["TYCHO_REMOTE_UI_INQUIRY_LONG_FORM"] == "1"
   env["TYCHO_REMOTE_UI_INQUIRY_FOCUS_ONLY"] = "1" if ENV["TYCHO_REMOTE_UI_INQUIRY_FOCUS_ONLY"] == "1"
   env["TYCHO_REMOTE_UI_INQUIRY_INITIAL_POSITION_ONLY"] = "1" if ENV["TYCHO_REMOTE_UI_INQUIRY_INITIAL_POSITION_ONLY"] == "1"
+  env["TYCHO_REMOTE_UI_SUMMARY_ATTACHMENT_LAYOUT_WORKSPACE_ALIAS"] = summary_attachment_workspace if summary_attachment_workspace
 
   if ENV["TYCHO_REMOTE_UI_INQUIRY_RECEIPT_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_INQUIRY_CARD_PADDING_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_INQUIRY_FOCUS_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_INQUIRY_INITIAL_POSITION_ONLY"] == "1"
     out, status = Open3.capture2e(env, RbConfig.ruby, "test/browser/inquiry_receipt_fixture.rb", fixture.fetch(:workspace), chdir: ROOT)
@@ -11089,6 +11101,12 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     agent_key = "web-agent-summary-links"
     out, status = Open3.capture2e(env, RbConfig.ruby, "test/browser/summary_links_fixture.rb", fixture.fetch(:workspace), chdir: ROOT)
     raise "Failed to seed Summary links fixture: #{out}" unless status.success?
+  end
+
+  if ENV["TYCHO_REMOTE_UI_SUMMARY_ATTACHMENT_LAYOUT_ONLY"] == "1"
+    agent_key = "web-agent-summary-layout"
+    out, status = Open3.capture2e(env, RbConfig.ruby, "test/browser/summary_attachment_layout_fixture.rb", fixture.fetch(:workspace), chdir: ROOT)
+    raise "Failed to seed Summary attachment layout fixture: #{out}" unless status.success?
   end
 
   if ENV["TYCHO_REMOTE_UI_USAGE_SCOPE_ONLY"] == "1"
@@ -11272,6 +11290,10 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
     end
     if ENV["TYCHO_REMOTE_UI_SUMMARY_IDLE_STOP_ONLY"] == "1"
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "summary_idle_stop_smoke")
+      next
+    end
+    if ENV["TYCHO_REMOTE_UI_SUMMARY_ATTACHMENT_LAYOUT_ONLY"] == "1"
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "summary_attachment_layout_smoke")
       next
     end
     if ENV["TYCHO_REMOTE_UI_ACTIVE_WINDOW_ONLY"] == "1"
