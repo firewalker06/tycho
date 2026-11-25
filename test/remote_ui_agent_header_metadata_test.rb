@@ -36,12 +36,17 @@ module RemoteUIAgentHeaderMetadataTest
       vm.runInContext(`${source.slice(headerStart, headerEnd)}\n${source.slice(start, end)}\nthis.subtitle = focusedWorkspacePollingSubtitle;`, context);
       const expected = "Paused / succeeded / Host / Second Brain / codex / gpt-6.2-sol / low";
       if (context.subtitle() !== expected) throw new Error(`metadata mismatch: ${context.subtitle()}`);
+      if (context.agentHeaderLabel(agent) !== "succeeded / Host / Second Brain / codex / gpt-6.2-sol / low") {
+        throw new Error("Conversation and side-panel header did not include status");
+      }
       agent.running = true;
-      if (!context.subtitle().startsWith("Paused / Running / Host / Second Brain")) {
+      if (!context.subtitle().startsWith("Paused / Running / Host / Second Brain") ||
+          !context.agentHeaderLabel(agent).startsWith("Running / Host / Second Brain")) {
         throw new Error("focused subtitle did not use the current running status");
       }
       agent.model = "new-model";
       if (!context.subtitle().endsWith("new-model / low")) throw new Error("focused subtitle did not use updated metadata");
+      if (!context.agentHeaderLabel(agent).endsWith("new-model / low")) throw new Error("conversation subtitle did not use updated metadata");
     JAVASCRIPT
     _stdout, stderr, status = Open3.capture3("node", "-e", script, APP_PATH)
     raise "Remote UI agent header metadata regression failed: #{stderr.strip}" unless status.success?
