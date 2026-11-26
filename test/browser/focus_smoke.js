@@ -21,6 +21,17 @@ module.exports = async options => {
     assert(response.ok(), await response.text());
     revision = (await response.json()).focus.revision;
   };
+  const waitForFocusState = async (sectionIndex, completed) => {
+    const deadline = Date.now() + 10_000;
+    let focus;
+    while (Date.now() < deadline) {
+      focus = (await (await context.request.get(api)).json()).focus;
+      const section = focus.sections[sectionIndex];
+      if (section && (section.completed === true) === completed) return focus;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    assert.fail(`Focus section ${sectionIndex} did not reach completed=${completed}; latest=${JSON.stringify(focus?.sections?.[sectionIndex])}`);
+  };
   await save([]);
   const page = await context.newPage();
   await page.goto(`${baseUrl}/ui#agent/${agentKey}`, { waitUntil: "networkidle" });
@@ -145,7 +156,9 @@ module.exports = async options => {
   assert.equal(await page.locator(".agent-focus-completed").count(), 0, "adding incomplete work returns its group to active work");
   const addedItem = page.locator(`[data-focus-toggle-item="${reopenedGroupIndex}:1"]`);
   await addedItem.waitFor();
+  await waitForFocusState(reopenedGroupIndex, false);
   await addedItem.check();
+  await waitForFocusState(reopenedGroupIndex, true);
   const reopenedCompleteAction = page.locator(`[data-focus-complete-group="${reopenedGroupIndex}"]`);
   await page.locator('.agent-focus-completed').waitFor();
   assert.equal(await page.locator('.agent-focus-completed').locator(`[data-focus-complete-group="${reopenedGroupIndex}"]`).count(), 1, "item completion returns the group to Completed");
@@ -154,15 +167,9 @@ module.exports = async options => {
   await reopenedDisclosure.click({ force: true });
   assert.equal(await reopenedDisclosure.getAttribute("aria-expanded"), "true", "users can still expand after automatic collapse");
   await reopenedCompleteAction.click();
-  await page.waitForFunction(async ({ api, index }) => {
-    const focus = (await (await fetch(api)).json()).focus;
-    return focus.sections[index]?.completed === false;
-  }, { api, index: reopenedGroupIndex });
+  await waitForFocusState(reopenedGroupIndex, false);
   await reopenedCompleteAction.click();
-  await page.waitForFunction(async ({ api, index }) => {
-    const focus = (await (await fetch(api)).json()).focus;
-    return focus.sections[index]?.completed === true;
-  }, { api, index: reopenedGroupIndex });
+  await waitForFocusState(reopenedGroupIndex, true);
   await page.locator('.agent-focus-completed').waitFor();
   assert.equal(await page.locator('.agent-focus-completed [data-focus-section]').getAttribute("aria-expanded"), "false", "group completion after reopen collapses again");
   const assertFocusedInsideFocusScroll = async () => page.evaluate(() => {
@@ -217,6 +224,53 @@ module.exports = async options => {
       const form = active?.closest(`[data-focus-edit-form="${agentKey}"]`);
       return active?.dataset.focusEditField === "subtitle" && form?.dataset.focusSectionIndex === "1";
     }, { agentKey }), true, "late success preserves newer editor focus");
+    await page.unroute(api);
+
+    await save([{ title: "Same editor", subtitle: "Original", items: [{ title: "Task" }] }]);
+    await page.evaluate(() => refreshAgentFocus(parseRoute().key));
+    await page.evaluate(() => refresh({ force: true }));
+    let releaseSameEditorSave;
+    let startSameEditorSave;
+    const sameEditorSaveGate = new Promise(resolve => { releaseSameEditorSave = resolve; });
+    const sameEditorSaveStarted = new Promise(resolve => { startSameEditorSave = resolve; });
+    let holdFirstSameEditorPut = true;
+    let retryRevision = null;
+    await page.route(api, async route => {
+      if (route.request().method() === "PUT" && holdFirstSameEditorPut) {
+        holdFirstSameEditorPut = false;
+        startSameEditorSave();
+        await sameEditorSaveGate;
+        await route.continue();
+      } else {
+        if (route.request().method() === "PUT") retryRevision = route.request().postDataJSON().revision;
+        await route.continue();
+      }
+    });
+    await page.locator('[data-focus-edit-group="0"]').click();
+    const sameEditor = page.locator(`[data-focus-edit-form="${agentKey}"][data-focus-section-index="0"]`);
+    await sameEditor.locator('[data-focus-edit-field="title"]').fill("Submitted title");
+    await sameEditor.locator('[data-focus-edit-field="subtitle"]').fill("Submitted details");
+    await sameEditor.getByRole("button", { name: "Save group" }).click();
+    await sameEditorSaveStarted;
+    await sameEditor.locator('[data-focus-edit-field="title"]').fill("Newer title while saving");
+    await sameEditor.locator('[data-focus-edit-field="subtitle"]').fill("Newer details while saving");
+    await sameEditor.locator('[data-focus-edit-field="subtitle"]').focus();
+    releaseSameEditorSave();
+    await page.waitForFunction(({ api }) => {
+      const focus = state.agentFocusSnapshots.get(parseRoute().key)?.data;
+      return focus?.sections?.[0]?.title === "Submitted title";
+    }, { api });
+    await sameEditor.waitFor();
+    assert.equal(await sameEditor.locator('[data-focus-edit-field="title"]').inputValue(), "Newer title while saving");
+    assert.equal(await sameEditor.locator('[data-focus-edit-field="subtitle"]').inputValue(), "Newer details while saving");
+    assert.equal(await page.evaluate(() => document.activeElement?.dataset.focusEditField), "subtitle", "late success keeps focus in the newer same-editor draft");
+    const acceptedRevision = (await (await context.request.get(api)).json()).focus.revision;
+    await sameEditor.getByRole("button", { name: "Save group" }).click();
+    await page.waitForFunction(() => state.agentFocusSnapshots.get(parseRoute().key)?.data?.sections?.[0]?.title === "Newer title while saving");
+    const afterRetry = (await (await context.request.get(api)).json()).focus;
+    assert.equal(afterRetry.sections[0].title, "Newer title while saving", "the retained same-editor draft can be saved");
+    assert.equal(afterRetry.sections[0].subtitle, "Newer details while saving");
+    assert.equal(retryRevision, acceptedRevision, "the next save uses the revision accepted by the late reply");
     await page.unroute(api);
 
     await save([{ title: "Group A", items: [{ title: "Task A" }] }, { title: "Group B", items: [{ title: "Task B" }] }]);
