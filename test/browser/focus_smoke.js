@@ -4,6 +4,7 @@ const run6Smoke = require("./focus_run6_smoke");
 const run7Smoke = require("./focus_run7_smoke");
 const run9Smoke = require("./focus_run9_smoke");
 const run10Smoke = require("./focus_run10_smoke");
+const run11Smoke = require("./focus_run11_smoke");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -193,6 +194,7 @@ module.exports = async options => {
   await run7Smoke({ context, page, api, agentKey, save, waitForFocus });
   await run9Smoke({ context, page, api, agentKey, save, waitForFocus });
   await run10Smoke({ context, page, api, agentKey, save, waitForFocus });
+  await run11Smoke({ context, page, api, agentKey, save, waitForFocus });
   await page.locator(".agent-focus-completed .agent-focus-section-toggle").click();
   assert.equal(await page.locator(".agent-focus-completed .agent-focus-section-toggle").getAttribute("aria-expanded"), "true", "users can expand a completed group");
   await page.locator(".agent-focus-completed .agent-focus-section-toggle").click();
