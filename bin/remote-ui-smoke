@@ -11218,7 +11218,9 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       next
     end
     if ENV["TYCHO_REMOTE_UI_INQUIRY_RECEIPT_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_INQUIRY_CARD_PADDING_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_INQUIRY_FOCUS_ONLY"] == "1" || ENV["TYCHO_REMOTE_UI_INQUIRY_INITIAL_POSITION_ONLY"] == "1"
-      test_name = if ENV["TYCHO_REMOTE_UI_INQUIRY_INITIAL_POSITION_ONLY"] == "1"
+      test_name = if ENV["TYCHO_REMOTE_UI_CARD_922_RESIZE_ONLY"] == "1"
+                    "card_922_resize_smoke"
+                  elsif ENV["TYCHO_REMOTE_UI_INQUIRY_INITIAL_POSITION_ONLY"] == "1"
                     "inquiry_initial_position_smoke"
                   elsif ENV["TYCHO_REMOTE_UI_INQUIRY_FOCUS_ONLY"] == "1"
                     "inquiry_focus_layout_smoke"
