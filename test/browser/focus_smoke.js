@@ -36,8 +36,14 @@ module.exports = async options => {
     const section = focus.sections[sectionIndex];
     return Boolean(section) && (section.completed === true) === completed;
   });
+  const waitForFocusWrites = () => page.waitForFunction(key => {
+    const queue = state.agentFocusWriteQueues.get(key);
+    return !queue || (!queue.running && queue.pending.length === 0);
+  }, agentKey);
   await save([]);
   const page = await context.newPage();
+  const pageErrors = [];
+  page.on("pageerror", error => pageErrors.push(`${error.name}: ${error.message}\n${error.stack || ""}`));
   await page.goto(`${baseUrl}/ui#agent/${agentKey}`, { waitUntil: "networkidle" });
   await page.locator("#prompt-input").waitFor();
   assert.equal(await page.locator("[data-agent-focus]").count(), 0);
@@ -167,10 +173,6 @@ module.exports = async options => {
     await context.close();
     return;
   }
-  if (browser.browserType().name() === "webkit") {
-    await context.close();
-    return;
-  }
   await page.locator(".agent-focus-completed .agent-focus-section-toggle").click();
   assert.equal(await page.locator(".agent-focus-completed .agent-focus-section-toggle").getAttribute("aria-expanded"), "true", "users can expand a completed group");
   await page.locator(".agent-focus-completed .agent-focus-section-toggle").click();
@@ -188,6 +190,7 @@ module.exports = async options => {
   let afterInlineConflict = (await (await context.request.get(api)).json()).focus;
   assert.deepEqual(afterInlineConflict.sections.map(section => section.title), ["Concurrent shipped", "Shipped work"], "inline edit conflict preserves the concurrent document");
   assert.equal(await conflictedEdit.locator('[data-focus-edit-field="title"]').inputValue(), "Stale group edit", "failed stale edit keeps its draft for retry");
+  await waitForFocusWrites();
   await conflictedEdit.locator('[data-focus-edit-field="title"]').press("Escape");
   const groupEditButton = page.locator('[data-focus-edit-group="0"]');
   await groupEditButton.focus();
@@ -200,21 +203,51 @@ module.exports = async options => {
   await groupForm.locator('[data-focus-edit-field="title"]').fill("Release work edited");
   await groupForm.locator('[data-focus-edit-field="subtitle"]').fill("Updated group");
   await groupForm.locator('[data-focus-edit-field="subtitle"]').press("Enter");
-  await page.getByText("Release work edited", { exact: true }).waitFor();
+  await waitForFocus(focus => focus.sections[0]?.title === "Release work edited");
+  await waitForFocusWrites();
   await page.locator('[data-focus-edit-group="0"]').waitFor();
   assert.equal(await page.evaluate(() => document.activeElement?.matches('[data-focus-edit-group="0"]')), true, "saving restores focus to the Edit action");
   assert.equal(await page.locator(".agent-focus-completed").innerText().then(text => text.includes("Shipped work")), true, "completed groups stay in Completed after an active group is edited");
   const editedGroupActive = page.locator('.agent-focus-section').filter({ hasText: "Release work edited" });
   await editedGroupActive.locator('[data-focus-toggle-item]').nth(0).check();
-  await page.waitForTimeout(150);
+  await waitForFocusState(0, false);
+  await waitForFocusWrites();
   await editedGroupActive.locator('[data-focus-toggle-item]').nth(1).check();
+  await waitForFocusState(0, true);
+  await waitForFocusWrites();
   await page.locator(".agent-focus-completed").getByText("Release work edited", { exact: true }).waitFor();
   assert.equal(await page.locator('.agent-focus-completed [data-focus-section]').last().getAttribute("aria-expanded"), "false", "a fully completed group moves below Completed and collapses");
   await page.locator('[data-focus-complete-group="0"]').click();
+  await waitForFocusState(0, false);
+  await waitForFocusWrites();
   await page.locator(".agent-focus-section").first().getByText("Release work edited", { exact: true }).waitFor();
-  await page.locator('.agent-focus-section').filter({ hasText: "Release work edited" }).locator('[data-focus-edit-item]').first().click();
+  const itemEditTrigger = page.locator('.agent-focus-section').filter({ hasText: "Release work edited" }).locator('[data-focus-edit-item]').first();
+  const itemTriggerInfo = await itemEditTrigger.evaluate(button => ({
+    label: button.getAttribute("aria-label"),
+    item: button.dataset.focusEditItem,
+    agent: button.dataset.focusAgent,
+    text: button.innerText,
+    rect: (() => { const { x, y, width, height } = button.getBoundingClientRect(); return { x, y, width, height }; })(),
+  }));
+  await page.evaluate(() => {
+    window.__focusItemClickTrace = [];
+    els.view.addEventListener("click", event => {
+      const target = event.target.closest?.("[data-focus-edit-group], [data-focus-edit-item]");
+      if (target) window.__focusItemClickTrace.push({ group: target.dataset.focusEditGroup, item: target.dataset.focusEditItem, tag: event.target.tagName });
+    }, true);
+  });
+  await itemEditTrigger.click();
   const itemEditForm = page.locator(`[data-focus-edit-form="${agentKey}"][data-focus-item-index="0"]`);
-  await itemEditForm.waitFor();
+  try {
+    await itemEditForm.waitFor({ state: "visible", timeout: 5000 });
+  } catch (error) {
+    const itemEditState = await page.evaluate(key => ({
+      trace: window.__focusItemClickTrace,
+      edit: state.agentFocusEditingEntries.get(key) && { sectionIndex: state.agentFocusEditingEntries.get(key).sectionIndex, itemIndex: state.agentFocusEditingEntries.get(key).itemIndex },
+      forms: [...document.querySelectorAll(`[data-focus-edit-form="${CSS.escape(key)}"]`)].map(form => ({ section: form.dataset.focusSectionIndex, item: form.dataset.focusItemIndex })),
+    }), agentKey);
+    assert.fail(`item text opens its inline editor: ${JSON.stringify({ itemTriggerInfo, itemEditState, pageErrors })}; ${error.message}`);
+  }
   assert.equal(await itemEditForm.locator("input[type=text]").count(), 2, "item edit uses two ordinary single-line inputs");
   assert.equal(await itemEditForm.locator("textarea").count(), 0, "item edit has no textarea");
   await itemEditForm.locator('[data-focus-edit-field="title"]').fill("Discarded task title");
