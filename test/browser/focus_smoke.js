@@ -91,7 +91,8 @@ module.exports = async options => {
   await page.getByText("Focus changed elsewhere. The latest version is loaded. Retry your edit.").waitFor();
   let afterInlineConflict = (await (await context.request.get(api)).json()).focus;
   assert.deepEqual(afterInlineConflict.sections.map(section => section.title), ["Release work", "Concurrent shipped"], "inline edit conflict preserves the concurrent document");
-  await page.evaluate(() => refreshAgentFocus(parseRoute().key));
+  assert.equal(await conflictedEdit.locator('[data-focus-edit-field="title"]').inputValue(), "Stale group edit", "failed stale edit keeps its draft for retry");
+  await conflictedEdit.locator('[data-focus-edit-field="title"]').press("Escape");
   const groupEditButton = page.locator('[data-focus-edit-group="0"]');
   await groupEditButton.focus();
   await page.keyboard.press("Enter");
@@ -153,10 +154,130 @@ module.exports = async options => {
   await reopenedDisclosure.click({ force: true });
   assert.equal(await reopenedDisclosure.getAttribute("aria-expanded"), "true", "users can still expand after automatic collapse");
   await reopenedCompleteAction.click();
-  await page.locator(`[data-focus-section]`).first().waitFor();
+  await page.waitForFunction(async ({ api, index }) => {
+    const focus = (await (await fetch(api)).json()).focus;
+    return focus.sections[index]?.completed === false;
+  }, { api, index: reopenedGroupIndex });
   await reopenedCompleteAction.click();
+  await page.waitForFunction(async ({ api, index }) => {
+    const focus = (await (await fetch(api)).json()).focus;
+    return focus.sections[index]?.completed === true;
+  }, { api, index: reopenedGroupIndex });
   await page.locator('.agent-focus-completed').waitFor();
   assert.equal(await page.locator('.agent-focus-completed [data-focus-section]').getAttribute("aria-expanded"), "false", "group completion after reopen collapses again");
+  const assertFocusedInsideFocusScroll = async () => page.evaluate(() => {
+    const focus = document.querySelector("[data-agent-focus]");
+    const scroll = focus?.querySelector(".agent-focus-scroll");
+    const active = document.activeElement;
+    if (!focus || !scroll || !active || !focus.contains(active)) return false;
+    const viewport = scroll.getBoundingClientRect();
+    const target = active.getBoundingClientRect();
+    return scroll.scrollTop > 0 && target.top >= viewport.top && target.bottom <= viewport.bottom;
+  });
+
+  // Late success and failure for group A must preserve a newer group B draft and focus.
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await save([{ title: "Group A", items: [{ title: "Task A" }] }, { title: "Group B", items: [{ title: "Task B" }] }]);
+    await page.evaluate(() => refreshAgentFocus(parseRoute().key));
+    await page.evaluate(() => refresh({ force: true }));
+
+    let releaseSave;
+    let startSave;
+    const saveGate = new Promise(resolve => { releaseSave = resolve; });
+    const saveStarted = new Promise(resolve => { startSave = resolve; });
+    await page.route(api, async route => {
+      if (route.request().method() === "PUT") {
+        startSave();
+        await saveGate;
+      }
+      await route.continue();
+    });
+    await page.locator('[data-focus-edit-group="0"]').click();
+    const editA = page.locator(`[data-focus-edit-form="${agentKey}"][data-focus-section-index="0"]`);
+    await editA.locator('[data-focus-edit-field="title"]').fill("Group A saved");
+    await editA.getByRole("button", { name: "Save group" }).click();
+    await saveStarted;
+    await page.locator('[data-focus-edit-group="1"]').click();
+    const editB = page.locator(`[data-focus-edit-form="${agentKey}"][data-focus-section-index="1"]`);
+    await editB.locator('[data-focus-edit-field="title"]').fill("Group B newer draft");
+    await editB.locator('[data-focus-edit-field="subtitle"]').fill("Keep this draft and focus");
+    await editB.locator('[data-focus-edit-field="subtitle"]').focus();
+    releaseSave();
+    await page.waitForFunction(async api => (await (await fetch(api)).json()).focus.sections[0]?.title === "Group A saved", api);
+    await page.waitForFunction(({ agentKey }) => {
+      const form = document.querySelector(`[data-focus-edit-form="${agentKey}"][data-focus-section-index="1"]`);
+      return form && document.activeElement === form.querySelector('[data-focus-edit-field="subtitle"]');
+    }, { agentKey });
+    await editB.waitFor();
+    assert.equal(await editB.locator('[data-focus-edit-field="title"]').inputValue(), "Group B newer draft");
+    assert.equal(await editB.locator('[data-focus-edit-field="subtitle"]').inputValue(), "Keep this draft and focus");
+    assert.equal(await page.evaluate(({ agentKey }) => {
+      const active = document.activeElement;
+      const form = active?.closest(`[data-focus-edit-form="${agentKey}"]`);
+      return active?.dataset.focusEditField === "subtitle" && form?.dataset.focusSectionIndex === "1";
+    }, { agentKey }), true, "late success preserves newer editor focus");
+    await page.unroute(api);
+
+    await save([{ title: "Group A", items: [{ title: "Task A" }] }, { title: "Group B", items: [{ title: "Task B" }] }]);
+    await page.evaluate(() => refreshAgentFocus(parseRoute().key));
+    await page.evaluate(() => refresh({ force: true }));
+    let releaseFailure;
+    let startFailure;
+    const failureGate = new Promise(resolve => { releaseFailure = resolve; });
+    const failureStarted = new Promise(resolve => { startFailure = resolve; });
+    await page.route(api, async route => {
+      if (route.request().method() === "PUT") {
+        startFailure();
+        await failureGate;
+        await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "Synthetic save failure" }) });
+      } else await route.continue();
+    });
+    await page.locator('[data-focus-edit-group="0"]').click();
+    const failedEditA = page.locator(`[data-focus-edit-form="${agentKey}"][data-focus-section-index="0"]`);
+    await failedEditA.locator('[data-focus-edit-field="title"]').fill("Group A failed save");
+    await failedEditA.getByRole("button", { name: "Save group" }).click();
+    await failureStarted;
+    await page.locator('[data-focus-edit-group="1"]').click();
+    const failedEditB = page.locator(`[data-focus-edit-form="${agentKey}"][data-focus-section-index="1"]`);
+    await failedEditB.locator('[data-focus-edit-field="title"]').fill("Group B failed-save draft");
+    await failedEditB.locator('[data-focus-edit-field="subtitle"]').fill("Keep after failure");
+    await failedEditB.locator('[data-focus-edit-field="subtitle"]').focus();
+    releaseFailure();
+    await page.getByText("Could not save Focus: Synthetic save failure").waitFor();
+    await failedEditB.waitFor();
+    assert.equal(await failedEditB.locator('[data-focus-edit-field="title"]').inputValue(), "Group B failed-save draft");
+    assert.equal(await failedEditB.locator('[data-focus-edit-field="subtitle"]').inputValue(), "Keep after failure");
+    assert.equal(await page.evaluate(({ agentKey }) => {
+      const active = document.activeElement;
+      const form = active?.closest(`[data-focus-edit-form="${agentKey}"]`);
+      return active?.dataset.focusEditField === "subtitle" && form?.dataset.focusSectionIndex === "1";
+    }, { agentKey }), true, "late failure preserves newer editor focus");
+    await page.unroute(api);
+  }
+
+  // Edit, cancel, and save a lower item at both widths. Keep the edit inside the panel viewport.
+  const longItems = Array.from({ length: 35 }, (_, index) => ({ title: `Long task ${index + 1}`, subtitle: "Long-list item", attachments: [] }));
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await save([{ title: "Long list", items: longItems }]);
+    await page.evaluate(() => refreshAgentFocus(parseRoute().key));
+    await page.evaluate(() => refresh({ force: true }));
+    await page.locator(".agent-focus-scroll").evaluate(element => { element.scrollTop = element.scrollHeight; });
+    await page.locator('[data-focus-edit-item="0:34"]').click();
+    const lowerForm = page.locator(`[data-focus-edit-form="${agentKey}"][data-focus-item-index="34"]`);
+    await lowerForm.waitFor();
+    assert.equal(await assertFocusedInsideFocusScroll(), true, "starting a lower edit keeps its focused input visible");
+    await lowerForm.locator('[data-focus-edit-field="title"]').press("Escape");
+    await page.locator('[data-focus-edit-item="0:34"]').waitFor();
+    assert.equal(await assertFocusedInsideFocusScroll(), true, "cancel keeps the lower edit control visible");
+    await page.locator('[data-focus-edit-item="0:34"]').click();
+    const lowerSaveForm = page.locator(`[data-focus-edit-form="${agentKey}"][data-focus-item-index="34"]`);
+    await lowerSaveForm.locator('[data-focus-edit-field="title"]').fill("Long task 35 saved");
+    await lowerSaveForm.getByRole("button", { name: "Save item" }).click();
+    await page.getByText("Long task 35 saved", { exact: true }).waitFor();
+    assert.equal(await assertFocusedInsideFocusScroll(), true, "save keeps the lower edit action visible");
+  }
   // Hold the manual refresh response after Delete captures its document. A
   // concurrent reorder must conflict instead of deleting the new index 0.
   await save([{ title: "Group A", items: [{ title: "Keep A" }] }, { title: "Group B", items: [{ title: "Keep B" }] }]);
