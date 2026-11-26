@@ -11151,14 +11151,14 @@ body:has(.agent-workspace.has-focus-panel) { overflow: hidden; }
   gap: 6px;
   min-width: 0;
 }
-.agent-focus-heading-main { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: start; gap: 10px; min-width: 0; }
+.agent-focus-heading-main { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 10px; min-width: 0; }
 .agent-focus-heading-main > .agent-focus-icon { margin-top: 4px; }
 .agent-focus-heading-main > .agent-focus-edit-form,
 .agent-focus-section-copy { grid-column: 2; }
 .agent-focus-section-copy { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: start; gap: 8px; }
 .agent-focus-edit-form-item { grid-column: 2; }
 .agent-focus-edit-form .ui-input { min-width: 0; min-height: 44px; padding: 8px 10px; }
-.agent-focus-item-row { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: start; gap: 4px; }
+.agent-focus-item-row { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; gap: 4px; }
 .agent-focus-item-checkbox { display: inline-grid; place-items: center; width: 44px; min-width: 44px; min-height: 44px; margin: 0; cursor: pointer; }
 .agent-focus-item-checkbox input { inline-size: 18px; block-size: 18px; margin: 0; accent-color: var(--text); cursor: pointer; }
 .agent-focus-item-checkbox input:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
@@ -11173,7 +11173,6 @@ body:has(.agent-workspace.has-focus-panel) { overflow: hidden; }
 .agent-focus-section-toggle { grid-column: 3; min-width: 44px; min-height: 44px; padding: 12px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; }
 .agent-focus-section-toggle:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--text); }
 .agent-focus-section-toggle:focus-visible { outline: 2px solid var(--text); outline-offset: 1px; }
-.agent-focus-section-toggle[aria-expanded="false"] svg { transform: rotate(-90deg); }
 .agent-focus-item > button { float: none; }
 .agent-focus-item { position: relative; }
 .agent-focus-item.is-completed .agent-focus-item-text strong { color: var(--muted); text-decoration: line-through; }
