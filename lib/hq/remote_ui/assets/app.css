@@ -11206,7 +11206,7 @@ body:has(.agent-workspace.has-focus-panel) { overflow: hidden; }
   }
   .agent-focus-heading { grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
   .agent-focus-entry-actions { justify-content: flex-end; width: auto; }
-  .agent-focus-edit-form { grid-template-columns: minmax(0, 1fr) auto; }
+  .agent-focus-edit-form { grid-template-columns: minmax(0, 1fr); }
   .agent-focus-panel-heading { align-items: flex-start; }
   .agent-focus-panel-actions { flex-wrap: wrap; justify-content: flex-end; }
 }
