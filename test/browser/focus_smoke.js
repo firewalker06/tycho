@@ -2,13 +2,14 @@ const assert = require("node:assert/strict");
 const fixedSlots = require("./fixed_panel_slots_smoke");
 const run6Smoke = require("./focus_run6_smoke");
 const run7Smoke = require("./focus_run7_smoke");
+const run9Smoke = require("./focus_run9_smoke");
 const fs = require("node:fs");
 const path = require("node:path");
 
 // Fixed slots supersede fit-based accordion defaults. Keep the Focus-only entry
 // point on the same layout assertions, plus late-document and API guards.
 module.exports = async options => {
-  await fixedSlots(options);
+  if (process.env.TYCHO_REMOTE_UI_FOCUS_RUN9_ONLY !== "1") await fixedSlots(options);
   const { browser, baseUrl, agentKey } = options;
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, hasTouch: true });
   const api = `${baseUrl}/agents/${agentKey}/focus`;
@@ -169,12 +170,18 @@ module.exports = async options => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.evaluate(() => refresh({ force: true }));
   }
+  if (process.env.TYCHO_REMOTE_UI_FOCUS_RUN9_ONLY === "1") {
+    await run9Smoke({ context, page, api, agentKey, save, waitForFocus });
+    await context.close();
+    return;
+  }
   await run6Smoke({ browser, context, page, api, agentKey, save, waitForFocus });
   if (process.env.TYCHO_REMOTE_UI_FOCUS_RUN6_ONLY === "1") {
     await context.close();
     return;
   }
   await run7Smoke({ context, page, api, agentKey, save, waitForFocus });
+  await run9Smoke({ context, page, api, agentKey, save, waitForFocus });
   await page.locator(".agent-focus-completed .agent-focus-section-toggle").click();
   assert.equal(await page.locator(".agent-focus-completed .agent-focus-section-toggle").getAttribute("aria-expanded"), "true", "users can expand a completed group");
   await page.locator(".agent-focus-completed .agent-focus-section-toggle").click();
