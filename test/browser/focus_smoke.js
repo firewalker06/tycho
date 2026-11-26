@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const fixedSlots = require("./fixed_panel_slots_smoke");
 const run6Smoke = require("./focus_run6_smoke");
+const run7Smoke = require("./focus_run7_smoke");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -173,6 +174,7 @@ module.exports = async options => {
     await context.close();
     return;
   }
+  await run7Smoke({ context, page, api, agentKey, save, waitForFocus });
   await page.locator(".agent-focus-completed .agent-focus-section-toggle").click();
   assert.equal(await page.locator(".agent-focus-completed .agent-focus-section-toggle").getAttribute("aria-expanded"), "true", "users can expand a completed group");
   await page.locator(".agent-focus-completed .agent-focus-section-toggle").click();
