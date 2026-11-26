@@ -140,7 +140,11 @@ module.exports = async options => {
       const before = await checkbox.isChecked();
       await page.keyboard.press("Space");
       assert.equal(await checkbox.isChecked(), !before, `${appearance} checkbox toggles with Space`);
-      assert.equal(await checkbox.evaluate(input => input === document.activeElement), true, `${appearance} checkbox keeps focus after its optimistic update`);
+      const focusAfterSpace = await page.evaluate(() => {
+        const current = document.querySelector('[data-focus-toggle-item="0:0"]');
+        return { focused: current === document.activeElement, connected: current?.isConnected, active: document.activeElement?.outerHTML?.slice(0, 140), checked: current?.checked };
+      });
+      assert.equal(focusAfterSpace.connected && focusAfterSpace.focused, true, `${appearance} current checkbox keeps focus after its optimistic update: ${JSON.stringify(focusAfterSpace)}`);
       await page.keyboard.press("Space");
       assert.equal(await checkbox.isChecked(), before, `${appearance} checkbox can toggle back with Space`);
       await waitForFocus(focus => (focus.sections[0]?.items[0]?.completed === true) === before);
