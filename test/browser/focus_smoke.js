@@ -3,6 +3,7 @@ const fixedSlots = require("./fixed_panel_slots_smoke");
 const run6Smoke = require("./focus_run6_smoke");
 const run7Smoke = require("./focus_run7_smoke");
 const run9Smoke = require("./focus_run9_smoke");
+const run10Smoke = require("./focus_run10_smoke");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -179,6 +180,11 @@ module.exports = async options => {
     await context.close();
     return;
   }
+  if (process.env.TYCHO_REMOTE_UI_FOCUS_RUN10_ONLY === "1") {
+    await run10Smoke({ context, page, api, agentKey, save, waitForFocus });
+    await context.close();
+    return;
+  }
   await run6Smoke({ browser, context, page, api, agentKey, save, waitForFocus });
   if (process.env.TYCHO_REMOTE_UI_FOCUS_RUN6_ONLY === "1") {
     await context.close();
@@ -186,6 +192,7 @@ module.exports = async options => {
   }
   await run7Smoke({ context, page, api, agentKey, save, waitForFocus });
   await run9Smoke({ context, page, api, agentKey, save, waitForFocus });
+  await run10Smoke({ context, page, api, agentKey, save, waitForFocus });
   await page.locator(".agent-focus-completed .agent-focus-section-toggle").click();
   assert.equal(await page.locator(".agent-focus-completed .agent-focus-section-toggle").getAttribute("aria-expanded"), "true", "users can expand a completed group");
   await page.locator(".agent-focus-completed .agent-focus-section-toggle").click();
