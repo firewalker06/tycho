@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const fixedSlots = require("./fixed_panel_slots_smoke");
+const run6Smoke = require("./focus_run6_smoke");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -8,7 +9,7 @@ const path = require("node:path");
 module.exports = async options => {
   await fixedSlots(options);
   const { browser, baseUrl, agentKey } = options;
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, hasTouch: true });
   const api = `${baseUrl}/agents/${agentKey}/focus`;
   let revision = (await (await context.request.get(api)).json()).focus.revision;
   const save = async sections => {
@@ -160,6 +161,11 @@ module.exports = async options => {
     }
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.evaluate(() => refresh({ force: true }));
+  }
+  await run6Smoke({ browser, context, page, api, agentKey, save, waitForFocus });
+  if (process.env.TYCHO_REMOTE_UI_FOCUS_RUN6_ONLY === "1") {
+    await context.close();
+    return;
   }
   if (browser.browserType().name() === "webkit") {
     await context.close();
