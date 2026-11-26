@@ -2,6 +2,38 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
+async function dragToStableMaximum(page, textarea, label, targetInset) {
+  const initialHeight = await textarea.evaluate(element => element.getBoundingClientRect().height);
+  const dragHeights = [];
+  let stable = false;
+  for (let drag = 0; drag < 80; drag++) {
+    await textarea.scrollIntoViewIfNeeded();
+    const box = await textarea.boundingBox();
+    await page.mouse.move(box.x + box.width - 5, box.y + box.height - 5);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width - 5, page.viewportSize().height - targetInset, {steps:10});
+    await page.mouse.up();
+    const height = await textarea.evaluate(element => element.getBoundingClientRect().height);
+    dragHeights.push(height);
+    if (height <= box.height + 1) {
+      stable = true;
+      break;
+    }
+  }
+  assert(stable, `${label} did not reach a stable maximum within 80 drags: ${JSON.stringify(dragHeights)}`);
+  assert(dragHeights.at(-1) > initialHeight + 1, `${label} did not grow during resize: ${JSON.stringify(dragHeights)}`);
+  return {initialHeight, maximumHeight:dragHeights.at(-1), drags:dragHeights.length, dragHeights};
+}
+
+async function assertSubmitReachable(page, selector, label) {
+  const submit = page.locator(selector);
+  await submit.scrollIntoViewIfNeeded();
+  assert(await submit.evaluate(element => {
+    const box = element.getBoundingClientRect();
+    return box.top >= 0 && box.bottom <= innerHeight && element.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2));
+  }), `${label} submit control is reachable after maximum drag`);
+}
+
 module.exports = async ({browser, baseUrl, agentKey, captureDir}) => {
   const cases = [
     {name:"desktop", width:1260, height:875},
@@ -50,33 +82,16 @@ module.exports = async ({browser, baseUrl, agentKey, captureDir}) => {
     const answerExpanded = await answer.evaluate(e => ({height:e.getBoundingClientRect().height,maxHeight:getComputedStyle(e).maxHeight,resize:getComputedStyle(e).resize,form:e.closest("form").className,fields:e.closest(".inquiry-fields")?.getBoundingClientRect().toJSON(),dock:e.closest(".agent-dock")?.getBoundingClientRect().toJSON(),submit:e.closest("form").querySelector("button[type=submit]")?.getBoundingClientRect().toJSON()}));
     const feedbackExpanded = await feedback.evaluate(e => ({height:e.getBoundingClientRect().height,maxHeight:getComputedStyle(e).maxHeight,resize:getComputedStyle(e).resize,fields:e.closest(".inquiry-fields").getBoundingClientRect().toJSON()}));
     if (captureDir) await inquiry.screenshot({path:path.join(captureDir,`after-answers-${layout.name}.png`)});
-    const answerBox = await answer.boundingBox();
-    await inquiry.mouse.move(answerBox.x+answerBox.width-5,answerBox.y+answerBox.height-5);
-    await inquiry.mouse.down();
-    await inquiry.mouse.move(answerBox.x+answerBox.width-5,layout.height-30,{steps:10});
-    await inquiry.mouse.up();
+    const answerDrag = await dragToStableMaximum(inquiry, answer, `${layout.name} main Answers textarea`, 30);
+    await assertSubmitReachable(inquiry, "#inquiry-form button[type=submit]", `${layout.name} main Answers`);
     const answerAfter = await answer.evaluate(e => ({height:e.getBoundingClientRect().height,maxHeight:getComputedStyle(e).maxHeight,form:e.closest("form").className,fields:e.closest(".inquiry-fields")?.getBoundingClientRect().toJSON(),dock:e.closest(".agent-dock")?.getBoundingClientRect().toJSON(),submit:e.closest("form").querySelector("button[type=submit]")?.getBoundingClientRect().toJSON()}));
-    const feedbackDragHeights = [];
-    for (let drag = 0; drag < 5; drag++) {
-      await feedback.scrollIntoViewIfNeeded();
-      const feedbackBox = await feedback.boundingBox();
-      const beforeHeight = feedbackBox.height;
-      await inquiry.mouse.move(feedbackBox.x+feedbackBox.width-5,feedbackBox.y+feedbackBox.height-5);
-      await inquiry.mouse.down();
-      await inquiry.mouse.move(feedbackBox.x+feedbackBox.width-5,layout.height-8,{steps:8});
-      await inquiry.mouse.up();
-      const afterHeight = await feedback.evaluate(e => e.getBoundingClientRect().height);
-      feedbackDragHeights.push(afterHeight);
-      if (afterHeight <= beforeHeight + 1) break;
-    }
+    const feedbackDrag = await dragToStableMaximum(inquiry, feedback, `${layout.name} Answers feedback textarea`, 8);
     const feedbackAfter = await feedback.evaluate(e => ({height:e.getBoundingClientRect().height,maxHeight:getComputedStyle(e).maxHeight,fields:e.closest(".inquiry-fields").getBoundingClientRect().toJSON(),submit:e.closest("form").querySelector("button[type=submit]").getBoundingClientRect().toJSON()}));
     assert.equal(feedbackExpanded.maxHeight,"none",`expanded Answers feedback can use the available panel height: ${JSON.stringify(feedbackExpanded)}`);
-    const answerSubmit = inquiry.locator("#inquiry-form button[type=submit]");
-    await answerSubmit.scrollIntoViewIfNeeded();
-    assert(await answerSubmit.evaluate(e => {const r=e.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight&&e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}), "Answers submit control remains reachable after maximum drag");
+    await assertSubmitReachable(inquiry, "#inquiry-form button[type=submit]", `${layout.name} Answers feedback`);
     if (captureDir) await inquiry.screenshot({path:path.join(captureDir,`max-answers-${layout.name}.png`)});
-    results.push({layout:layout.name,composer:{before:composerBefore,expanded:composerExpanded,after:composerAfter},answers:{before:answerBefore,expanded:answerExpanded,after:answerAfter,feedbackBefore,feedbackExpanded,feedbackAfter,feedbackDragHeights}});
-    await context.close(); await inquiry.context().close();
+    results.push({layout:layout.name,composer:{before:composerBefore,expanded:composerExpanded,after:composerAfter},answers:{before:answerBefore,expanded:answerExpanded,mainAnswerDrag:answerDrag,after:answerAfter,feedbackBefore,feedbackExpanded,feedbackDrag,feedbackAfter}});
+    await context.close();
   }
   if (captureDir) { fs.mkdirSync(captureDir,{recursive:true}); fs.writeFileSync(path.join(captureDir,"card-922-measurements.json"),JSON.stringify(results,null,2)); }
   console.log(JSON.stringify(results));
