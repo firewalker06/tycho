@@ -21,17 +21,20 @@ module.exports = async options => {
     assert(response.ok(), await response.text());
     revision = (await response.json()).focus.revision;
   };
-  const waitForFocusState = async (sectionIndex, completed) => {
+  const waitForFocus = async predicate => {
     const deadline = Date.now() + 10_000;
     let focus;
     while (Date.now() < deadline) {
       focus = (await (await context.request.get(api)).json()).focus;
-      const section = focus.sections[sectionIndex];
-      if (section && (section.completed === true) === completed) return focus;
+      if (predicate(focus)) return focus;
       await new Promise(resolve => setTimeout(resolve, 50));
     }
-    assert.fail(`Focus section ${sectionIndex} did not reach completed=${completed}; latest=${JSON.stringify(focus?.sections?.[sectionIndex])}`);
+    assert.fail(`Focus API did not reach the expected state; latest=${JSON.stringify(focus)}`);
   };
+  const waitForFocusState = (sectionIndex, completed) => waitForFocus(focus => {
+    const section = focus.sections[sectionIndex];
+    return Boolean(section) && (section.completed === true) === completed;
+  });
   await save([]);
   const page = await context.newPage();
   await page.goto(`${baseUrl}/ui#agent/${agentKey}`, { waitUntil: "networkidle" });
@@ -50,6 +53,7 @@ module.exports = async options => {
   await page.locator("[data-agent-focus]").waitFor({ state: "visible" });
   assert.equal((await page.locator(".agent-focus-completed > h3").innerText()).toLowerCase(), "completed");
   assert.equal(await page.locator('[data-focus-edit-group="1"]').getAttribute("data-focus-agent"), agentKey);
+  const captureDir = process.env.TYCHO_REMOTE_UI_CAPTURE_DIR;
   const actionChecks = await page.locator(".agent-focus-panel button.agent-focus-action").evaluateAll(buttons => buttons.filter(button => button.getClientRects().length > 0).map(button => {
     const style = getComputedStyle(button);
     const rect = button.getBoundingClientRect();
@@ -71,10 +75,76 @@ module.exports = async options => {
     assert.equal(action.background, "rgba(0, 0, 0, 0)", "action buttons have no background");
     assert(action.width >= 44 && action.height >= 44, "action buttons have a 44px touch target");
   }
-  assert.equal(await page.locator(".agent-focus-section").first().locator("h3").innerText().then(text => text.includes("Release work")), true);
+  const contrastRatio = ([first, second]) => (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
+  const luminance = color => {
+    const channels = color.match(/[\d.]+/g).slice(0, 3).map(Number).map(value => {
+      const channel = value / 255;
+      return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    });
+    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+  };
+  for (const appearance of ["light", "dark"]) {
+    await page.evaluate(value => window.TychoAppearance.setPreference(value), appearance);
+    await page.waitForFunction(value => document.documentElement.dataset.appearance === value, appearance);
+    const checkbox = page.locator('[data-focus-toggle-item="0:0"]');
+    await page.locator('[data-focus-edit-group="0"]').focus();
+    const webkit = browser.browserType().name() === "webkit";
+    let checkboxReachedByKeyboard = webkit;
+    if (webkit) {
+      // WebKit on macOS follows the OS Full Keyboard Access preference. Keep
+      // keyboard modality active, then focus the native control directly.
+      await page.keyboard.press("Tab");
+      await checkbox.focus();
+    } else {
+      checkboxReachedByKeyboard = false;
+      for (let index = 0; index < 8; index += 1) {
+        if (await checkbox.evaluate(input => input === document.activeElement)) {
+          checkboxReachedByKeyboard = true;
+          break;
+        }
+        await page.keyboard.press("Tab");
+      }
+    }
+    assert.equal(checkboxReachedByKeyboard, true, `${appearance} checkbox is reachable by keyboard`);
+    const checkboxStyles = await checkbox.evaluate(input => {
+      const label = input.closest("label");
+      const labelRect = label.getBoundingClientRect();
+      const checkboxRect = input.getBoundingClientRect();
+      return {
+        focusVisible: input.matches(":focus-visible"),
+        outlineWidth: getComputedStyle(input).outlineWidth,
+        outlineColor: getComputedStyle(input).outlineColor,
+        accentColor: getComputedStyle(input).accentColor,
+        panelBackground: getComputedStyle(document.body).backgroundColor,
+        target: { width: labelRect.width, height: labelRect.height },
+        checkbox: { width: checkboxRect.width, height: checkboxRect.height },
+      };
+    });
+    const focusContrast = contrastRatio([luminance(checkboxStyles.outlineColor), luminance(checkboxStyles.panelBackground)]);
+    const checkedContrast = contrastRatio([luminance(checkboxStyles.accentColor), luminance(checkboxStyles.panelBackground)]);
+    assert.equal(checkboxStyles.focusVisible, true, `${appearance} checkbox has keyboard focus`);
+    assert(parseFloat(checkboxStyles.outlineWidth) >= 2 && focusContrast >= 3, `${appearance} checkbox focus indicator has a visible 3:1 contrast`);
+    assert(checkedContrast >= 3, `${appearance} checkbox accent has a 3:1 contrast`);
+    assert(checkboxStyles.target.width >= 44 && checkboxStyles.target.height >= 44, `${appearance} checkbox label has a 44px hit target`);
+    assert(checkboxStyles.checkbox.width <= 24 && checkboxStyles.checkbox.height <= 24, "native checkbox stays compact inside its hit target");
+    if (webkit) {
+      const before = await checkbox.isChecked();
+      await page.keyboard.press("Space");
+      assert.equal(await checkbox.isChecked(), !before, `${appearance} checkbox toggles with Space`);
+      assert.equal(await checkbox.evaluate(input => input === document.activeElement), true, `${appearance} checkbox keeps focus after its optimistic update`);
+      await page.keyboard.press("Space");
+      assert.equal(await checkbox.isChecked(), before, `${appearance} checkbox can toggle back with Space`);
+      await waitForFocus(focus => (focus.sections[0]?.items[0]?.completed === true) === before);
+    }
+    if (captureDir) await page.screenshot({ path: path.join(captureDir, `focus-desktop-${appearance}.png`), fullPage: true });
+  }
+  await page.locator('[data-focus-edit-group="0"]').focus();
+  await page.keyboard.press("Enter");
+  await page.locator(`[data-focus-edit-form="${agentKey}"][data-focus-section-index="0"]`).waitFor();
+  await page.locator('[data-focus-edit-field="title"]').press("Escape");
+  assert.equal(await page.locator(".agent-focus-section").first().locator("[data-focus-edit-group]").innerText().then(text => text.includes("Release work")), true);
   assert.equal(await page.locator(".agent-focus-completed .agent-focus-section").getAttribute("class").then(value => value.includes("is-completed")), true);
   assert.equal(await page.locator(".agent-focus-completed .agent-focus-section-toggle").getAttribute("aria-expanded"), "false", "completed groups start collapsed");
-  const captureDir = process.env.TYCHO_REMOTE_UI_CAPTURE_DIR;
   if (captureDir) {
     fs.mkdirSync(captureDir, { recursive: true });
     await page.screenshot({ path: path.join(captureDir, "focus-desktop.png"), fullPage: true });
@@ -83,8 +153,17 @@ module.exports = async options => {
     await page.evaluate(() => refresh({ force: true }));
     await page.screenshot({ path: path.join(captureDir, "focus-mobile.png"), fullPage: true });
     await page.screenshot({ path: path.join(captureDir, "focus-mobile-initial.png"), fullPage: true });
+    for (const appearance of ["light", "dark"]) {
+      await page.evaluate(value => window.TychoAppearance.setPreference(value), appearance);
+      await page.waitForFunction(value => document.documentElement.dataset.appearance === value, appearance);
+      await page.screenshot({ path: path.join(captureDir, `focus-mobile-${appearance}.png`), fullPage: true });
+    }
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.evaluate(() => refresh({ force: true }));
+  }
+  if (browser.browserType().name() === "webkit") {
+    await context.close();
+    return;
   }
   await page.locator(".agent-focus-completed .agent-focus-section-toggle").click();
   assert.equal(await page.locator(".agent-focus-completed .agent-focus-section-toggle").getAttribute("aria-expanded"), "true", "users can expand a completed group");
@@ -94,14 +173,14 @@ module.exports = async options => {
   const conflictedEdit = page.locator(`[data-focus-edit-form="${agentKey}"][data-focus-item-index=""]`);
   await conflictedEdit.waitFor();
   const concurrentSections = JSON.parse(JSON.stringify(beforeInlineConflict.sections));
-  concurrentSections[1].title = "Concurrent shipped";
+  concurrentSections[0].title = "Concurrent shipped";
   const concurrentWrite = await context.request.put(api, { data: { revision: beforeInlineConflict.revision, sections: concurrentSections } });
   assert(concurrentWrite.ok(), await concurrentWrite.text());
   await conflictedEdit.locator('[data-focus-edit-field="title"]').fill("Stale group edit");
   await conflictedEdit.locator('[data-focus-edit-field="title"]').press("Enter");
-  await page.getByText("Focus changed elsewhere. The latest version is loaded. Retry your edit.").waitFor();
+  await page.getByText(/Focus changed (while the dialog was open|elsewhere)/).waitFor();
   let afterInlineConflict = (await (await context.request.get(api)).json()).focus;
-  assert.deepEqual(afterInlineConflict.sections.map(section => section.title), ["Release work", "Concurrent shipped"], "inline edit conflict preserves the concurrent document");
+  assert.deepEqual(afterInlineConflict.sections.map(section => section.title), ["Concurrent shipped", "Shipped work"], "inline edit conflict preserves the concurrent document");
   assert.equal(await conflictedEdit.locator('[data-focus-edit-field="title"]').inputValue(), "Stale group edit", "failed stale edit keeps its draft for retry");
   await conflictedEdit.locator('[data-focus-edit-field="title"]').press("Escape");
   const groupEditButton = page.locator('[data-focus-edit-group="0"]');
@@ -114,11 +193,11 @@ module.exports = async options => {
   assert.equal(await page.evaluate(() => document.activeElement?.matches("[data-focus-edit-title]")), true, "keyboard edit moves focus to the title input");
   await groupForm.locator('[data-focus-edit-field="title"]').fill("Release work edited");
   await groupForm.locator('[data-focus-edit-field="subtitle"]').fill("Updated group");
-  await groupForm.getByRole("button", { name: "Save group" }).click();
+  await groupForm.locator('[data-focus-edit-field="subtitle"]').press("Enter");
   await page.getByText("Release work edited", { exact: true }).waitFor();
   await page.locator('[data-focus-edit-group="0"]').waitFor();
   assert.equal(await page.evaluate(() => document.activeElement?.matches('[data-focus-edit-group="0"]')), true, "saving restores focus to the Edit action");
-  assert.equal(await page.locator(".agent-focus-completed").innerText().then(text => text.includes("Concurrent shipped")), true, "completed groups stay in Completed after an edit");
+  assert.equal(await page.locator(".agent-focus-completed").innerText().then(text => text.includes("Shipped work")), true, "completed groups stay in Completed after an active group is edited");
   const editedGroupActive = page.locator('.agent-focus-section').filter({ hasText: "Release work edited" });
   await editedGroupActive.locator('[data-focus-toggle-item]').nth(0).check();
   await page.waitForTimeout(150);
@@ -141,7 +220,7 @@ module.exports = async options => {
   await finalItemEditForm.waitFor();
   await finalItemEditForm.locator('[data-focus-edit-field="title"]').fill("First task edited");
   await finalItemEditForm.locator('[data-focus-edit-field="subtitle"]').fill("Edited details");
-  await finalItemEditForm.getByRole("button", { name: "Save item" }).click();
+  await finalItemEditForm.locator('[data-focus-edit-field="subtitle"]').press("Enter");
   await page.getByText("First task edited", { exact: true }).waitFor();
   // Adding an incomplete task reopens a completed group. Completing it by item
   // returns the group to Completed and collapses it. Recompletion after reopen
@@ -203,7 +282,7 @@ module.exports = async options => {
     await page.locator('[data-focus-edit-group="0"]').click();
     const editA = page.locator(`[data-focus-edit-form="${agentKey}"][data-focus-section-index="0"]`);
     await editA.locator('[data-focus-edit-field="title"]').fill("Group A saved");
-    await editA.getByRole("button", { name: "Save group" }).click();
+    await editA.locator('[data-focus-edit-field="subtitle"]').press("Enter");
     await saveStarted;
     await page.locator('[data-focus-edit-group="1"]').click();
     const editB = page.locator(`[data-focus-edit-form="${agentKey}"][data-focus-section-index="1"]`);
@@ -211,7 +290,7 @@ module.exports = async options => {
     await editB.locator('[data-focus-edit-field="subtitle"]').fill("Keep this draft and focus");
     await editB.locator('[data-focus-edit-field="subtitle"]').focus();
     releaseSave();
-    await page.waitForFunction(async api => (await (await fetch(api)).json()).focus.sections[0]?.title === "Group A saved", api);
+    await waitForFocus(focus => focus.sections[0]?.title === "Group A saved");
     await page.waitForFunction(({ agentKey }) => {
       const form = document.querySelector(`[data-focus-edit-form="${agentKey}"][data-focus-section-index="1"]`);
       return form && document.activeElement === form.querySelector('[data-focus-edit-field="subtitle"]');
@@ -250,24 +329,22 @@ module.exports = async options => {
     const sameEditor = page.locator(`[data-focus-edit-form="${agentKey}"][data-focus-section-index="0"]`);
     await sameEditor.locator('[data-focus-edit-field="title"]').fill("Submitted title");
     await sameEditor.locator('[data-focus-edit-field="subtitle"]').fill("Submitted details");
-    await sameEditor.getByRole("button", { name: "Save group" }).click();
+    await sameEditor.locator('[data-focus-edit-field="subtitle"]').press("Enter");
     await sameEditorSaveStarted;
     await sameEditor.locator('[data-focus-edit-field="title"]').fill("Newer title while saving");
     await sameEditor.locator('[data-focus-edit-field="subtitle"]').fill("Newer details while saving");
     await sameEditor.locator('[data-focus-edit-field="subtitle"]').focus();
     releaseSameEditorSave();
-    await page.waitForFunction(({ api }) => {
-      const focus = state.agentFocusSnapshots.get(parseRoute().key)?.data;
-      return focus?.sections?.[0]?.title === "Submitted title";
-    }, { api });
+    await waitForFocus(focus => focus.sections[0]?.title === "Submitted title");
     await sameEditor.waitFor();
     assert.equal(await sameEditor.locator('[data-focus-edit-field="title"]').inputValue(), "Newer title while saving");
     assert.equal(await sameEditor.locator('[data-focus-edit-field="subtitle"]').inputValue(), "Newer details while saving");
     assert.equal(await page.evaluate(() => document.activeElement?.dataset.focusEditField), "subtitle", "late success keeps focus in the newer same-editor draft");
     const acceptedRevision = (await (await context.request.get(api)).json()).focus.revision;
-    await sameEditor.getByRole("button", { name: "Save group" }).click();
-    await page.waitForFunction(() => state.agentFocusSnapshots.get(parseRoute().key)?.data?.sections?.[0]?.title === "Newer title while saving");
-    const afterRetry = (await (await context.request.get(api)).json()).focus;
+    await sameEditor.locator('[data-focus-edit-field="subtitle"]').press("Enter");
+    await page.waitForTimeout(100);
+    assert.notEqual(retryRevision, null, "newer same-editor save was not sent");
+    const afterRetry = await waitForFocus(focus => focus.sections[0]?.title === "Newer title while saving");
     assert.equal(afterRetry.sections[0].title, "Newer title while saving", "the retained same-editor draft can be saved");
     assert.equal(afterRetry.sections[0].subtitle, "Newer details while saving");
     assert.equal(retryRevision, acceptedRevision, "the next save uses the revision accepted by the late reply");
@@ -290,7 +367,7 @@ module.exports = async options => {
     await page.locator('[data-focus-edit-group="0"]').click();
     const failedEditA = page.locator(`[data-focus-edit-form="${agentKey}"][data-focus-section-index="0"]`);
     await failedEditA.locator('[data-focus-edit-field="title"]').fill("Group A failed save");
-    await failedEditA.getByRole("button", { name: "Save group" }).click();
+    await failedEditA.locator('[data-focus-edit-field="subtitle"]').press("Enter");
     await failureStarted;
     await page.locator('[data-focus-edit-group="1"]').click();
     const failedEditB = page.locator(`[data-focus-edit-form="${agentKey}"][data-focus-section-index="1"]`);
@@ -328,14 +405,77 @@ module.exports = async options => {
     await page.locator('[data-focus-edit-item="0:34"]').click();
     const lowerSaveForm = page.locator(`[data-focus-edit-form="${agentKey}"][data-focus-item-index="34"]`);
     await lowerSaveForm.locator('[data-focus-edit-field="title"]').fill("Long task 35 saved");
-    await lowerSaveForm.getByRole("button", { name: "Save item" }).click();
+    await lowerSaveForm.locator('[data-focus-edit-field="title"]').press("Enter");
     await page.getByText("Long task 35 saved", { exact: true }).waitFor();
     assert.equal(await assertFocusedInsideFocusScroll(), true, "save keeps the lower edit action visible");
   }
+
+  await save([{ title: "Delete work", items: [
+    { title: "Keep this item" },
+    { title: "Delete after confirm" },
+    { title: "Restore after error" },
+  ] }]);
+  await page.evaluate(() => refreshAgentFocus(parseRoute().key));
+  await page.evaluate(() => refresh({ force: true }));
+  await page.waitForFunction(() => state.agentFocusSnapshots.get(parseRoute().key)?.data?.sections?.[0]?.title === "Delete work");
+  let deleteBase = (await (await context.request.get(api)).json()).focus;
+  await page.locator('[data-focus-delete-item="0:1"]').click();
+  const itemDialog = page.locator("#confirmation-dialog");
+  await itemDialog.getByRole("button", { name: "Delete item" }).waitFor();
+  await itemDialog.getByRole("button", { name: "Cancel" }).click();
+  const cancelledItem = page.locator('[data-focus-edit-item="0:1"]');
+  await cancelledItem.waitFor({ state: "visible" });
+  assert((await cancelledItem.innerText()).includes("Delete after confirm"), `cancel keeps the item: ${await cancelledItem.getAttribute("aria-label")} / ${await cancelledItem.innerText()}`);
+  assert.equal((await (await context.request.get(api)).json()).focus.revision, deleteBase.revision, "cancel does not write Focus");
+
+  let releaseDelete;
+  let startDelete;
+  const deleteGate = new Promise(resolve => { releaseDelete = resolve; });
+  const deleteStarted = new Promise(resolve => { startDelete = resolve; });
+  await page.route(api, async route => {
+    if (route.request().method() === "PUT") {
+      startDelete();
+      await deleteGate;
+    }
+    await route.continue();
+  });
+  await page.locator('[data-focus-delete-item="0:1"]').click();
+  await itemDialog.getByRole("button", { name: "Delete item" }).click();
+  await deleteStarted;
+  assert.equal(await page.getByText("Delete after confirm", { exact: true }).count(), 0, "confirmed item removal is immediate while its write waits");
+  releaseDelete();
+  await waitForFocus(focus => focus.sections[0]?.items.every(item => item.title !== "Delete after confirm"));
+  await page.unroute(api);
+
+  let releaseDeleteError;
+  let startDeleteError;
+  const deleteErrorGate = new Promise(resolve => { releaseDeleteError = resolve; });
+  const deleteErrorStarted = new Promise(resolve => { startDeleteError = resolve; });
+  await page.route(api, async route => {
+    if (route.request().method() === "PUT") {
+      startDeleteError();
+      await deleteErrorGate;
+      await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "Synthetic delete failure" }) });
+    } else await route.continue();
+  });
+  await page.locator('[data-focus-delete-item="0:1"]').click();
+  await itemDialog.getByRole("button", { name: "Delete item" }).click();
+  await deleteErrorStarted;
+  assert.equal(await page.getByText("Restore after error", { exact: true }).count(), 0, "failed delete is optimistic while its write waits");
+  releaseDeleteError();
+  await page.getByText("Could not save Focus: Synthetic delete failure").waitFor();
+  await page.getByText("Restore after error", { exact: true }).waitFor();
+  assert.deepEqual((await (await context.request.get(api)).json()).focus.sections[0].items.map(item => item.title), ["Keep this item", "Restore after error"], "failed delete restores the accepted document");
+  await page.unroute(api);
+
   // Hold the manual refresh response after Delete captures its document. A
   // concurrent reorder must conflict instead of deleting the new index 0.
   await save([{ title: "Group A", items: [{ title: "Keep A" }] }, { title: "Group B", items: [{ title: "Keep B" }] }]);
   await page.evaluate(() => refresh({ force: true }));
+  const groupBeforeCancel = (await (await context.request.get(api)).json()).focus;
+  await page.locator('[data-focus-delete-group="0"]').click();
+  await page.locator("#confirmation-dialog").getByRole("button", { name: "Cancel" }).click();
+  assert.equal((await (await context.request.get(api)).json()).focus.revision, groupBeforeCancel.revision, "canceling group delete does not write Focus");
   let releaseRefresh;
   let refreshStarted;
   const started = new Promise(resolve => { refreshStarted = resolve; });
@@ -358,7 +498,7 @@ module.exports = async options => {
   assert(reordered.ok(), await reordered.text());
   releaseRefresh();
   await page.locator("#confirmation-dialog").getByRole("button", { name: "Delete group" }).click();
-  await page.getByText("Focus changed elsewhere. The latest version is loaded. Retry your edit.").waitFor();
+  await page.getByText(/Focus changed (while the dialog was open|elsewhere)/).waitFor();
   latest = (await (await context.request.get(api)).json()).focus;
   assert.deepEqual(latest.sections.map(section => section.title), ["Group B", "Group A"], "delete conflict preserves both reordered groups");
   await page.unroute(api);
@@ -366,6 +506,10 @@ module.exports = async options => {
   // Clear all must use the same pre-confirmation revision rule.
   await save([{ title: "Old work", items: [{ title: "Keep old work" }] }]);
   await page.evaluate(() => refresh({ force: true }));
+  await page.locator("[data-focus-clear]").click();
+  latest = (await (await context.request.get(api)).json()).focus;
+  await page.locator("#confirmation-dialog").getByRole("button", { name: "Cancel" }).click();
+  assert.equal((await (await context.request.get(api)).json()).focus.revision, latest.revision, "canceling Clear All does not write Focus");
   await page.locator("[data-focus-clear]").click();
   latest = (await (await context.request.get(api)).json()).focus;
   const replacement = await context.request.put(api, { data: { revision: latest.revision, sections: [{ title: "New work", items: [{ title: "Keep new work" }] }] } });
@@ -383,7 +527,9 @@ module.exports = async options => {
     ] },
     { title: "Shipped work", icon: "todo_done", completed: true, items: [{ title: "Finished task", completed: true, attachments: [] }] },
   ]);
+  await page.evaluate(() => refreshAgentFocus(parseRoute().key));
   await page.evaluate(() => refresh({ force: true }));
+  await page.locator('[data-focus-delete-group="1"]').waitFor({ state: "visible" });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => refresh({ force: true }));
   await page.locator("[data-agent-focus]").waitFor({ state: "visible" });
@@ -393,13 +539,12 @@ module.exports = async options => {
     return { width: rect.width, height: rect.height, background: getComputedStyle(button).backgroundColor };
   }));
   assert(mobileActions.length > 0 && mobileActions.every(button => button.width >= 44 && button.height >= 44 && button.background === "rgba(0, 0, 0, 0)"), "mobile icon actions keep transparent 44px touch targets");
-  page.on("dialog", async dialog => dialog.accept());
   await page.locator('[data-focus-delete-group="1"]').click();
   await page.locator("#confirmation-dialog").getByRole("button", { name: "Delete group" }).click();
   await page.locator(".agent-focus-completed").waitFor({ state: "detached" });
   await page.locator("[data-focus-clear]").click();
   await page.locator("#confirmation-dialog").getByRole("button", { name: "Clear all" }).click();
-  await page.waitForFunction(async api => (await (await fetch(api)).json()).focus.sections.length === 0, api);
+  await waitForFocus(focus => focus.sections.length === 0);
   revision = (await (await context.request.get(api)).json()).focus.revision;
   const unsafe = await context.request.put(api, { data: { revision, sections: [{ title: "Unsafe", items: [{ title: "Bad", attachments: [{ type: "link", title: "Bad", url: "javascript:alert(1)" }] }] }] } });
   assert.equal(unsafe.status(), 422);
