@@ -32,12 +32,96 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     try {
       await page.goto(`${baseUrl}/ui#agent/${key}/summary`, { waitUntil: "networkidle" });
       await page.locator("[data-side-workspace]").waitFor();
+      if (width === 390) {
+        const child = await context.request.post(`${baseUrl}/agents`, { data: { project_key: "web", template_key: "custom", name: "Linked fixture", prompt: "Synthetic child", parent_agent_key: agentKey, start: false } });
+        assert(child.ok(), await child.text());
+        await page.goto(`${baseUrl}/ui#agent/${agentKey}/summary`, { waitUntil: "networkidle" });
+        await page.locator("#prompt-input").waitFor();
+        await page.locator("#prompt-input").fill("Synthetic attachment check");
+        for (const fileCount of [1, 5]) {
+          await page.locator("[data-prompt-attachment-input]").first().setInputFiles([
+            ...Array.from({ length: fileCount }, (_, i) => ({ name: `sample-${i}.txt`, mimeType: "text/plain", buffer: Buffer.from("Synthetic file") })),
+          ]);
+          await page.waitForFunction(count => document.querySelectorAll("[data-pending-attachment]").length === count, fileCount);
+          for (const size of [[375, 812], [320, 568], [375, 340], [320, 240]]) {
+            await page.setViewportSize({ width: size[0], height: size[1] });
+            await page.evaluate(() => document.documentElement.style.setProperty("--safe-area-bottom", "34px"));
+            for (const open of [true, false]) {
+              const tray = page.locator("[data-pending-attachments]");
+              if (await tray.evaluate(e => e.open) !== open) await tray.locator("summary").click();
+              for (const expanded of [false, true]) {
+                if (expanded) await page.locator("#composer .composer-full-screen-button").click();
+                await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))));
+                if (!expanded) await page.locator("[data-agent-dock]").evaluate(e => { e.scrollTop = e.scrollHeight; });
+                const geometry = await page.locator("#composer .send-row").evaluate(row => {
+                  const rect = row.getBoundingClientRect(), dock = row.closest("[data-agent-dock]");
+                  return { bottom: rect.bottom, top: rect.top, viewport: visualViewport.height,
+                    dockBottom: dock?.getBoundingClientRect().bottom, scroll: dock?.scrollTop,
+                    controls: [...row.querySelectorAll("button, summary")].filter(e => e.getClientRects().length).map(e => {
+                      const r = e.getBoundingClientRect(), hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+                      return { bottom: r.bottom, top: r.top, hit: e.contains(hit) };
+                    }) };
+                });
+                results.push({ stage: "attachment-tray", fileCount, size, open, expanded, geometry });
+                if (captureDir) {
+                  fs.mkdirSync(captureDir, { recursive: true });
+                  await page.screenshot({ path: path.join(captureDir, `tray-${fileCount}-${size.join("x")}-${open}-${expanded}-${browser.browserType().name()}.png`) });
+                }
+                assert(geometry.bottom <= geometry.viewport - (expanded ? 10 : 0), `Footer enters safe area: ${JSON.stringify({ size, open, expanded, geometry })}`);
+                assert(geometry.controls.every(c => c.hit && c.top >= 0 && c.bottom <= geometry.viewport - 34), `Footer controls clipped: ${JSON.stringify({ size, open, expanded, geometry })}`);
+                if (open) {
+                  for (const control of [tray.locator("[data-remove-prompt-attachment]").first(), tray.locator("[data-remove-prompt-attachment]").last()]) {
+                    await control.scrollIntoViewIfNeeded();
+                    const reachable = await control.evaluate(e => {
+                      const hit = () => {
+                        const r = e.getBoundingClientRect();
+                        return r.top >= 0 && r.bottom <= visualViewport.height && e.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
+                      };
+                      if (hit()) return true;
+                      const scrollers = [];
+                      for (let parent = e.parentElement; parent; parent = parent.parentElement) {
+                        if (/auto|scroll/.test(getComputedStyle(parent).overflowY) && parent.scrollHeight > parent.clientHeight) scrollers.push(parent);
+                      }
+                      const search = index => {
+                        if (hit()) return true;
+                        if (index === scrollers.length) return false;
+                        const parent = scrollers[index], limit = parent.scrollHeight - parent.clientHeight;
+                        for (let offset = 0; offset <= limit + 12; offset += 12) {
+                          parent.scrollTop = Math.min(offset, limit);
+                          if (search(index + 1)) return true;
+                        }
+                        return false;
+                      };
+                      return search(0);
+                    });
+                    assert(reachable, `File control unreachable: ${JSON.stringify({ size, open, expanded, fileCount })}`);
+                  }
+                }
+                if (expanded) await page.locator('#composer button[aria-label="Close full-screen editor"]').click();
+              }
+            }
+          }
+          await page.setViewportSize({ width: 375, height: 812 });
+          while (await page.locator("[data-remove-prompt-attachment]").count()) await page.locator("[data-remove-prompt-attachment]").first().evaluate(e => e.click());
+        }
+        await page.evaluate(() => document.documentElement.style.removeProperty("--safe-area-bottom"));
+        await page.setViewportSize({ width, height });
+        await page.goto(`${baseUrl}/ui#now`, { waitUntil: "networkidle" });
+        const nav = await page.locator(".bottom-nav").boundingBox();
+        assert(nav && Math.abs(nav.y + nav.height - height) < 1, "front page navigation reaches the screen bottom");
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, `front-page-${browser.browserType().name()}.png`) });
+        await page.goto(`${baseUrl}/ui#agent/${key}/summary`, { waitUntil: "networkidle" });
+      }
       const draft = Array.from({ length: 70 }, (_, i) => `Draft line ${i + 1}: Keep the full prompt and make every form action reachable.`).join("\n\n");
       await page.locator("#prompt-input").fill(draft);
       await page.locator("#prompt-input").focus();
       const caret = Math.floor(draft.length / 2);
       await page.locator("#prompt-input").evaluate((input, position) => input.setSelectionRange(position, position), caret);
       const check = async stage => {
+        // Extremely short docks use normal scrolling so editor and footer controls can each be reached.
+        await page.locator("[data-agent-dock]").evaluate(dock => {
+          if (dock.classList.contains("composer-scroll-viewport")) dock.scrollTop = dock.scrollHeight;
+        });
         await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))));
         const g = await page.evaluate(() => {
           const box = e => e?.getBoundingClientRect().toJSON() || null;
@@ -45,7 +129,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           const row = document.querySelector("#composer .send-row");
           return { viewport: { top: 0, bottom: visualViewport.height, offsetTop: visualViewport.offsetTop, height: visualViewport.height },
             windowHeight: innerHeight, header: box(document.querySelector(".app-header")), dock: box(dock), input: box(input), row: box(row),
-            dockBackground: getComputedStyle(dock).backgroundColor, dockPaddingBottom: parseFloat(getComputedStyle(dock).paddingBottom),
+            dockClass: dock.className, dockBudget: dock.style.cssText, root: box(dock.closest("[data-agent-workspace]")), controls: box(dock.querySelector(".agent-panel-controls-row")), dockBackground: getComputedStyle(dock).backgroundColor, dockPaddingBottom: parseFloat(getComputedStyle(dock).paddingBottom) + parseFloat(getComputedStyle(row).paddingBottom),
             safeAreaBottom: parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--safe-area-bottom")) || 0,
             submit: box(document.querySelector('#composer button[type="submit"]')), dockScroll: dock.scrollTop, dockClient: dock.clientHeight, dockContent: dock.scrollHeight,
             inputClient: input.clientHeight, inputContent: input.scrollHeight, pageScroll: scrollY, pageWidth: document.documentElement.scrollWidth, width: innerWidth,
@@ -59,7 +143,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         assert(g.submit.top >= g.viewport.top - 1 && g.submit.bottom <= g.viewport.bottom + 1, `Submit outside visible viewport: ${JSON.stringify(g)}`);
         assert(g.buttons.every(b => b.top >= g.viewport.top - 1 && b.bottom <= g.viewport.bottom + 1), `Prompt tools outside visible viewport: ${JSON.stringify(g)}`);
         assert(g.row.top >= g.dock.top - 1 && g.row.bottom <= g.dock.bottom + 1, `Actions clipped by dock: ${JSON.stringify(g)}`);
-        assert(Math.abs(g.dock.bottom - g.viewport.bottom) <= 1, `Dock must reach the visible viewport bottom: ${JSON.stringify(g)}`);
+        assert(Math.abs(g.dock.bottom - (g.viewport.bottom - (g.width >= 900 ? 12 : 0))) <= 1, `Dock must reach the visible viewport bottom: ${JSON.stringify(g)}`);
         assert(g.dockPaddingBottom >= g.safeAreaBottom + 5, `Dock controls must keep their safe-area inset: ${JSON.stringify(g)}`);
         assert(!g.dockBackground.includes("/"), `Dock background must be opaque through the safe area: ${JSON.stringify(g)}`);
         assert(g.pageWidth <= g.width + 1 && g.inputContent > g.inputClient, "long draft scrolls inside bounded textarea without horizontal overflow");
@@ -89,6 +173,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         await disclosure.locator("summary").click();
         assert.equal(await disclosure.evaluate(e => e.open), true, "user can open the list at short height");
         await page.evaluate(() => syncAgentDockLayout());
+        await check("short-open-tray");
         await page.evaluate(() => refresh({ force: true }));
         assert.equal(await disclosure.evaluate(e => e.open), true, "layout sync and polling preserve explicit open choice");
         assert.equal(await disclosure.locator("[data-pending-attachment]").count(), 2, "polling preserves selected files");
