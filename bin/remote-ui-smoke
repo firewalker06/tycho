@@ -3110,9 +3110,49 @@ title: !123 value
         await page.click("[data-edit-workspace-file='docs/guide.md']");
         await page.waitForSelector("#workspace-file-editor", { state: "visible", timeout: 10_000 });
         const updatedGuide = `# Updated guide\n\nSaved safely.\n\n${Array.from({ length: 80 }, (_, index) => `Saved line ${index + 1} verifies the preview scrollbar.`).join("\\n\\n")}\n`;
+        let releaseWorkspaceWrite;
+        const workspaceWriteGate = new Promise((resolve) => { releaseWorkspaceWrite = resolve; });
+        const workspaceWritePattern = "**/projects/web/workspace/file";
+        await page.route(workspaceWritePattern, async (route) => {
+          if (route.request().method() === "PUT") {
+            await workspaceWriteGate;
+          }
+          await route.continue();
+        });
         await page.fill("#workspace-file-content", updatedGuide);
         await page.click("#workspace-file-editor button[type='submit']");
         await page.waitForFunction(() => document.querySelector(".markdown-viewer")?.textContent.includes("Saved safely."));
+        const optimisticSaveContract = await page.evaluate(() => ({
+          editorVisible: Boolean(document.querySelector("#workspace-file-editor")),
+          contentVisible: document.querySelector(".markdown-viewer")?.textContent.includes("Saved safely."),
+        }));
+        if (optimisticSaveContract.editorVisible || !optimisticSaveContract.contentVisible) {
+          throw new Error(`Workspace save was not optimistic: ${JSON.stringify(optimisticSaveContract)}`);
+        }
+        releaseWorkspaceWrite();
+        await page.waitForFunction(() => document.querySelector(".markdown-viewer")?.textContent.includes("Saved safely."));
+        await page.unroute(workspaceWritePattern);
+
+        await page.click("[data-edit-workspace-file='docs/guide.md']");
+        await page.fill("#workspace-file-content", "# Draft preserved\\n");
+        await page.route(workspaceWritePattern, async (route) => {
+          if (route.request().method() === "PUT") {
+            await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "Forced save failure", details: { code: "stale" } }) });
+            return;
+          }
+          await route.continue();
+        });
+        await page.click("#workspace-file-editor button[type='submit']");
+        await page.waitForSelector("#workspace-file-editor", { state: "visible", timeout: 10_000 });
+        const failedSaveContract = await page.locator("#workspace-file-content").textContent();
+        if (failedSaveContract !== "# Draft preserved\\n") throw new Error("Workspace save failure did not preserve the draft");
+        await page.unroute(workspaceWritePattern);
+        const fullScreenButton = page.locator("#workspace-file-editor [data-toggle-workspace-full-screen]");
+        await fullScreenButton.click();
+        await page.waitForSelector(".workspace-file-editor-full-screen", { state: "visible", timeout: 10_000 });
+        await page.click(".workspace-file-editor-full-screen [data-toggle-workspace-full-screen]");
+        await page.waitForFunction(() => !document.querySelector(".workspace-file-editor-full-screen"));
+        await page.click("[data-cancel-workspace-file-edit]");
 
         await page.goBack();
         await page.waitForSelector(".workspace-preview-empty", { state: "visible", timeout: 10_000 });
@@ -3187,12 +3227,15 @@ title: !123 value
           throw new Error(`Workspace image preview contract failed: ${JSON.stringify(imageContract)}`);
         }
 
+        await page.click("[data-close-workspace-preview]");
         await page.waitForSelector("[data-workspace-file='binary.dat']", { state: "visible", timeout: 10_000 });
         await page.click("[data-workspace-file='binary.dat']");
         await page.waitForFunction(() => document.querySelector(".workspace-preview-pane")?.textContent.includes("Binary file"));
         if (!(await page.locator(".workspace-preview-pane").innerText()).includes("Binary file")) {
           throw new Error("Workspace binary state was not visible");
         }
+        await page.click("[data-close-workspace-preview]");
+        await page.waitForSelector("[data-workspace-file='large.txt']", { state: "visible", timeout: 10_000 });
         await page.click("[data-workspace-file='large.txt']");
         await page.waitForFunction(() => document.querySelector(".workspace-preview-pane")?.textContent.includes("File too large"));
 
@@ -3221,7 +3264,8 @@ title: !123 value
           throw new Error(`Workspace race-safe navigation failed: ${JSON.stringify(raceContract)}`);
         }
         const unexpectedErrors = errors.slice(consoleErrorStart).filter((message) =>
-          !message.includes("status of 415") && !message.includes("status of 413") && !message.includes("status of 500"));
+          !message.includes("status of 415") && !message.includes("status of 413") &&
+          !message.includes("status of 409") && !message.includes("status of 500"));
         errors.splice(consoleErrorStart, errors.length - consoleErrorStart, ...unexpectedErrors);
       }
 

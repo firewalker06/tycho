@@ -746,6 +746,9 @@ module HQ
         if method == "PUT" && tail == ["workspace", "file"]
           return ok(preview: service.update_project_workspace_file(key, body))
         end
+        if method == "DELETE" && tail == ["workspace", "file"]
+          return ok(service.delete_project_workspace_file(key, body))
+        end
         return ok(git: service.project_git_status(key)) if method == "GET" && tail == ["git", "status"]
         if method == "GET" && tail[0, 2] == ["git", "diff"] && tail.length <= 3
           return ok(diff: service.project_git_diff(key, scope: tail[2] || request&.query_params&.fetch("scope", nil)))
@@ -2997,6 +3000,16 @@ module HQ
         content: attrs["content"],
         expected_version: attrs["version"].to_s
       )
+    rescue ProjectWorkspace::Error => e
+      raise Error.new(e.message, status: e.status, details: { code: e.code })
+    end
+
+    def delete_project_workspace_file(key, attrs)
+      project = find_project!(key)
+      { deleted: ProjectWorkspace.new(project.path).delete(
+        path: attrs["path"].to_s,
+        expected_version: attrs["version"].to_s
+      ) }
     rescue ProjectWorkspace::Error => e
       raise Error.new(e.message, status: e.status, details: { code: e.code })
     end

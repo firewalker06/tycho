@@ -17,6 +17,7 @@ module ProjectWorkspaceTest
     assert_classifies_markdown_and_images
     assert_previews_ordinary_attachment_sized_images_with_a_separate_limit
     assert_edits_only_safe_current_plain_text
+    assert_deletes_only_safe_current_plain_text
     assert_rejects_binary_large_sensitive_and_generated_files
     assert_reports_permission_errors
     assert_rejects_traversal_and_absolute_paths
@@ -156,6 +157,28 @@ module ProjectWorkspaceTest
       assert(linked_preview[:content] == "linked\n", "expected internal symlinked directories to remain previewable")
       assert_error("not_editable") { browser.write(path: "linked-docs/linked-notes.txt", content: "safe\n", expected_version: linked_preview[:version]) }
       assert_error("sensitive") { browser.write(path: "notes.txt", content: "token: ghp_abcdefghijklmnopqrstuvwxyz123456\n", expected_version: saved[:version]) }
+    end
+  end
+
+  def assert_deletes_only_safe_current_plain_text
+    with_workspace do |root|
+      path = File.join(root, "notes.txt")
+      File.write(path, "first\n")
+      browser = HQ::ProjectWorkspace.new(root)
+      preview = browser.preview(path: "notes.txt")
+
+      assert(browser.delete(path: "notes.txt", expected_version: preview[:version]) == { path: "notes.txt" },
+             "expected a safe plain-text file delete response")
+      assert(!File.exist?(path), "expected safe plain-text deletion")
+
+      File.write(path, "second\n")
+      assert_error("stale") { browser.delete(path: "notes.txt", expected_version: preview[:version]) }
+      File.binwrite(File.join(root, "binary.txt"), "bad\0")
+      File.write(File.join(root, "secret.txt"), "api_key: sk-abcdefghijklmnopqrstuvwxyz\n")
+      File.symlink(path, File.join(root, "notes-link.txt"))
+      assert_error("not_editable") { browser.delete(path: "binary.txt", expected_version: "x") }
+      assert_error("not_found") { browser.delete(path: "secret.txt", expected_version: "x") }
+      assert_error("not_editable") { browser.delete(path: "notes-link.txt", expected_version: "x") }
     end
   end
 

@@ -204,6 +204,28 @@ module HQ
       raise Error.new("not_found", "Workspace file is no longer available", status: 404)
     end
 
+    def delete(path:, expected_version:)
+      root = canonical_root!
+      relative = normalize_relative_path(path)
+      raise invalid_path if relative.empty?
+      raise Error.new("not_editable", "Linked files cannot be deleted", status: 409) if traverses_symlink?(root, relative)
+
+      file = resolve!(root, relative, kind: :file)
+      bytes = File.binread(file, MAX_PREVIEW_BYTES + 1)
+      raise too_large if bytes.bytesize > MAX_PREVIEW_BYTES
+      raise Error.new("not_editable", "Only plain-text files can be deleted", status: 415) unless editable_text_bytes?(bytes)
+      content = bytes.dup.force_encoding(Encoding::UTF_8)
+      raise Error.new("sensitive", "Sensitive files cannot be deleted", status: 403) if sensitive_content?(content)
+      raise Error.new("stale", "This file changed; reload it before deleting", status: 409) unless secure_compare_version(expected_version, bytes)
+
+      File.delete(file)
+      { path: relative }
+    rescue Errno::EACCES, Errno::EPERM
+      raise Error.new("permission_denied", "Workspace file is not writable", status: 403)
+    rescue Errno::ENOENT, Errno::ENOTDIR
+      raise Error.new("not_found", "Workspace file is no longer available", status: 404)
+    end
+
     private
 
     def canonical_root!

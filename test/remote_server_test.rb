@@ -6278,6 +6278,17 @@ module RemoteServerTest
       assert(saved.dig(:body, :preview, :content) == "# Updated\n", "expected workspace writes to return a fresh preview")
       assert(File.read(File.join(workspace, "docs", "guide.md")) == "# Updated\n", "expected workspace writes to stay project-scoped")
 
+      deleted = server.send(
+        :route,
+        service,
+        "DELETE",
+        "/projects/web/workspace/file",
+        { "path" => "docs/guide.md", "version" => saved.dig(:body, :preview, :version) },
+        nil
+      )
+      assert(deleted.dig(:body, :deleted, :path) == "docs/guide.md", "expected workspace delete route to return the relative path")
+      assert(!File.exist?(File.join(workspace, "docs", "guide.md")), "expected workspace delete route to stay project-scoped")
+
       traversal = HQ::RemoteServer::Request.new(
         method: "GET",
         path: "/projects/web/workspace",
@@ -10409,12 +10420,14 @@ module RemoteServerTest
            js[:body].include?("workspace-file-editor") &&
            js[:body].include?('apiPut(`/projects/${encodeURIComponent(projectKey)}/workspace/file`, { path, content, version })'),
            "expected workspace previews to reuse Markdown and image renderers and offer guarded plain-text editing")
-    assert(css[:body].include?("height: min(68dvh, 760px);") &&
+    assert(css[:body].include?("height: calc(100dvh - 154px);") &&
+           css[:body].include?("grid-template-rows: auto minmax(0, 1fr);") &&
            css[:body].include?(".workspace-entry-list {\n  display: grid;\n  align-content: start;\n  flex: 1;\n  min-width: 0;\n  min-height: 0;\n  margin: 0;\n  overflow-y: auto;\n  overscroll-behavior: contain;") &&
            css[:body].include?(".workspace-preview-pane > .markdown-viewer {\n  flex: 1;\n  min-height: 0;\n  overflow: auto;\n  padding: 14px;\n}") &&
-           css[:body].include?(".workspace-preview-pane > .markdown-viewer {\n    max-height: 52dvh;\n  }") &&
+           css[:body].include?(".workspace-browser-grid.has-preview .workspace-list-pane { display: none; }") &&
+           css[:body].include?(".workspace-file-editor-full-screen {") &&
            css[:body].include?("@media (max-width: 760px)"),
-           "expected workspace browsing to keep directory and Markdown preview scrolling responsive")
+           "expected workspace browsing to fill the available panel, separate mobile panes, and support full-screen editing")
     assert(css[:body].include?(".workspace-entry-list {\n  display: grid;\n  align-content: start;"),
            "expected workspace file rows to stay packed at the top instead of stretching vertically")
     assert(helpers_js[:body].include?('type: "projectWorkspace"') &&
