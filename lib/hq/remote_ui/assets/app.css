@@ -4052,6 +4052,12 @@ button[data-toggle-pr-diff-full-view],
   white-space: nowrap;
 }
 
+.workspace-pane-header > .workspace-preview-actions {
+  display: flex;
+  min-width: auto;
+  gap: 6px;
+}
+
 .workspace-preview-actions .ui-button,
 .workspace-action-menu > summary {
   border-color: transparent;
