@@ -163,6 +163,7 @@ def write_fixture(dir)
   File.write(File.join(workspace, "docs", "readme-notes.md"), "Ranked prefix match.\n")
   File.write(File.join(workspace, "docs", "relevant-and-message.md"), "Ranked fuzzy match.\n")
   File.write(File.join(workspace, "delete-search.txt"), "Delete this search fixture.\n")
+  File.write(File.join(workspace, "delete-refresh.txt"), "Delete this refreshed fixture.\n")
   File.write(File.join(workspace, "delete-navigation.txt"), "Restore this navigation fixture.\n")
   File.write(File.join(workspace, "fast", "fast.txt"), "fast\n")
   File.write(File.join(workspace, "slow", "slow.txt"), "slow\n")
@@ -3086,6 +3087,9 @@ title: !123 value
         }
         await searchInput.fill("");
         await page.waitForSelector("[data-workspace-directory='docs']", { state: "visible", timeout: 10_000 });
+        if (await page.locator("[data-workspace-file='delete-search.txt']").count() !== 0) {
+          throw new Error("Successful workspace delete remained in the directory cache after clearing search");
+        }
 
         await searchInput.fill("docs");
         await page.waitForSelector("[data-workspace-directory='docs']", { state: "visible", timeout: 10_000 });
@@ -3171,6 +3175,30 @@ title: !123 value
         await page.click(".workspace-file-editor-full-screen [data-toggle-workspace-full-screen]");
         await page.waitForFunction(() => !document.querySelector(".workspace-file-editor-full-screen"));
         await page.click("[data-cancel-workspace-file-edit]");
+
+        await page.evaluate(() => navigate({ type: "projectWorkspace", key: "web", path: "", file: "delete-refresh.txt" }));
+        await page.waitForSelector("[data-delete-workspace-file='delete-refresh.txt']", { state: "visible", timeout: 10_000 });
+        let releaseWorkspaceDeleteSuccess;
+        const workspaceDeleteSuccessGate = new Promise((resolve) => { releaseWorkspaceDeleteSuccess = resolve; });
+        await page.route(workspaceWritePattern, async (route) => {
+          if (route.request().method() === "DELETE") {
+            await workspaceDeleteSuccessGate;
+          }
+          await route.continue();
+        });
+        await page.click("[data-delete-workspace-file='delete-refresh.txt']");
+        await page.waitForFunction(() => parseRoute().file === "");
+        await page.click("[data-refresh-project-workspace]");
+        await page.waitForFunction(() => !state.projectWorkspaces[projectWorkspaceKey("web", "")]?.loading);
+        if (await page.locator("[data-workspace-file='delete-refresh.txt']").count() !== 0) {
+          throw new Error("Refresh restored a pending workspace delete row");
+        }
+        releaseWorkspaceDeleteSuccess();
+        await page.waitForFunction(() => document.querySelector(".growl")?.textContent.includes("File deleted"));
+        if (await page.locator("[data-workspace-file='delete-refresh.txt']").count() !== 0) {
+          throw new Error("Successful workspace delete did not reconcile a refreshed directory cache");
+        }
+        await page.unroute(workspaceWritePattern);
 
         await page.evaluate(() => navigate({ type: "projectWorkspace", key: "web", path: "", file: "delete-navigation.txt" }));
         await page.waitForSelector("[data-delete-workspace-file='delete-navigation.txt']", { state: "visible", timeout: 10_000 });
