@@ -11121,7 +11121,7 @@ body:has(.agent-workspace.has-focus-panel) { overflow: hidden; }
 .agent-focus-section::before {
   content: "";
   position: absolute;
-  inset: 42px auto 22px 34px;
+  inset: 42px auto 22px 38px;
   inline-size: 2px;
   background: color-mix(in srgb, var(--accent) 42%, transparent);
   pointer-events: none;
@@ -11180,7 +11180,7 @@ body:has(.agent-workspace.has-focus-panel) { overflow: hidden; }
 }
 .agent-focus-heading-main > .agent-focus-edit-form,
 .agent-focus-section-copy { grid-column: 2; }
-.agent-focus-section-copy { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: start; gap: 8px; }
+.agent-focus-section-copy { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; }
 .agent-focus-edit-form-item { grid-column: 2; }
 .agent-focus-edit-form .ui-input { min-width: 0; min-height: 44px; padding: 8px 10px; }
 .agent-focus-item-row { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: start; gap: 4px; }
@@ -11196,7 +11196,7 @@ body:has(.agent-workspace.has-focus-panel) { overflow: hidden; }
   block-size: 16px;
   margin: 0;
   border: 2px solid color-mix(in srgb, var(--accent) 68%, var(--border));
-  border-radius: 50%;
+  border-radius: 4px;
   background: var(--ds-background-surface);
   accent-color: var(--accent);
   cursor: pointer;
@@ -11217,7 +11217,7 @@ body:has(.agent-workspace.has-focus-panel) { overflow: hidden; }
 .agent-focus-item-text strong { overflow-wrap: anywhere; }
 .agent-focus-item-text > span { color: var(--muted); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .agent-focus-section-copy .agent-focus-text-trigger { grid-column: 1; }
-.agent-focus-section-copy .agent-focus-count { grid-column: 2; margin: 10px 0 0; }
+.agent-focus-section-copy .agent-focus-count { grid-column: 2; margin: 0; }
 .agent-focus-section-toggle { grid-column: 3; min-width: 44px; min-height: 44px; padding: 12px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; }
 .agent-focus-section-toggle:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--text); }
 .agent-focus-section-toggle:focus-visible { outline: 2px solid var(--text); outline-offset: 1px; }
