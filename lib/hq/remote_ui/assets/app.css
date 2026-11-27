@@ -11258,6 +11258,15 @@ body:has(.agent-workspace.has-focus-panel) { overflow: hidden; }
   .agent-focus-panel-actions { flex-wrap: wrap; justify-content: flex-end; }
 }
 
+@media (max-width: 360px) {
+  .agent-focus-heading { grid-template-columns: minmax(0, 1fr); }
+  .agent-focus-heading > .agent-focus-entry-actions { grid-row: 2; justify-self: end; }
+}
+
+@media (forced-colors: active) {
+  .agent-focus-item-checkbox input { appearance: auto; accent-color: ButtonText; }
+}
+
 @media (min-width: 900px) {
   .agent-workspace.has-focus-panel.content-panels-managed[data-visible-panels="focus"] .agent-detail-pane {
     grid-row: 2;
