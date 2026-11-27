@@ -11166,14 +11166,14 @@ body:has(.agent-workspace.has-focus-panel) { overflow: hidden; }
   gap: 6px;
   min-width: 0;
 }
-.agent-focus-heading-main { display: grid; grid-template-columns: 36px minmax(0, 1fr); align-items: start; gap: 10px; min-width: 0; }
+.agent-focus-heading-main { display: grid; grid-template-columns: 44px minmax(0, 1fr); align-items: start; gap: 2px; min-width: 0; }
 .agent-focus-heading-main > .agent-focus-icon {
   display: grid;
   place-items: center;
   position: relative;
   z-index: 1;
-  inline-size: 36px;
-  block-size: 36px;
+  inline-size: 44px;
+  block-size: 44px;
   border: 2px solid color-mix(in srgb, var(--accent) 68%, var(--border));
   border-radius: 50%;
   background: var(--ds-background-surface);
@@ -11277,6 +11277,8 @@ body:has(.agent-workspace.has-focus-panel) { overflow: hidden; }
 }
 
 @media (min-width: 900px) {
+  .agent-focus-heading > .agent-focus-entry-actions,
+  .agent-focus-section-toggle { align-self: center; }
   .agent-workspace.has-focus-panel.content-panels-managed[data-visible-panels="focus"] .agent-detail-pane {
     grid-row: 2;
   }
