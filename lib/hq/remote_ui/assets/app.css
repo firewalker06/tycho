@@ -11230,6 +11230,10 @@ body:has(.agent-workspace.has-focus-panel) { overflow: hidden; }
 .agent-focus-completed { padding: 4px 12px 16px; }
 .agent-focus-completed > h3 { margin: 0 0 8px; color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: .05em; }
 .agent-focus-panel-actions { display: flex; align-items: center; gap: 8px; }
+.agent-focus-mobile-menu { display: none; position: relative; }
+.agent-focus-mobile-menu > summary { list-style: none; cursor: pointer; }
+.agent-focus-mobile-menu > summary::-webkit-details-marker { display: none; }
+.agent-focus-mobile-menu-popover { position: absolute; z-index: 3; inset: calc(100% + 4px) 0 auto auto; min-width: max-content; }
 .agent-focus-panel { container: agent-focus / inline-size; }
 .agent-focus-panel .agent-focus-attachments {
   display: grid;
@@ -11258,6 +11262,9 @@ body:has(.agent-workspace.has-focus-panel) { overflow: hidden; }
   .agent-focus-edit-form { grid-template-columns: minmax(0, 1fr); }
   .agent-focus-panel-heading { align-items: flex-start; }
   .agent-focus-panel-actions { flex-wrap: wrap; justify-content: flex-end; }
+  .agent-focus-panel-actions > :not(.agent-focus-mobile-menu),
+  .agent-focus-entry-actions { display: none; }
+  .agent-focus-mobile-menu { display: block; }
 }
 
 @media (max-width: 360px) {
