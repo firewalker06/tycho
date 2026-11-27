@@ -3841,7 +3841,10 @@ button[data-toggle-pr-diff-full-view],
 
 .workspace-browser {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
+  height: calc(100dvh - 154px);
+  min-height: 420px;
   gap: 10px;
 }
 
@@ -3875,9 +3878,8 @@ button[data-toggle-pr-diff-full-view],
 
 .workspace-browser-grid {
   display: grid;
-  grid-template-columns: minmax(250px, 0.7fr) minmax(0, 1.3fr);
-  height: min(68dvh, 760px);
-  min-height: min(68dvh, 760px);
+  grid-template-columns: minmax(250px, 0.7fr) minmax(0, min(66vw, 960px));
+  min-height: 0;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -4046,7 +4048,44 @@ button[data-toggle-pr-diff-full-view],
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
+
+.workspace-pane-header > .workspace-preview-actions {
+  display: flex;
+  min-width: auto;
+  gap: 6px;
+}
+
+.workspace-preview-actions .ui-button,
+.workspace-action-menu > summary {
+  border-color: transparent;
+  background: transparent;
+}
+
+.workspace-preview-actions .ui-button:hover,
+.workspace-preview-actions .ui-button:focus-visible,
+.workspace-action-menu[open] > summary,
+.workspace-action-menu > summary:hover,
+.workspace-action-menu > summary:focus-visible {
+  background: var(--panel-soft);
+}
+
+.workspace-action-menu { display: none; position: relative; }
+.workspace-action-menu > summary { display: grid; width: 36px; height: 36px; cursor: pointer; list-style: none; place-items: center; border-radius: 7px; }
+.workspace-action-menu > summary::-webkit-details-marker { display: none; }
+.workspace-action-popover { position: absolute; top: calc(100% + 6px); right: 0; z-index: 25; min-width: 170px; padding: 6px; }
+.workspace-action-popover .more-menu { border: 0; background: transparent; box-shadow: none; padding: 0; }
+
+.workspace-file-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+}
+
+.workspace-file-actions > :first-child { border-radius: 7px 0 0 7px; }
+.workspace-file-actions > :last-child { border-left: 0; border-radius: 0 7px 7px 0; }
 
 .workspace-image-preview {
   display: grid;
@@ -4077,36 +4116,49 @@ button[data-toggle-pr-diff-full-view],
   tab-size: 2;
 }
 
+.workspace-file-editor-full-screen {
+  position: fixed;
+  z-index: 80;
+  inset: 0;
+  max-width: none;
+  background: var(--panel);
+  padding: 18px;
+}
+
+.workspace-file-editor-full-screen textarea { min-height: 0; height: 100%; resize: none; }
+.workspace-editor-close { position: absolute; top: 10px; right: 10px; }
+
 @media (max-width: 760px) {
+  .workspace-browser {
+    height: calc(100dvh - 116px);
+    min-height: 0;
+  }
+
   .workspace-browser-grid {
     grid-template-columns: minmax(0, 1fr);
-    height: auto;
     min-height: 0;
-    overflow: visible;
   }
 
   .workspace-list-pane {
-    max-height: 48dvh;
-    overflow-y: auto;
     border-right: 0;
-    border-bottom: 1px solid var(--border);
   }
 
-  .workspace-preview-pane {
-    min-height: 36dvh;
-  }
+  .workspace-preview-pane { min-height: 0; }
+
+  .workspace-browser-grid.has-preview .workspace-list-pane { display: none; }
 
   .workspace-browser-grid:not(.has-preview) .workspace-preview-pane {
     display: none;
   }
 
-  .workspace-text-preview {
-    max-height: 52dvh;
-  }
+  .workspace-text-preview { max-height: none; }
 
-  .workspace-preview-pane > .markdown-viewer {
-    max-height: 52dvh;
-  }
+  .workspace-preview-pane > .markdown-viewer { max-height: none; }
+
+  .workspace-delete-direct,
+  .workspace-close-direct { display: none; }
+
+  .workspace-action-menu { display: block; }
 }
 
 .diff-file > summary {

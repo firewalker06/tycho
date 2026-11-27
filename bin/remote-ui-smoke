@@ -162,6 +162,11 @@ def write_fixture(dir)
   File.write(File.join(workspace, "README.md"), "# Workspace fixture\n")
   File.write(File.join(workspace, "docs", "readme-notes.md"), "Ranked prefix match.\n")
   File.write(File.join(workspace, "docs", "relevant-and-message.md"), "Ranked fuzzy match.\n")
+  File.write(File.join(workspace, "delete-search.txt"), "Delete this search fixture.\n")
+  File.write(File.join(workspace, "delete-refresh.txt"), "Delete this refreshed fixture.\n")
+  File.write(File.join(workspace, "delete-overlap-a.txt"), "Fail this overlapping delete.\n")
+  File.write(File.join(workspace, "delete-overlap-b.txt"), "Complete this overlapping delete.\n")
+  File.write(File.join(workspace, "delete-navigation.txt"), "Restore this navigation fixture.\n")
   File.write(File.join(workspace, "fast", "fast.txt"), "fast\n")
   File.write(File.join(workspace, "slow", "slow.txt"), "slow\n")
   File.write(File.join(workspace, "src", "app.rb"), "puts \"fixture\"\n")
@@ -3069,6 +3074,25 @@ title: !123 value
           throw new Error(`Clearing workspace search did not restore the directory: ${JSON.stringify(clearedSearchContract)}`);
         }
 
+        await searchInput.fill("delete-search");
+        await page.waitForSelector("[data-workspace-file='delete-search.txt']", { state: "visible", timeout: 10_000 });
+        await page.click("[data-workspace-file='delete-search.txt']");
+        await page.waitForSelector("[data-delete-workspace-file='delete-search.txt']", { state: "visible", timeout: 10_000 });
+        await page.click("[data-delete-workspace-file='delete-search.txt']");
+        await page.waitForFunction(() => !document.querySelector("[data-workspace-file='delete-search.txt']"));
+        const deletedSearchContract = await page.evaluate(() => ({
+          route: parseRoute(),
+          search: state.projectWorkspaceSearches[projectWorkspaceSearchKey("web", "delete-search")],
+        }));
+        if (deletedSearchContract.route.file || deletedSearchContract.search?.entries?.some((entry) => entry.path === "delete-search.txt")) {
+          throw new Error(`Optimistic workspace delete left a visible search result: ${JSON.stringify(deletedSearchContract)}`);
+        }
+        await searchInput.fill("");
+        await page.waitForSelector("[data-workspace-directory='docs']", { state: "visible", timeout: 10_000 });
+        if (await page.locator("[data-workspace-file='delete-search.txt']").count() !== 0) {
+          throw new Error("Successful workspace delete remained in the directory cache after clearing search");
+        }
+
         await searchInput.fill("docs");
         await page.waitForSelector("[data-workspace-directory='docs']", { state: "visible", timeout: 10_000 });
         await page.click("[data-workspace-directory='docs']");
@@ -3106,13 +3130,145 @@ title: !123 value
             !previewContract.internallyScrollable) {
           throw new Error(`Workspace Markdown preview contract failed: ${JSON.stringify(previewContract)}`);
         }
+        const desktopToolbarContract = await page.evaluate(() => {
+          const header = document.querySelector(".workspace-pane-header");
+          const actions = document.querySelector(".workspace-preview-actions");
+          return {
+            display: getComputedStyle(actions).display,
+            closeVisible: getComputedStyle(document.querySelector(".workspace-close-direct")).display !== "none",
+            deleteVisible: getComputedStyle(document.querySelector(".workspace-delete-direct")).display !== "none",
+            menuVisible: getComputedStyle(document.querySelector(".workspace-action-menu")).display !== "none",
+            wraps: getComputedStyle(actions).flexWrap,
+            overflow: header.scrollWidth > header.clientWidth,
+            centers: ["[data-edit-workspace-file]", ".workspace-delete-direct", ".workspace-close-direct"].map((selector) => {
+              const rect = document.querySelector(selector).getBoundingClientRect();
+              return rect.top + (rect.height / 2);
+            }),
+          };
+        });
+        if (!desktopToolbarContract.closeVisible || !desktopToolbarContract.deleteVisible || desktopToolbarContract.menuVisible || desktopToolbarContract.display !== "flex" || desktopToolbarContract.wraps !== "nowrap" || desktopToolbarContract.overflow || Math.max(...desktopToolbarContract.centers) - Math.min(...desktopToolbarContract.centers) > 1) {
+          throw new Error(`Workspace desktop toolbar contract failed: ${JSON.stringify(desktopToolbarContract)}`);
+        }
         if (captureDir) await page.screenshot({ path: path.join(captureDir, "workspace-preview-desktop.png"), fullPage: false });
         await page.click("[data-edit-workspace-file='docs/guide.md']");
         await page.waitForSelector("#workspace-file-editor", { state: "visible", timeout: 10_000 });
         const updatedGuide = `# Updated guide\n\nSaved safely.\n\n${Array.from({ length: 80 }, (_, index) => `Saved line ${index + 1} verifies the preview scrollbar.`).join("\\n\\n")}\n`;
+        let releaseWorkspaceWrite;
+        const workspaceWriteGate = new Promise((resolve) => { releaseWorkspaceWrite = resolve; });
+        const workspaceWritePattern = "**/projects/web/workspace/file";
+        await page.route(workspaceWritePattern, async (route) => {
+          if (route.request().method() === "PUT") {
+            await workspaceWriteGate;
+          }
+          await route.continue();
+        });
         await page.fill("#workspace-file-content", updatedGuide);
         await page.click("#workspace-file-editor button[type='submit']");
         await page.waitForFunction(() => document.querySelector(".markdown-viewer")?.textContent.includes("Saved safely."));
+        const optimisticSaveContract = await page.evaluate(() => ({
+          editorVisible: Boolean(document.querySelector("#workspace-file-editor")),
+          contentVisible: document.querySelector(".markdown-viewer")?.textContent.includes("Saved safely."),
+        }));
+        if (optimisticSaveContract.editorVisible || !optimisticSaveContract.contentVisible) {
+          throw new Error(`Workspace save was not optimistic: ${JSON.stringify(optimisticSaveContract)}`);
+        }
+        releaseWorkspaceWrite();
+        await page.waitForFunction(() => document.querySelector(".markdown-viewer")?.textContent.includes("Saved safely."));
+        await page.unroute(workspaceWritePattern);
+
+        await page.click("[data-edit-workspace-file='docs/guide.md']");
+        await page.fill("#workspace-file-content", "# Draft preserved\\n");
+        await page.route(workspaceWritePattern, async (route) => {
+          if (route.request().method() === "PUT") {
+            await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "Forced save failure", details: { code: "stale" } }) });
+            return;
+          }
+          await route.continue();
+        });
+        await page.click("#workspace-file-editor button[type='submit']");
+        await page.waitForSelector("#workspace-file-editor", { state: "visible", timeout: 10_000 });
+        const failedSaveContract = await page.locator("#workspace-file-content").textContent();
+        if (failedSaveContract !== "# Draft preserved\\n") throw new Error("Workspace save failure did not preserve the draft");
+        await page.unroute(workspaceWritePattern);
+        const fullScreenButton = page.locator("#workspace-file-editor [data-toggle-workspace-full-screen]");
+        await fullScreenButton.click();
+        await page.waitForSelector(".workspace-file-editor-full-screen", { state: "visible", timeout: 10_000 });
+        await page.click(".workspace-file-editor-full-screen [data-toggle-workspace-full-screen]");
+        await page.waitForFunction(() => !document.querySelector(".workspace-file-editor-full-screen"));
+        await page.click("[data-cancel-workspace-file-edit]");
+
+        await page.evaluate(() => navigate({ type: "projectWorkspace", key: "web", path: "", file: "delete-refresh.txt" }));
+        await page.waitForSelector("[data-delete-workspace-file='delete-refresh.txt']", { state: "visible", timeout: 10_000 });
+        let releaseWorkspaceDeleteSuccess;
+        const workspaceDeleteSuccessGate = new Promise((resolve) => { releaseWorkspaceDeleteSuccess = resolve; });
+        await page.route(workspaceWritePattern, async (route) => {
+          if (route.request().method() === "DELETE") {
+            await workspaceDeleteSuccessGate;
+          }
+          await route.continue();
+        });
+        await page.click("[data-delete-workspace-file='delete-refresh.txt']");
+        await page.waitForFunction(() => parseRoute().file === "");
+        await page.click("[data-refresh-project-workspace]");
+        await page.waitForFunction(() => !state.projectWorkspaces[projectWorkspaceKey("web", "")]?.loading);
+        if (await page.locator("[data-workspace-file='delete-refresh.txt']").count() !== 0) {
+          throw new Error("Refresh restored a pending workspace delete row");
+        }
+        releaseWorkspaceDeleteSuccess();
+        await page.waitForFunction(() => document.querySelector(".growl")?.textContent.includes("File deleted"));
+        if (await page.locator("[data-workspace-file='delete-refresh.txt']").count() !== 0) {
+          throw new Error("Successful workspace delete did not reconcile a refreshed directory cache");
+        }
+        await page.unroute(workspaceWritePattern);
+
+        await page.evaluate(() => navigate({ type: "projectWorkspace", key: "web", path: "", file: "delete-overlap-a.txt" }));
+        await page.waitForSelector("[data-delete-workspace-file='delete-overlap-a.txt']", { state: "visible", timeout: 10_000 });
+        let releaseWorkspaceDeleteA;
+        let releaseWorkspaceDeleteB;
+        const workspaceDeleteGateA = new Promise((resolve) => { releaseWorkspaceDeleteA = resolve; });
+        const workspaceDeleteGateB = new Promise((resolve) => { releaseWorkspaceDeleteB = resolve; });
+        await page.route(workspaceWritePattern, async (route) => {
+          if (route.request().method() === "DELETE") {
+            const path = JSON.parse(route.request().postData() || "{}").path;
+            if (path === "delete-overlap-a.txt") {
+              await workspaceDeleteGateA;
+              await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "Forced delete failure", details: { code: "stale" } }) });
+              return;
+            }
+            if (path === "delete-overlap-b.txt") {
+              await workspaceDeleteGateB;
+            }
+            await route.continue();
+            return;
+          }
+          await route.continue();
+        });
+        await page.click("[data-delete-workspace-file='delete-overlap-a.txt']");
+        await page.waitForFunction(() => parseRoute().file === "");
+        await page.evaluate(() => navigate({ type: "projectWorkspace", key: "web", path: "", file: "delete-overlap-b.txt" }));
+        await page.waitForSelector("[data-delete-workspace-file='delete-overlap-b.txt']", { state: "visible", timeout: 10_000 });
+        await page.click("[data-delete-workspace-file='delete-overlap-b.txt']");
+        await page.waitForFunction(() => parseRoute().file === "");
+        await page.evaluate(() => navigate({ type: "projectWorkspace", key: "web", path: "docs", file: "docs/guide.md" }));
+        await page.waitForSelector("[data-edit-workspace-file='docs/guide.md']", { state: "visible", timeout: 10_000 });
+        await page.click("[data-edit-workspace-file='docs/guide.md']");
+        await page.fill("#workspace-file-content", "# Newer draft\\n");
+        releaseWorkspaceDeleteA();
+        await page.waitForFunction(() => document.querySelector(".growl")?.textContent.includes("Forced delete failure"));
+        const delayedDeleteFailureContract = await page.evaluate(() => ({
+          route: parseRoute(),
+          draft: document.querySelector("#workspace-file-content")?.value,
+          restored: state.projectWorkspaces[projectWorkspaceKey("web", "")]?.entries?.some((entry) => entry.path === "delete-overlap-a.txt"),
+          pending: state.projectWorkspaces[projectWorkspaceKey("web", "")]?.entries?.some((entry) => entry.path === "delete-overlap-b.txt"),
+        }));
+        releaseWorkspaceDeleteB();
+        await page.waitForFunction(() => document.querySelector(".growl")?.textContent.includes("File deleted"));
+        const completedDeleteContract = await page.evaluate(() => state.projectWorkspaces[projectWorkspaceKey("web", "")]?.entries?.some((entry) => entry.path === "delete-overlap-b.txt"));
+        await page.unroute(workspaceWritePattern);
+        if (delayedDeleteFailureContract.route.file !== "docs/guide.md" || delayedDeleteFailureContract.draft !== "# Newer draft\\n" || !delayedDeleteFailureContract.restored || delayedDeleteFailureContract.pending || completedDeleteContract) {
+          throw new Error(`Delayed workspace delete failure replaced newer state: ${JSON.stringify(delayedDeleteFailureContract)}`);
+        }
+        await page.click("[data-cancel-workspace-file-edit]");
 
         await page.goBack();
         await page.waitForSelector(".workspace-preview-empty", { state: "visible", timeout: 10_000 });
@@ -3140,9 +3296,43 @@ title: !123 value
             !mobileContract.internallyScrollable) {
           throw new Error(`Workspace mobile layout failed: ${JSON.stringify(mobileContract)}`);
         }
+        const mobileToolbarContract = await page.evaluate(() => {
+          const header = document.querySelector(".workspace-pane-header");
+          const actions = document.querySelector(".workspace-preview-actions");
+          const menu = document.querySelector(".workspace-action-menu");
+          return {
+            display: getComputedStyle(actions).display,
+            editVisible: Boolean(document.querySelector("[data-edit-workspace-file]")) && getComputedStyle(document.querySelector("[data-edit-workspace-file]")).display !== "none",
+            deleteVisible: getComputedStyle(document.querySelector(".workspace-delete-direct")).display !== "none",
+            closeVisible: getComputedStyle(document.querySelector(".workspace-close-direct")).display !== "none",
+            menuVisible: getComputedStyle(menu).display !== "none",
+            wraps: getComputedStyle(actions).flexWrap,
+            overflow: header.scrollWidth > header.clientWidth,
+            centers: ["[data-edit-workspace-file]", ".workspace-action-menu > summary"].map((selector) => {
+              const rect = document.querySelector(selector).getBoundingClientRect();
+              return rect.top + (rect.height / 2);
+            }),
+          };
+        });
+        if (!mobileToolbarContract.editVisible || mobileToolbarContract.deleteVisible || mobileToolbarContract.closeVisible || !mobileToolbarContract.menuVisible || mobileToolbarContract.display !== "flex" || mobileToolbarContract.wraps !== "nowrap" || mobileToolbarContract.overflow || Math.max(...mobileToolbarContract.centers) - Math.min(...mobileToolbarContract.centers) > 1) {
+          throw new Error(`Workspace mobile toolbar contract failed: ${JSON.stringify(mobileToolbarContract)}`);
+        }
+        await page.locator(".workspace-action-menu > summary").focus();
+        await page.keyboard.press("Enter");
+        await page.waitForFunction(() => document.querySelector(".workspace-action-menu")?.open);
+        const mobileMenuContract = await page.evaluate(() => ({
+          close: Boolean(document.querySelector(".workspace-action-menu [data-close-workspace-preview]")),
+          delete: Boolean(document.querySelector(".workspace-action-menu [data-delete-workspace-file]")),
+        }));
+        if (!mobileMenuContract.close || !mobileMenuContract.delete) throw new Error(`Workspace mobile action menu contract failed: ${JSON.stringify(mobileMenuContract)}`);
+        await page.keyboard.press("Escape");
+        await page.waitForFunction(() => !document.querySelector(".workspace-action-menu")?.open);
         if (captureDir) await page.screenshot({ path: path.join(captureDir, "workspace-preview-mobile.png"), fullPage: false });
 
-        await page.click("[data-close-workspace-preview]");
+        await page.evaluate(() => {
+          const route = parseRoute();
+          navigate({ ...route, file: "" });
+        });
         await page.click("[data-workspace-directory='']");
         await page.waitForSelector("[data-workspace-file='README.md']", { state: "visible", timeout: 10_000 });
         const mobileListScrollContract = await page.evaluate(() => {
@@ -3187,12 +3377,19 @@ title: !123 value
           throw new Error(`Workspace image preview contract failed: ${JSON.stringify(imageContract)}`);
         }
 
+        await page.click(".workspace-action-menu > summary");
+        await page.click(".workspace-action-menu [data-close-workspace-preview]");
         await page.waitForSelector("[data-workspace-file='binary.dat']", { state: "visible", timeout: 10_000 });
         await page.click("[data-workspace-file='binary.dat']");
         await page.waitForFunction(() => document.querySelector(".workspace-preview-pane")?.textContent.includes("Binary file"));
         if (!(await page.locator(".workspace-preview-pane").innerText()).includes("Binary file")) {
           throw new Error("Workspace binary state was not visible");
         }
+        await page.evaluate(() => {
+          const route = parseRoute();
+          navigate({ ...route, file: "" });
+        });
+        await page.waitForSelector("[data-workspace-file='large.txt']", { state: "visible", timeout: 10_000 });
         await page.click("[data-workspace-file='large.txt']");
         await page.waitForFunction(() => document.querySelector(".workspace-preview-pane")?.textContent.includes("File too large"));
 
@@ -3221,7 +3418,8 @@ title: !123 value
           throw new Error(`Workspace race-safe navigation failed: ${JSON.stringify(raceContract)}`);
         }
         const unexpectedErrors = errors.slice(consoleErrorStart).filter((message) =>
-          !message.includes("status of 415") && !message.includes("status of 413") && !message.includes("status of 500"));
+          !message.includes("status of 415") && !message.includes("status of 413") &&
+          !message.includes("status of 409") && !message.includes("status of 500"));
         errors.splice(consoleErrorStart, errors.length - consoleErrorStart, ...unexpectedErrors);
       }
 
