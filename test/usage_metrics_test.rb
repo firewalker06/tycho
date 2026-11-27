@@ -16,6 +16,7 @@ module UsageMetricsTest
   )
 
   def run!
+    assert_current_model_pricing_context_survives_metrics
     assert_codex_cumulative_usage_is_normalized_and_idempotent
     assert_managed_run_finalization_persists_once
     assert_claude_model_usage_preserves_mixed_model_attribution
@@ -32,6 +33,28 @@ module UsageMetricsTest
     assert_trimmed_codex_history_has_unknown_baseline
     assert_schema_migration_and_corruption_recovery
     puts "usage_metrics_test: ok"
+  end
+
+  def assert_current_model_pricing_context_survives_metrics
+    with_store do |store|
+      current = run("current-pricing", 10, session_id: "current-session", model: "gpt-6.2-astra")
+      fixture_agent = agent("codex", "gpt-6.2-astra", [current], session_id: "current-session")
+      event = { "type" => "turn.completed", "service_tier" => "priority", "prompt_cache_retention" => "12h",
+                "usage" => { "input_tokens" => 1_000, "cached_input_tokens" => 100,
+                             "cache_creation_input_tokens" => 200, "output_tokens" => 100 } }
+      entries = usage_entries([event.to_json], "codex")
+      record = normalize(fixture_agent, current, entries)
+      store.upsert(record)
+      stored = store.runs.fetch(0)
+      assert_close(stored.dig("estimated_cost", "amount_usd"), 0.02728)
+      assert(stored.dig("estimated_cost", "pricing", "service_tier") == "priority",
+             "expected explicit tier through parser, normalizer and store")
+      assert(stored.dig("estimated_cost", "pricing", "cache_write_usd_per_million") == 40,
+             "expected Fast 12-hour cache-write rate")
+      provider = HQ::UsageMetrics::ProviderTelemetry.for("codex").usage_metadata(event)
+      assert(provider["service_tier"] == "priority" && provider["prompt_cache_retention"] == "12h",
+             "expected native telemetry ingestion to preserve pricing context")
+    end
   end
 
   def assert_codex_cumulative_usage_is_normalized_and_idempotent

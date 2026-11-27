@@ -26,7 +26,7 @@ module HQ
       token_snapshot, run_tokens = codex_token_snapshots(adapter, usage, previous:, prior_session_runs:)
       run_model = run.respond_to?(:model) ? run.model : nil
       run_model = agent_model(agent) if run_model.to_s.strip.empty?
-      cost_result = run_cost_for(adapter, usage, model: run_model, run_tokens: run_tokens)
+      cost_result = run_cost_for(adapter, usage, model: run_model, run_tokens: run_tokens, priced_at: run.finished_at)
       run_cost = cost_result.fetch("amount_usd")
 
       amount = previous&.fetch("amount_usd", nil)
@@ -147,7 +147,7 @@ module HQ
       normalize_snapshot(value)
     end
 
-    def run_cost_for(adapter, usage_entries, model:, run_tokens:)
+    def run_cost_for(adapter, usage_entries, model:, run_tokens:, priced_at: nil)
       case adapter
       when "claude"
         entry = usage_entries.reverse.find { |candidate| event_type(candidate) == "result" }
@@ -168,7 +168,9 @@ module HQ
         return cost_result(nil, "codex_turn_completed", "Codex did not report token usage") unless entry
         return cost_result(nil, "codex_token_estimate", "Codex token delta is unavailable") unless run_tokens
 
-        HQ::OpenAIModelPricing.estimate(model:, tokens: run_tokens).merge("source" => "codex_token_estimate")
+        context = HQ::OpenAIModelPricing.pricing_context_for(metadata(entry))
+        HQ::OpenAIModelPricing.estimate(model:, tokens: run_tokens, pricing_context: context, priced_at:)
+                             .merge("source" => "codex_token_estimate")
       else
         cost_result(nil, "unknown", "The harness does not expose cost usage")
       end

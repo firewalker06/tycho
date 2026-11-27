@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "time"
+
 module HQ
   module OpenAIModelPricing
     SOURCE_URL = "https://developers.openai.com/api/docs/pricing"
@@ -26,9 +28,14 @@ module HQ
         "as_of" => "2026-10-11"
       }.freeze
     }.freeze
+    CURRENT_MODELS = %w[gpt-6.2-sol gpt-6.2-astra gpt-6.1-terra].freeze
+    CURRENT_PRICE_DATE = "2026-11-27"
     TOKENS_PER_MILLION = 1_000_000.0
 
     PRICES_USD_PER_MILLION = {
+      "gpt-6.2-sol" => [2.0, 0.1, 10.0],
+      "gpt-6.2-astra" => [8.0, 0.4, 40.0],
+      "gpt-6.1-terra" => [1.0, 0.05, 5.0],
       "gpt-6-astra" => [10.0, 1.0, 50.0],
       "gpt-6-sol" => [2.0, 0.2, 10.0],
       "gpt-6.1-sol" => [2.0, 0.1, 10.0],
@@ -52,6 +59,9 @@ module HQ
     }.transform_values(&:freeze).freeze
 
     CACHE_WRITE_PRICES_USD_PER_MILLION = {
+      "gpt-6.2-sol" => 2.5,
+      "gpt-6.2-astra" => 10.0,
+      "gpt-6.1-terra" => 1.25,
       "gpt-6-astra" => 12.5,
       "gpt-6-sol" => 2.5,
       "gpt-6.1-sol" => 2.5,
@@ -65,7 +75,7 @@ module HQ
 
     module_function
 
-    def estimate(model:, tokens:)
+    def estimate(model:, tokens:, pricing_context: {}, priced_at: nil)
       requested_model = model.to_s.strip.downcase
       price_model = price_model_for(requested_model)
       return unavailable(requested_model, "No OpenAI list price is recorded for model #{requested_model.inspect}") unless price_model
@@ -75,6 +85,24 @@ module HQ
 
       input_rate, cached_rate, output_rate = PRICES_USD_PER_MILLION.fetch(price_model)
       cache_write_rate = CACHE_WRITE_PRICES_USD_PER_MILLION[price_model]
+      context = pricing_context.is_a?(Hash) ? pricing_context : {}
+      tier = context["service_tier"].to_s.downcase
+      tier = "standard" if tier.empty? || %w[default auto].include?(tier)
+      multiplier = tier_multiplier(price_model, tier, priced_at:)
+      return unavailable(requested_model, "No #{tier} price is recorded for model #{requested_model.inspect}") unless multiplier
+
+      retention = context["prompt_cache_retention"].to_s
+      if !retention.empty? && !%w[30m 12h].include?(retention)
+        return unavailable(requested_model, "No #{retention} cache-retention price is recorded")
+      end
+      if retention == "12h" && !CURRENT_MODELS.include?(price_model)
+        return unavailable(requested_model, "No 12h cache-write price is recorded for model #{requested_model.inspect}")
+      end
+      cache_write_rate *= 2 if cache_write_rate && retention == "12h"
+      input_rate *= multiplier
+      cached_rate *= multiplier
+      output_rate *= multiplier
+      cache_write_rate *= multiplier if cache_write_rate
       cache_write_tokens = token_counts.fetch("cache_creation_input_tokens", 0)
       if cache_write_tokens.positive? && cache_write_rate.nil?
         return unavailable(requested_model, "No cache-write price is recorded for model #{requested_model.inspect}")
@@ -98,6 +126,18 @@ module HQ
         "source" => pricing_metadata.fetch("source"),
         "as_of" => pricing_metadata.fetch("as_of")
       }
+      pricing["service_tier"] = tier
+      pricing["assumptions"] = [
+        "Short-context rates; cumulative usage does not identify per-request context length",
+        "No regional uplift, background-window discount, or tool fees"
+      ]
+      if context["service_tier"].to_s.empty? || tier == "standard" && context["service_tier"].to_s.downcase == "auto"
+        pricing["assumptions"] << "Standard processing; no explicit service tier was reported"
+      end
+      if retention.empty? && cache_write_tokens.positive?
+        pricing["assumptions"] << "30-minute cache writes; no retention was reported"
+      end
+      pricing["prompt_cache_retention"] = retention.empty? ? "30m" : retention if cache_write_rate
       pricing["cache_write_usd_per_million"] = cache_write_rate if cache_write_rate
 
       {
@@ -142,7 +182,37 @@ module HQ
     end
     private_class_method :normalized_token_counts
 
+    def tier_multiplier(model, tier, priced_at:)
+      return 1.0 if tier == "standard"
+      return nil unless CURRENT_MODELS.include?(model)
+
+      if tier == "ultrafast" && model.start_with?("gpt-6.2-")
+        timestamp = priced_at.is_a?(Time) ? priced_at : Time.iso8601(priced_at.to_s)
+        return timestamp < Time.utc(2027, 3, 1, 8) ? 3.0 : 6.0
+      end
+      return 2.0 if %w[fast priority].include?(tier)
+      return 0.5 if tier == "batch" || (tier == "flex" && model == "gpt-6.1-terra")
+
+      nil
+    rescue ArgumentError
+      nil
+    end
+    private_class_method :tier_multiplier
+
+    def pricing_context_for(metadata)
+      values = metadata.is_a?(Hash) ? metadata : {}
+      usage = values["usage"].is_a?(Hash) ? values["usage"] : {}
+      %w[service_tier prompt_cache_retention].each_with_object({}) do |key, result|
+        value = values[key] || usage[key]
+        result[key] = value unless value.nil?
+      end
+    end
+
     def pricing_metadata_for(model)
+      if CURRENT_MODELS.include?(model)
+        return { "source" => "https://developers.openai.com/api/docs/models/#{model}", "as_of" => CURRENT_PRICE_DATE }
+      end
+
       MODEL_PRICING_METADATA.fetch(model, DEFAULT_PRICING_METADATA)
     end
     private_class_method :pricing_metadata_for

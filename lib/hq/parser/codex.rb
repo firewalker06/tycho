@@ -153,7 +153,9 @@ module HQ
             "reasoning_output_tokens" => reasoning_tokens
           }
         )
-        system.last.metadata["model"] = event["model"] if event["model"]
+        %w[model service_tier prompt_cache_retention].each do |key|
+          system.last.metadata[key] = event[key] if event[key]
+        end
       end
 
       def parse_error(event, system)
