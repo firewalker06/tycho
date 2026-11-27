@@ -11676,6 +11676,17 @@ body:has([data-agent-workspace]) .app-shell { height: 100dvh; min-height: 0; ove
   .agent-workspace.has-detail:is(.side-conversation-workspace, .has-focus-panel):not(.agent-workspace-full-view):has(> .agent-dock > #inquiry-form.inquiry-form-full-height) {
     grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   }
+
+  /* Let the expanded Conversation editor fill both panel tracks. */
+  .agent-workspace:is(.has-detail, .conversation-only):not(.agent-workspace-full-view):has(> .agent-dock > #composer.composer-full-height) {
+    > .agent-dock { grid-row: 1 / -1; max-height: none; }
+    > :is(.agent-conversation-pane, .side-conversation-pane) { visibility: hidden; }
+  }
+}
+
+/* Expanded answer forms can use the available fields area for feedback. */
+#inquiry-form:is(.inquiry-form-full-height, .inquiry-form-full-screen) .inquiry-feedback-field textarea {
+  max-height: none;
 }
 
 /* Agent and schedule blocks have their own responsive page grid. */
