@@ -3130,6 +3130,20 @@ title: !123 value
             !previewContract.internallyScrollable) {
           throw new Error(`Workspace Markdown preview contract failed: ${JSON.stringify(previewContract)}`);
         }
+        const desktopToolbarContract = await page.evaluate(() => {
+          const header = document.querySelector(".workspace-pane-header");
+          const actions = document.querySelector(".workspace-preview-actions");
+          return {
+            closeVisible: getComputedStyle(document.querySelector(".workspace-close-direct")).display !== "none",
+            deleteVisible: getComputedStyle(document.querySelector(".workspace-delete-direct")).display !== "none",
+            menuVisible: getComputedStyle(document.querySelector(".workspace-action-menu")).display !== "none",
+            wraps: getComputedStyle(actions).flexWrap,
+            overflow: header.scrollWidth > header.clientWidth,
+          };
+        });
+        if (!desktopToolbarContract.closeVisible || !desktopToolbarContract.deleteVisible || desktopToolbarContract.menuVisible || desktopToolbarContract.wraps !== "nowrap" || desktopToolbarContract.overflow) {
+          throw new Error(`Workspace desktop toolbar contract failed: ${JSON.stringify(desktopToolbarContract)}`);
+        }
         if (captureDir) await page.screenshot({ path: path.join(captureDir, "workspace-preview-desktop.png"), fullPage: false });
         await page.click("[data-edit-workspace-file='docs/guide.md']");
         await page.waitForSelector("#workspace-file-editor", { state: "visible", timeout: 10_000 });
@@ -3277,9 +3291,38 @@ title: !123 value
             !mobileContract.internallyScrollable) {
           throw new Error(`Workspace mobile layout failed: ${JSON.stringify(mobileContract)}`);
         }
+        const mobileToolbarContract = await page.evaluate(() => {
+          const header = document.querySelector(".workspace-pane-header");
+          const actions = document.querySelector(".workspace-preview-actions");
+          const menu = document.querySelector(".workspace-action-menu");
+          return {
+            editVisible: Boolean(document.querySelector("[data-edit-workspace-file]")) && getComputedStyle(document.querySelector("[data-edit-workspace-file]")).display !== "none",
+            deleteVisible: getComputedStyle(document.querySelector(".workspace-delete-direct")).display !== "none",
+            closeVisible: getComputedStyle(document.querySelector(".workspace-close-direct")).display !== "none",
+            menuVisible: getComputedStyle(menu).display !== "none",
+            wraps: getComputedStyle(actions).flexWrap,
+            overflow: header.scrollWidth > header.clientWidth,
+          };
+        });
+        if (!mobileToolbarContract.editVisible || mobileToolbarContract.deleteVisible || mobileToolbarContract.closeVisible || !mobileToolbarContract.menuVisible || mobileToolbarContract.wraps !== "nowrap" || mobileToolbarContract.overflow) {
+          throw new Error(`Workspace mobile toolbar contract failed: ${JSON.stringify(mobileToolbarContract)}`);
+        }
+        await page.locator(".workspace-action-menu > summary").focus();
+        await page.keyboard.press("Enter");
+        await page.waitForFunction(() => document.querySelector(".workspace-action-menu")?.open);
+        const mobileMenuContract = await page.evaluate(() => ({
+          close: Boolean(document.querySelector(".workspace-action-menu [data-close-workspace-preview]")),
+          delete: Boolean(document.querySelector(".workspace-action-menu [data-delete-workspace-file]")),
+        }));
+        if (!mobileMenuContract.close || !mobileMenuContract.delete) throw new Error(`Workspace mobile action menu contract failed: ${JSON.stringify(mobileMenuContract)}`);
+        await page.keyboard.press("Escape");
+        await page.waitForFunction(() => !document.querySelector(".workspace-action-menu")?.open);
         if (captureDir) await page.screenshot({ path: path.join(captureDir, "workspace-preview-mobile.png"), fullPage: false });
 
-        await page.click("[data-close-workspace-preview]");
+        await page.evaluate(() => {
+          const route = parseRoute();
+          navigate({ ...route, file: "" });
+        });
         await page.click("[data-workspace-directory='']");
         await page.waitForSelector("[data-workspace-file='README.md']", { state: "visible", timeout: 10_000 });
         const mobileListScrollContract = await page.evaluate(() => {
@@ -3324,14 +3367,18 @@ title: !123 value
           throw new Error(`Workspace image preview contract failed: ${JSON.stringify(imageContract)}`);
         }
 
-        await page.click("[data-close-workspace-preview]");
+        await page.click(".workspace-action-menu > summary");
+        await page.click(".workspace-action-menu [data-close-workspace-preview]");
         await page.waitForSelector("[data-workspace-file='binary.dat']", { state: "visible", timeout: 10_000 });
         await page.click("[data-workspace-file='binary.dat']");
         await page.waitForFunction(() => document.querySelector(".workspace-preview-pane")?.textContent.includes("Binary file"));
         if (!(await page.locator(".workspace-preview-pane").innerText()).includes("Binary file")) {
           throw new Error("Workspace binary state was not visible");
         }
-        await page.click("[data-close-workspace-preview]");
+        await page.evaluate(() => {
+          const route = parseRoute();
+          navigate({ ...route, file: "" });
+        });
         await page.waitForSelector("[data-workspace-file='large.txt']", { state: "visible", timeout: 10_000 });
         await page.click("[data-workspace-file='large.txt']");
         await page.waitForFunction(() => document.querySelector(".workspace-preview-pane")?.textContent.includes("File too large"));
