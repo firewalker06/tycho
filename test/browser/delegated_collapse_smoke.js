@@ -286,7 +286,10 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           containerBounds.x >= treeBounds.x && containerBounds.right <= treeBounds.right &&
           containerBounds.y >= treeBounds.y && containerBounds.bottom <= treeBounds.bottom;
         return { badged: badgedBounds, plain: plainBounds, badge: badgeBounds,
-          statusContainer: containerBounds, paintInside, overflow: treeStyle.overflow,
+          statusContainer: containerBounds,
+          badgedIcon: rect(badgedRow.querySelector(".agent-status-icon")),
+          plainIcon: rect(plainRow.querySelector(".agent-status-icon")),
+          badgedRow: rect(badgedRow), plainRow: rect(plainRow), paintInside, overflow: treeStyle.overflow,
           borderRadius: treeStyle.borderRadius, badgeText: countBadge.textContent.trim(),
           badgeWhiteSpace: getComputedStyle(countBadge).whiteSpace };
       }, agentKey);
@@ -301,6 +304,14 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
         assert(Math.abs(comparison.badged.x - comparison.plain.x) <= 0.5,
           `mobile stacked rows must share left alignment: ${JSON.stringify(comparison)}`);
       }
+      for (const axis of ["x", "y"]) {
+        const badgedOffset = comparison.badgedIcon[axis] - comparison.badged[axis];
+        const plainOffset = comparison.plainIcon[axis] - comparison.plainRow[axis];
+        assert(Math.abs(badgedOffset - plainOffset) <= 0.5,
+          `leading icon ${axis} offsets must match: ${JSON.stringify(comparison)}`);
+      }
+      assert.equal(comparison.badgedIcon.width, comparison.plainIcon.width);
+      assert.equal(comparison.badgedIcon.height, comparison.plainIcon.height);
       assert(comparison.paintInside, `badge paint must stay inside rounded tree: ${JSON.stringify(comparison)}`);
       assert.equal(comparison.overflow, "hidden", "rounded tree must clip descendant paint");
       assert.equal(comparison.borderRadius, "8px", "badged tree must keep the shared rounded corner");
