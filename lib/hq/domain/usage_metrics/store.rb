@@ -247,7 +247,8 @@ module HQ
 
       def update_codex_cost!(run, delta, delta_reason)
         if delta
-          estimate = OpenAIModelPricing.estimate(model: run["configured_model"], tokens: delta)
+          estimate = OpenAIModelPricing.estimate(model: run["configured_model"], tokens: delta,
+                                                pricing_context: run["pricing_context"], priced_at: run["finished_at"])
           pricing = estimate["pricing"]&.merge("version" => estimate.dig("pricing", "as_of"))
           run["estimated_cost"] = cost_payload(estimate["amount_usd"], estimate["amount_usd"] ? "api_list_price_estimate" : "unpriced",
                                                 pricing, estimate["reason_unavailable"])

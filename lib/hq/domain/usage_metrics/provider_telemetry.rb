@@ -43,7 +43,10 @@ module HQ
         def usage_metadata(event)
           return nil unless event["type"] == event_type
 
-          { "event_type" => event_type, "usage" => event["usage"], "model" => event["model"] }.compact
+          {
+            "event_type" => event_type, "usage" => event["usage"], "model" => event["model"],
+            "service_tier" => event["service_tier"], "prompt_cache_retention" => event["prompt_cache_retention"]
+          }.compact
         end
 
         def session_id(event)

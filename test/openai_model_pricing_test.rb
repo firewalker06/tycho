@@ -6,6 +6,7 @@ module OpenAIModelPricingTest
   module_function
 
   def run!
+    assert_prices_card_926_models_and_tiers
     assert_prices_uncached_cached_and_output_tokens
     assert_prices_gpt_6_astra_cache_writes
     assert_prices_current_gpt_6_catalog
@@ -13,6 +14,73 @@ module OpenAIModelPricingTest
     assert_resolves_aliases_and_snapshots
     assert_rejects_unknown_models_and_invalid_usage
     puts "openai_model_pricing_test: ok"
+  end
+
+  def assert_prices_card_926_models_and_tiers
+    tokens = { "input_tokens" => 1_000, "cached_input_tokens" => 100,
+               "cache_creation_input_tokens" => 200, "output_tokens" => 100 }
+    {
+      "gpt-6.2-sol" => [0.00291, 2.0, 0.1, 2.5, 10.0],
+      "gpt-6.2-astra" => [0.01164, 8.0, 0.4, 10.0, 40.0],
+      "gpt-6.1-terra" => [0.001455, 1.0, 0.05, 1.25, 5.0]
+    }.each do |model, (amount, input, cached, write, output)|
+      result = HQ::OpenAIModelPricing.estimate(model:, tokens:)
+      assert((result["amount_usd"] - amount).abs < 1e-12, "expected #{model} cache-aware cost")
+      assert(result["pricing"].values_at("input_usd_per_million", "cached_input_usd_per_million",
+                                       "cache_write_usd_per_million", "output_usd_per_million") ==
+             [input, cached, write, output], "expected all four #{model} rates")
+      assert(result.dig("pricing", "as_of") == "2026-11-27", "expected verified date")
+      assert(result.dig("pricing", "source").end_with?("/models/#{model}"), "expected model source")
+      assert(result.dig("pricing", "assumptions").any? { |text| text.include?("Standard processing") },
+             "expected missing tier assumption")
+      %w[fast priority batch default].each do |tier|
+        multiplier = { "fast" => 2, "priority" => 2, "batch" => 0.5, "default" => 1 }.fetch(tier)
+        tiered = HQ::OpenAIModelPricing.estimate(model:, tokens:, pricing_context: { "service_tier" => tier })
+        assert((tiered["amount_usd"] - amount * multiplier).abs < 1e-12, "expected #{model} #{tier} rate")
+      end
+      retained = HQ::OpenAIModelPricing.estimate(model:, tokens:,
+                                                pricing_context: { "prompt_cache_retention" => "12h" })
+      assert((retained["amount_usd"] - amount - 200 * write / 1_000_000).abs < 1e-12,
+             "expected 12-hour writes to replace 30-minute writes")
+      assert(HQ::OpenAIModelPricing.price_model_for("openai.#{model}-2026-11-27") == model,
+             "expected qualified dated model resolution")
+      no_cache = HQ::OpenAIModelPricing.estimate(model:, tokens: tokens.merge(
+        "cached_input_tokens" => 0, "cache_creation_input_tokens" => 0))
+      assert((no_cache["amount_usd"] - (1_000 * input + 100 * output) / 1_000_000).abs < 1e-12,
+             "expected #{model} uncached cost")
+    end
+    %w[gpt-6.2-sol gpt-6.2-astra].each do |model|
+      standard = HQ::OpenAIModelPricing.estimate(model:, tokens:)["amount_usd"]
+      { "2027-03-01T07:59:59Z" => 3, "2027-03-01T08:00:00Z" => 6 }.each do |date, multiplier|
+        result = HQ::OpenAIModelPricing.estimate(model:, tokens:, priced_at: date,
+                                                pricing_context: { "service_tier" => "ultrafast" })
+        assert((result["amount_usd"] - standard * multiplier).abs < 1e-12,
+               "expected Ultrafast promotion boundary in Pacific time")
+      end
+    end
+    flex = HQ::OpenAIModelPricing.estimate(model: "gpt-6.1-terra", tokens:,
+                                          pricing_context: { "service_tier" => "flex" })
+    assert((flex["amount_usd"] - 0.001455 / 2).abs < 1e-12, "expected Terra Flex rate")
+    %w[flex ultrafast reserved unknown].each do |tier|
+      result = HQ::OpenAIModelPricing.estimate(model: "gpt-6.2-sol", tokens:,
+                                              pricing_context: { "service_tier" => tier })
+      assert(result["amount_usd"].nil? && result["reason_unavailable"].include?(tier),
+             "expected unsupported #{tier} to stay unpriced")
+    end
+    %w[gpt-6.1-astra gpt-6.2 gpt-6.2-private].each do |model|
+      assert(HQ::OpenAIModelPricing.estimate(model:, tokens:)["amount_usd"].nil?,
+             "expected unverified ID #{model} to stay unpriced")
+    end
+    bad_retention = HQ::OpenAIModelPricing.estimate(model: "gpt-6.2-sol", tokens:,
+                                                  pricing_context: { "prompt_cache_retention" => "24h" })
+    assert(bad_retention["amount_usd"].nil?, "expected unsupported retention to stay unpriced")
+    nested = HQ::OpenAIModelPricing.pricing_context_for(
+      "service_tier" => "priority", "usage" => { "service_tier" => "batch", "prompt_cache_retention" => "12h" }
+    )
+    assert(nested == { "service_tier" => "priority", "prompt_cache_retention" => "12h" },
+           "expected top-level precedence with nested retention")
+    result = HQ::OpenAIModelPricing.estimate(model: "gpt-5.5", tokens:)
+    assert(result["amount_usd"].nil?, "expected unavailable legacy cache-write rate")
   end
 
   def assert_prices_gpt_6_astra_cache_writes

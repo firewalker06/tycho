@@ -10,7 +10,15 @@ type: project
 
 ## Last Updated
 
-2026-11-18
+2026-11-27
+
+## OpenAI cost estimates
+
+Card 926 adds verified GPT-6.2 Sol/Astra and GPT-6.1 Terra rates. Explicit
+processing tier and cache-retention metadata now reach cost snapshots and
+metrics. Saved historical snapshots retain their amounts and provenance.
+Aggregate Codex counts still use documented short-context assumptions. See
+[pricing verification and limitations](OPENAI_PRICING.md).
 
 ## Selective archived delegation references
 

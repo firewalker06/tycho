@@ -16,6 +16,7 @@ module AgentCostSnapshotTest
   FakeRun = Struct.new(:session_id, :finished_at, :agent, :model, keyword_init: true)
 
   def run!
+    assert_card_926_tier_and_historical_snapshot
     assert_claude_cost_accumulates_per_session
     assert_session_change_resets_cost
     assert_opencode_sums_step_costs
@@ -27,6 +28,28 @@ module AgentCostSnapshotTest
     assert_unknown_custom_codex_model_stays_unpriced
     assert_missing_cost_is_not_treated_as_zero
     puts "agent_cost_snapshot_test: ok"
+  end
+
+  def assert_card_926_tier_and_historical_snapshot
+    first_run = run("current-session", 1)
+    current = agent("codex", [first_run], nil, model: "gpt-6.2-sol")
+    event = { "type" => "turn.completed", "service_tier" => "priority",
+              "usage" => { "input_tokens" => 1_000, "cached_input_tokens" => 100, "output_tokens" => 100 } }
+    _conversation, parsed = HQ::Parser.parse_stream([event.to_json], agent_type: "codex")
+    entries = parsed.select { |entry| entry.type == :usage }
+    first = advance(current, first_run, entries)
+    assert((first["amount_usd"] - 0.00562).abs < 1e-12, "expected parsed priority tier to reach snapshot")
+    saved = Marshal.load(Marshal.dump(first))
+    second_run = run("current-session", 2)
+    current.cost_snapshot = first
+    current.runs << second_run
+    event["service_tier"] = "default"
+    event["usage"] = { "input_tokens" => 2_000, "cached_input_tokens" => 200, "output_tokens" => 200 }
+    _conversation, parsed = HQ::Parser.parse_stream([event.to_json], agent_type: "codex")
+    second = advance(current, second_run, parsed.select { |entry| entry.type == :usage })
+    assert((second["run_amount_usd"] - 0.00281).abs < 1e-12, "expected resumed delta at current tier")
+    assert((second["amount_usd"] - 0.00843).abs < 1e-12, "expected saved amount plus new delta")
+    assert(first == saved, "expected prior amount, rates, assumptions and date to stay unchanged")
   end
 
   def assert_codex_prices_gpt_6_astra_cache_writes

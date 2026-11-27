@@ -85,9 +85,9 @@ for that model, the estimate remains unavailable.
 Reasoning tokens are already included in Codex's `output_tokens` and are not
 charged twice. The result is a standard OpenAI API list-price equivalent, not
 the operator's actual invoice or ChatGPT subscription charge. It excludes
-Priority/Fast multipliers, regional processing uplifts, tool-call fees, and
+regional processing uplifts, tool-call fees, and
 long-context multipliers that cannot be inferred from Codex's aggregate turn
-telemetry.
+telemetry. See [current model pricing and tier assumptions](OPENAI_PRICING.md).
 
 The embedded rate card comes from the [official OpenAI API pricing
 page](https://developers.openai.com/api/docs/pricing) and model-specific
@@ -97,6 +97,9 @@ values are standard short-context USD prices per 1M tokens:
 
 | Model | Input | Cached input | Cache write | Output |
 | --- | ---: | ---: | ---: | ---: |
+| `gpt-6.2-sol` | $2.00 | $0.10 | $2.50 | $10.00 |
+| `gpt-6.2-astra` | $8.00 | $0.40 | $10.00 | $40.00 |
+| `gpt-6.1-terra` | $1.00 | $0.05 | $1.25 | $5.00 |
 | `gpt-6-astra` | $10.00 | $1.00 | $12.50 | $50.00 |
 | `gpt-6-sol` | $2.00 | $0.20 | $2.50 | $10.00 |
 | `gpt-6.1-sol` | $2.00 | $0.10 | $2.50 | $10.00 |

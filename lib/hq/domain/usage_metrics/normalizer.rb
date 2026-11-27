@@ -67,6 +67,7 @@ module HQ
           "exit_code" => @run.exit_code,
           "tokens" => normalized["tokens"],
           "cumulative_tokens" => normalized["cumulative_tokens"],
+          "pricing_context" => normalized["pricing_context"],
           "codex_baseline_known" => codex_baseline_known?(adapter, native_session_id),
           "estimated_cost" => normalized.fetch("estimated_cost"),
           "completeness" => {
@@ -95,6 +96,7 @@ module HQ
         {
           "tokens" => nil,
           "cumulative_tokens" => snapshot,
+          "pricing_context" => OpenAIModelPricing.pricing_context_for(metadata(entry)),
           "observed_models" => observed,
           "model_attribution" => observed.map { |model| { "observed_model" => model } },
           "estimated_cost" => unavailable_cost("Codex cost is calculated after cumulative-token normalization"),
