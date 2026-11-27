@@ -162,6 +162,8 @@ def write_fixture(dir)
   File.write(File.join(workspace, "README.md"), "# Workspace fixture\n")
   File.write(File.join(workspace, "docs", "readme-notes.md"), "Ranked prefix match.\n")
   File.write(File.join(workspace, "docs", "relevant-and-message.md"), "Ranked fuzzy match.\n")
+  File.write(File.join(workspace, "delete-search.txt"), "Delete this search fixture.\n")
+  File.write(File.join(workspace, "delete-navigation.txt"), "Restore this navigation fixture.\n")
   File.write(File.join(workspace, "fast", "fast.txt"), "fast\n")
   File.write(File.join(workspace, "slow", "slow.txt"), "slow\n")
   File.write(File.join(workspace, "src", "app.rb"), "puts \"fixture\"\n")
@@ -3069,6 +3071,22 @@ title: !123 value
           throw new Error(`Clearing workspace search did not restore the directory: ${JSON.stringify(clearedSearchContract)}`);
         }
 
+        await searchInput.fill("delete-search");
+        await page.waitForSelector("[data-workspace-file='delete-search.txt']", { state: "visible", timeout: 10_000 });
+        await page.click("[data-workspace-file='delete-search.txt']");
+        await page.waitForSelector("[data-delete-workspace-file='delete-search.txt']", { state: "visible", timeout: 10_000 });
+        await page.click("[data-delete-workspace-file='delete-search.txt']");
+        await page.waitForFunction(() => !document.querySelector("[data-workspace-file='delete-search.txt']"));
+        const deletedSearchContract = await page.evaluate(() => ({
+          route: parseRoute(),
+          search: state.projectWorkspaceSearches[projectWorkspaceSearchKey("web", "delete-search")],
+        }));
+        if (deletedSearchContract.route.file || deletedSearchContract.search?.entries?.some((entry) => entry.path === "delete-search.txt")) {
+          throw new Error(`Optimistic workspace delete left a visible search result: ${JSON.stringify(deletedSearchContract)}`);
+        }
+        await searchInput.fill("");
+        await page.waitForSelector("[data-workspace-directory='docs']", { state: "visible", timeout: 10_000 });
+
         await searchInput.fill("docs");
         await page.waitForSelector("[data-workspace-directory='docs']", { state: "visible", timeout: 10_000 });
         await page.click("[data-workspace-directory='docs']");
@@ -3152,6 +3170,37 @@ title: !123 value
         await page.waitForSelector(".workspace-file-editor-full-screen", { state: "visible", timeout: 10_000 });
         await page.click(".workspace-file-editor-full-screen [data-toggle-workspace-full-screen]");
         await page.waitForFunction(() => !document.querySelector(".workspace-file-editor-full-screen"));
+        await page.click("[data-cancel-workspace-file-edit]");
+
+        await page.evaluate(() => navigate({ type: "projectWorkspace", key: "web", path: "", file: "delete-navigation.txt" }));
+        await page.waitForSelector("[data-delete-workspace-file='delete-navigation.txt']", { state: "visible", timeout: 10_000 });
+        let releaseWorkspaceDelete;
+        const workspaceDeleteGate = new Promise((resolve) => { releaseWorkspaceDelete = resolve; });
+        await page.route(workspaceWritePattern, async (route) => {
+          if (route.request().method() === "DELETE") {
+            await workspaceDeleteGate;
+            await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "Forced delete failure", details: { code: "stale" } }) });
+            return;
+          }
+          await route.continue();
+        });
+        await page.click("[data-delete-workspace-file='delete-navigation.txt']");
+        await page.waitForFunction(() => parseRoute().file === "");
+        await page.evaluate(() => navigate({ type: "projectWorkspace", key: "web", path: "docs", file: "docs/guide.md" }));
+        await page.waitForSelector("[data-edit-workspace-file='docs/guide.md']", { state: "visible", timeout: 10_000 });
+        await page.click("[data-edit-workspace-file='docs/guide.md']");
+        await page.fill("#workspace-file-content", "# Newer draft\\n");
+        releaseWorkspaceDelete();
+        await page.waitForFunction(() => document.querySelector(".growl")?.textContent.includes("Forced delete failure"));
+        const delayedDeleteFailureContract = await page.evaluate(() => ({
+          route: parseRoute(),
+          draft: document.querySelector("#workspace-file-content")?.value,
+          restored: state.projectWorkspaces[projectWorkspaceKey("web", "")]?.entries?.some((entry) => entry.path === "delete-navigation.txt"),
+        }));
+        await page.unroute(workspaceWritePattern);
+        if (delayedDeleteFailureContract.route.file !== "docs/guide.md" || delayedDeleteFailureContract.draft !== "# Newer draft\\n" || !delayedDeleteFailureContract.restored) {
+          throw new Error(`Delayed workspace delete failure replaced newer state: ${JSON.stringify(delayedDeleteFailureContract)}`);
+        }
         await page.click("[data-cancel-workspace-file-edit]");
 
         await page.goBack();
