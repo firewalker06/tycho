@@ -50,7 +50,7 @@ module.exports = async ({browser, baseUrl, agentKey, captureDir}) => {
     const composerBefore = await composer.evaluate(e => ({height:e.getBoundingClientRect().height, maxHeight:getComputedStyle(e).maxHeight, resize:getComputedStyle(e).resize, panel:e.closest(".agent-dock").getBoundingClientRect().toJSON(), shell:e.closest(".composer-editor-shell").getBoundingClientRect().toJSON()}));
     if (captureDir) await page.screenshot({path:path.join(captureDir,`before-composer-${layout.name}.png`)});
     await page.locator("[data-toggle-composer-full-screen]").click();
-    const composerExpanded = await composer.evaluate(e => ({height:e.getBoundingClientRect().height, maxHeight:getComputedStyle(e).maxHeight, resize:getComputedStyle(e).resize, form:e.closest("form").className, panel:e.closest(".agent-dock")?.getBoundingClientRect().toJSON(), shell:e.closest(".composer-editor-shell")?.getBoundingClientRect().toJSON(), send:e.closest("form").querySelector("button[type=submit]")?.getBoundingClientRect().toJSON()}));
+    const composerExpanded = await composer.evaluate(e => ({height:e.getBoundingClientRect().height, maxHeight:getComputedStyle(e).maxHeight, resize:getComputedStyle(e).resize, form:e.closest("form").className, panel:e.closest(".agent-dock")?.getBoundingClientRect().toJSON(), shell:e.closest(".composer-editor-shell")?.getBoundingClientRect().toJSON(), workspace:e.closest(".agent-workspace")?.getBoundingClientRect().toJSON(), workspaceStyle:e.closest(".agent-workspace") ? {paddingTop:getComputedStyle(e.closest(".agent-workspace")).paddingTop,paddingBottom:getComputedStyle(e.closest(".agent-workspace")).paddingBottom} : null, send:e.closest("form").querySelector("button[type=submit]")?.getBoundingClientRect().toJSON()}));
     const composerBox = await composer.boundingBox();
     await page.mouse.move(composerBox.x+composerBox.width-5,composerBox.y+composerBox.height-5);
     await page.mouse.down();
@@ -59,12 +59,25 @@ module.exports = async ({browser, baseUrl, agentKey, captureDir}) => {
     const composerAfter = await composer.evaluate(e => ({height:e.getBoundingClientRect().height, maxHeight:getComputedStyle(e).maxHeight, form:e.closest("form").className, panel:e.closest(".agent-dock")?.getBoundingClientRect().toJSON(), send:e.closest("form").querySelector("button[type=submit]")?.getBoundingClientRect().toJSON()}));
     if (layout.width >= 900) {
       assert.match(composerExpanded.form,/composer-full-height/);
-      assert(composerExpanded.shell.height >= 200, `expanded Conversation textarea fills the panel: ${JSON.stringify(composerExpanded)}`);
+      const availableHeight = composerExpanded.workspace.height - parseFloat(composerExpanded.workspaceStyle.paddingTop) - parseFloat(composerExpanded.workspaceStyle.paddingBottom);
+      assert(Math.abs(composerExpanded.panel.height - availableHeight) <= 2, `expanded Conversation dock fills available panel height ${availableHeight}: ${JSON.stringify(composerExpanded)}`);
+      assert(Math.abs(composerExpanded.height - composerExpanded.shell.height) <= 2, "textarea fills editor shell");
     }
+    const collapse = page.locator("[data-toggle-composer-full-screen]");
+    assert(await collapse.evaluate(element => {
+      const r = element.getBoundingClientRect();
+      return r.top >= 0 && r.bottom <= innerHeight && element.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
+    }), "Conversation collapse control remains reachable");
+    if (layout.mobile) assert(composerExpanded.height >= layout.height - 120, "mobile editor keeps full-screen height");
     const composerSubmit = page.locator("#composer button[type=submit]");
     await composerSubmit.scrollIntoViewIfNeeded();
     assert(await composerSubmit.evaluate(e => {const r=e.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight&&e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}), "Conversation submit control remains reachable after maximum drag");
     if (captureDir) await page.screenshot({path:path.join(captureDir,`after-composer-${layout.name}.png`)});
+
+    await collapse.click();
+    assert.equal(await composer.inputValue(), "Conversation resize fixture\n".repeat(8));
+    const collapsedHeight = await composer.evaluate(e => e.getBoundingClientRect().height);
+    assert(Math.abs(collapsedHeight - composerBefore.height) <= 2, "normal composer height restored");
 
     const inquiry = await context.newPage();
     await inquiry.goto(`${baseUrl}/ui#agent/web-inquiry-recovery-0`, {waitUntil:"networkidle"});

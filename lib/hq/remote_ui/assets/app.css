@@ -11625,9 +11625,10 @@ body:has([data-agent-workspace]) .app-shell { height: 100dvh; min-height: 0; ove
     grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
   }
 
-  /* Give an expanded Conversation editor a real panel track to fill. */
+  /* Let the expanded Conversation editor fill both panel tracks. */
   .agent-workspace:is(.has-detail, .conversation-only):not(.agent-workspace-full-view):has(> .agent-dock > #composer.composer-full-height) {
-    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    > .agent-dock { grid-row: 1 / -1; max-height: none; }
+    > :is(.agent-conversation-pane, .side-conversation-pane) { visibility: hidden; }
   }
 }
 
