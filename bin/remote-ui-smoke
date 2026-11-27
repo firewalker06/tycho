@@ -164,6 +164,8 @@ def write_fixture(dir)
   File.write(File.join(workspace, "docs", "relevant-and-message.md"), "Ranked fuzzy match.\n")
   File.write(File.join(workspace, "delete-search.txt"), "Delete this search fixture.\n")
   File.write(File.join(workspace, "delete-refresh.txt"), "Delete this refreshed fixture.\n")
+  File.write(File.join(workspace, "delete-overlap-a.txt"), "Fail this overlapping delete.\n")
+  File.write(File.join(workspace, "delete-overlap-b.txt"), "Complete this overlapping delete.\n")
   File.write(File.join(workspace, "delete-navigation.txt"), "Restore this navigation fixture.\n")
   File.write(File.join(workspace, "fast", "fast.txt"), "fast\n")
   File.write(File.join(workspace, "slow", "slow.txt"), "slow\n")
@@ -3200,33 +3202,51 @@ title: !123 value
         }
         await page.unroute(workspaceWritePattern);
 
-        await page.evaluate(() => navigate({ type: "projectWorkspace", key: "web", path: "", file: "delete-navigation.txt" }));
-        await page.waitForSelector("[data-delete-workspace-file='delete-navigation.txt']", { state: "visible", timeout: 10_000 });
-        let releaseWorkspaceDelete;
-        const workspaceDeleteGate = new Promise((resolve) => { releaseWorkspaceDelete = resolve; });
+        await page.evaluate(() => navigate({ type: "projectWorkspace", key: "web", path: "", file: "delete-overlap-a.txt" }));
+        await page.waitForSelector("[data-delete-workspace-file='delete-overlap-a.txt']", { state: "visible", timeout: 10_000 });
+        let releaseWorkspaceDeleteA;
+        let releaseWorkspaceDeleteB;
+        const workspaceDeleteGateA = new Promise((resolve) => { releaseWorkspaceDeleteA = resolve; });
+        const workspaceDeleteGateB = new Promise((resolve) => { releaseWorkspaceDeleteB = resolve; });
         await page.route(workspaceWritePattern, async (route) => {
           if (route.request().method() === "DELETE") {
-            await workspaceDeleteGate;
-            await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "Forced delete failure", details: { code: "stale" } }) });
+            const path = JSON.parse(route.request().postData() || "{}").path;
+            if (path === "delete-overlap-a.txt") {
+              await workspaceDeleteGateA;
+              await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "Forced delete failure", details: { code: "stale" } }) });
+              return;
+            }
+            if (path === "delete-overlap-b.txt") {
+              await workspaceDeleteGateB;
+            }
+            await route.continue();
             return;
           }
           await route.continue();
         });
-        await page.click("[data-delete-workspace-file='delete-navigation.txt']");
+        await page.click("[data-delete-workspace-file='delete-overlap-a.txt']");
+        await page.waitForFunction(() => parseRoute().file === "");
+        await page.evaluate(() => navigate({ type: "projectWorkspace", key: "web", path: "", file: "delete-overlap-b.txt" }));
+        await page.waitForSelector("[data-delete-workspace-file='delete-overlap-b.txt']", { state: "visible", timeout: 10_000 });
+        await page.click("[data-delete-workspace-file='delete-overlap-b.txt']");
         await page.waitForFunction(() => parseRoute().file === "");
         await page.evaluate(() => navigate({ type: "projectWorkspace", key: "web", path: "docs", file: "docs/guide.md" }));
         await page.waitForSelector("[data-edit-workspace-file='docs/guide.md']", { state: "visible", timeout: 10_000 });
         await page.click("[data-edit-workspace-file='docs/guide.md']");
         await page.fill("#workspace-file-content", "# Newer draft\\n");
-        releaseWorkspaceDelete();
+        releaseWorkspaceDeleteA();
         await page.waitForFunction(() => document.querySelector(".growl")?.textContent.includes("Forced delete failure"));
         const delayedDeleteFailureContract = await page.evaluate(() => ({
           route: parseRoute(),
           draft: document.querySelector("#workspace-file-content")?.value,
-          restored: state.projectWorkspaces[projectWorkspaceKey("web", "")]?.entries?.some((entry) => entry.path === "delete-navigation.txt"),
+          restored: state.projectWorkspaces[projectWorkspaceKey("web", "")]?.entries?.some((entry) => entry.path === "delete-overlap-a.txt"),
+          pending: state.projectWorkspaces[projectWorkspaceKey("web", "")]?.entries?.some((entry) => entry.path === "delete-overlap-b.txt"),
         }));
+        releaseWorkspaceDeleteB();
+        await page.waitForFunction(() => document.querySelector(".growl")?.textContent.includes("File deleted"));
+        const completedDeleteContract = await page.evaluate(() => state.projectWorkspaces[projectWorkspaceKey("web", "")]?.entries?.some((entry) => entry.path === "delete-overlap-b.txt"));
         await page.unroute(workspaceWritePattern);
-        if (delayedDeleteFailureContract.route.file !== "docs/guide.md" || delayedDeleteFailureContract.draft !== "# Newer draft\\n" || !delayedDeleteFailureContract.restored) {
+        if (delayedDeleteFailureContract.route.file !== "docs/guide.md" || delayedDeleteFailureContract.draft !== "# Newer draft\\n" || !delayedDeleteFailureContract.restored || delayedDeleteFailureContract.pending || completedDeleteContract) {
           throw new Error(`Delayed workspace delete failure replaced newer state: ${JSON.stringify(delayedDeleteFailureContract)}`);
         }
         await page.click("[data-cancel-workspace-file-edit]");
