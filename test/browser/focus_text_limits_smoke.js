@@ -132,7 +132,36 @@ module.exports = async ({ browser, baseUrl, captureDir, metadataFixture }) => {
       focus = await read();
       assert.equal(focus.sections[0].items[1].title, padded, "accepted text must retain leading and trailing spaces");
       if (captureDir) await page.screenshot({ path: path.join(captureDir, `focus-text-boundaries-${width}.png`) });
-      results.push({ width, legacyFields: clamped.length, uiBoundaries: "pass", apiBoundaries: "pass", noTruncation: true });
+      const item = (title, subtitle = null) => ({ title, subtitle, attachments: [] });
+      const group = (title, items) => ({ title, subtitle: null, icon: "note", items });
+      const batches = [
+        { name: "group-swap", field: "title", before: [group("One", [item("A".repeat(41))]), group("Two", [item("B".repeat(41))])],
+          after: [group("Two", [item("A".repeat(41))]), group("One", [item("B".repeat(41))])] },
+        { name: "item-swap", field: "subtitle", before: [group("Work", [item("One", "A".repeat(61)), item("Two", "B".repeat(61))])],
+          after: [group("Work", [item("Two", "A".repeat(61)), item("One", "B".repeat(61))])] },
+      ];
+      for (const batch of batches) {
+        fs.writeFileSync(file, JSON.stringify({ revision: 1, updated_at: null, sections: batch.before }));
+        const response = await context.request.put(api, { data: { revision: 1, sections: batch.after } });
+        assert.equal(response.status(), 200, `${batch.name}: crossed names must retain unchanged legacy text`);
+        assert.deepEqual((await response.json()).focus.sections, batch.after);
+        assert.equal((await read()).revision, 2);
+        const changed = JSON.parse(JSON.stringify(batch.after));
+        changed[0].items[0][batch.field] += "!";
+        const copied = JSON.parse(JSON.stringify(batch.after));
+        copied[0].items.push({ ...copied[0].items[0] });
+        for (const invalid of [changed, copied]) {
+          const bytes = fs.readFileSync(file, "utf8");
+          const rejected = await context.request.put(api, { data: { revision: 2, sections: invalid } });
+          assert.equal(rejected.status(), 422, `${batch.name}: changed text and extra copies must fail`);
+          assert.equal(fs.readFileSync(file, "utf8"), bytes);
+        }
+        await page.reload({ waitUntil: "networkidle" });
+        if (!await page.locator("[data-agent-focus]").isVisible()) await page.locator('[data-side-conversation="focus"]').click();
+        await page.locator('[data-focus-edit-item="0:0"]').waitFor({ state: "visible" });
+        if (captureDir) await page.screenshot({ path: path.join(captureDir, `focus-text-${batch.name}-${width}.png`) });
+      }
+      results.push({ width, legacyFields: clamped.length, uiBoundaries: "pass", apiBoundaries: "pass", batchRenames: "pass", noTruncation: true });
     } finally {
       await context.close();
     }

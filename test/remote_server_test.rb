@@ -21,6 +21,7 @@ module RemoteServerTest
 
   def run!
     assert_remote_agent_focus
+    assert_remote_agent_focus_legacy_batches
     assert_remote_manual_project_creation
     assert_remote_agent_lifecycle
     assert_remote_creation_retries
@@ -3225,6 +3226,43 @@ module RemoteServerTest
         assert(e.status == 409, "archived Focus must be read-only")
       end
     end
+  end
+
+  def assert_remote_agent_focus_legacy_batches
+    require_relative "support/focus_legacy_batch_cases"
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      FileUtils.mkdir_p(workspace)
+      registry = registry_for(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      created = service.create_agent("project_key" => "web", "template_key" => "custom", "name" => "Batch fixture", "prompt" => "Synthetic only")
+      key = created[:key]
+      managed = HQ::AgentStore.new(registry.projects).load.find { |entry| entry.key == key }
+      server = HQ::RemoteServer.new(host: "127.0.0.1", port: 0, token: "", registry: registry)
+      FocusLegacyBatchCases.cases.first(2).each do |fixture|
+        File.write(managed.focus_path, JSON.generate("revision" => 1, "updated_at" => nil, "sections" => fixture[:before]))
+        result = server.send(:route, service, "PUT", "/agents/#{key}/focus", { "revision" => 1, "sections" => fixture[:after] })
+        assert(result[:status] == 200, "#{fixture[:name]}: API must accept crossed names")
+        saved = result[:body][:focus]
+        assert(saved["revision"] == 2 && saved["sections"] == fixture[:after], "#{fixture[:name]}: API must preserve exact legacy text")
+        assert(service.agent_focus(key) == saved, "#{fixture[:name]}: API result must persist")
+        changed = Marshal.load(Marshal.dump(fixture[:after]))
+        changed[0]["items"][0][fixture[:field]] += "!"
+        copied = Marshal.load(Marshal.dump(fixture[:after]))
+        copied[0]["items"] << Marshal.load(Marshal.dump(copied[0]["items"][0]))
+        [changed, copied].each do |invalid|
+          before = File.binread(managed.focus_path)
+          begin
+            server.send(:route, service, "PUT", "/agents/#{key}/focus", { "revision" => 2, "sections" => invalid })
+            raise "API accepted new or changed overlong text"
+          rescue HQ::RemoteServer::Error => error
+            assert(error.status == 422, "#{fixture[:name]}: invalid legacy reuse must return 422")
+          end
+          assert(File.binread(managed.focus_path) == before, "#{fixture[:name]}: API rejection must preserve saved bytes")
+        end
+      end
+    end
+    puts "remote_agent_focus_legacy_batches: ok"
   end
 
   def assert_remote_agent_payload_has_revision

@@ -325,7 +325,9 @@ No input is silently cut to fit. Attachment titles retain their existing limit.
 Saved legacy text remains readable. Unchanged fields are retained during
 unrelated edits, completion, insertion, deletion, and reordering. Compatibility
 matching consumes each old entry once; it does not permit copying an overlong
-entry as new work. Changed text must meet the new limit. Exact retries and
+entry as new work. Batch group and item renames can cross existing names
+without invalidating unchanged legacy fields or child text. Changed text must
+meet the new limit. Exact retries and
 revision conflicts keep their existing behavior.
 
 Displayed group and item titles and subtitles each use at most two lines with

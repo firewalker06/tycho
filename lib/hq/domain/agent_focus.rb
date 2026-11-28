@@ -112,73 +112,65 @@ module HQ
     end
 
     def validate_changed_text!(sections, current_sections)
-      section_matches = match_text_entries(sections, current_sections, sections: true)
-      sections.each_with_index do |section, index|
-        current = section_matches.key?(index) ? current_sections[section_matches[index]] : nil
-        validate_text_fields!(section, current)
-        current_items = current ? current["items"] : []
-        item_matches = match_text_entries(section["items"], current_items)
-        section["items"].each_with_index do |item, item_index|
-          previous = item_matches.key?(item_index) ? current_items[item_matches[item_index]] : nil
-          validate_text_fields!(item, previous)
+      validate_text_values!(sections, current_sections)
+      validate_text_values!(sections.flat_map { |section| section["items"] },
+                            current_sections.flat_map { |section| section["items"] })
+      return if legacy_entries_match?(sections, current_sections, sections: true)
+
+      raise Error, "Focus titles must be #{MAX_TITLE_LENGTH} characters or fewer; subtitles must be #{MAX_SUBTITLE_LENGTH} characters or fewer. Unchanged legacy text needs distinct saved sources"
+    end
+
+    def validate_text_values!(entries, current_entries)
+      entries.each do |entry|
+        TEXT_LIMITS.each do |field, limit|
+          value = entry[field]
+          next if value.nil? || value.length <= limit || current_entries.any? { |previous| previous[field] == value }
+
+          raise Error, "Focus #{field}s must be #{limit} characters or fewer"
         end
       end
     end
 
-    def validate_text_fields!(entry, previous)
-      TEXT_LIMITS.each do |field, limit|
-        value = entry[field]
-        next if value.nil? || value.length <= limit || previous && previous[field] == value
-
-        raise Error, "Focus #{field}s must be #{limit} characters or fewer"
-      end
+    def legacy_entry?(entry, sections: false)
+      TEXT_LIMITS.any? { |field, limit| entry[field] && entry[field].length > limit } ||
+        sections && entry["items"].any? { |item| legacy_entry?(item) }
     end
 
-    def match_text_entries(entries, current_entries, sections: false)
-      matches = {}
-      used = {}
-      # No stable IDs exist. Match unchanged text first, then one unchanged
-      # field. Consume each source once so copying legacy text is not an escape.
-      signatures = [->(entry) { [entry["title"], entry["subtitle"]] },
-                    ->(entry) { entry["title"] }, ->(entry) { entry["subtitle"] }]
-      if sections
-        signatures.unshift(->(entry) { [entry["title"], entry["subtitle"], item_texts(entry)] })
-        # Renaming both group fields must not invalidate unchanged item text.
-        signatures << ->(entry) { item_texts(entry) unless entry["items"].empty? }
-      end
-      order = entries.each_index.sort_by do |index|
+    def legacy_entries_match?(entries, current_entries, sections: false)
+      required = entries.each_index.select { |index| legacy_entry?(entries[index], sections:) }
+      candidates = required.to_h do |index|
         entry = entries[index]
-        -TEXT_LIMITS.count do |field, limit|
-          entry[field] && entry[field].length > limit
-        end
-      end
-      signatures.each do |signature|
-        order.each do |index|
-          next if matches.key?(index)
-          identity = signature.call(entries[index])
-          next if identity.nil? || identity == ""
-
-          candidates = current_entries.each_index.select do |candidate|
-            !used[candidate] && signature.call(current_entries[candidate]) == identity
+        sources = current_entries.each_index.select do |source|
+          previous = current_entries[source]
+          fields_match = TEXT_LIMITS.all? do |field, limit|
+            value = entry[field]
+            value.nil? || value.length <= limit || value == previous[field]
           end
-          source = candidates.min_by do |candidate|
-            previous = current_entries[candidate]
-            changed_legacy = TEXT_LIMITS.count do |field, limit|
-              entries[index][field] && entries[index][field].length > limit && entries[index][field] != previous[field]
-            end
-            [changed_legacy, sections && item_texts(entries[index]) != item_texts(previous) ? 1 : 0]
-          end
-          next unless source
-
-          matches[index] = source
-          used[source] = true
+          fields_match && (!sections || legacy_entries_match?(entry["items"], previous["items"]))
         end
+        [index, sources]
       end
-      matches
+      # Short names can cross in a batch. Only unchanged overlong fields and
+      # descendants constrain sources; short-only entries need no exemption.
+      owners = {}
+      required.sort_by { |index| candidates[index].length }.all? do |index|
+        assign_legacy_source(index, candidates, owners, {})
+      end
     end
 
-    def item_texts(section)
-      section["items"].map { |item| [item["title"], item["subtitle"]] }.sort_by { |value| JSON.generate(value) }
+    def assign_legacy_source(index, candidates, owners, visited)
+      candidates.fetch(index).each do |source|
+        next if visited[source]
+
+        visited[source] = true
+        owner = owners[source]
+        # Reassign an earlier choice when it would prevent a complete mapping.
+        next unless owner.nil? || assign_legacy_source(owner, candidates, owners, visited)
+
+        owners[source] = index
+        return true
+      end
+      false
     end
 
     def normalize_attachment(attachment, check_files:)

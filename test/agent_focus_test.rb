@@ -97,5 +97,27 @@ Dir.mktmpdir("tycho-focus-cli-") do |dir|
     end
   end
   raise "CLI rejection changed saved text" unless command.call("agent", "focus", key, "--json") == limited
+  require_relative "support/focus_legacy_batch_cases"
+  agents = JSON.parse(File.read(File.join(env.fetch("TYCHO_LOGS_ROOT"), "managed_agents.json")))
+  focus_path = agents.find { |agent| agent["key"] == key }.fetch("log_path").sub(/\.raw\.log\z/, ".focus.json")
+  FocusLegacyBatchCases.cases.first(2).each do |fixture|
+    File.write(focus_path, JSON.generate("revision" => 1, "updated_at" => nil, "sections" => fixture[:before]))
+    File.write(input, JSON.generate(fixture[:after]))
+    saved = command.call("agent", "focus", key, "--file", input, "--revision", "1", "--json")
+    raise "CLI rejected or changed #{fixture[:name]}" unless saved["revision"] == 2 && saved["sections"] == fixture[:after]
+    raise "CLI batch retry changed the revision" unless command.call("agent", "focus", key, "--file", input, "--revision", "1", "--json") == saved
+    changed = Marshal.load(Marshal.dump(fixture[:after]))
+    changed[0]["items"][0][fixture[:field]] += "!"
+    copied = Marshal.load(Marshal.dump(fixture[:after]))
+    copied[0]["items"] << Marshal.load(Marshal.dump(copied[0]["items"][0]))
+    [changed, copied].each do |invalid|
+      before = File.binread(focus_path)
+      File.write(input, JSON.generate(invalid))
+      out, err, status = Open3.capture3(env, "bundle", "exec", "bin/tycho", "agent", "focus", key, "--file", input, "--revision", "2", "--json")
+      raise "CLI accepted invalid batch: #{out} #{err}" if status.success?
+      raise "CLI rejection changed saved data" unless File.binread(focus_path) == before
+    end
+    puts "CLI legacy batch: #{fixture[:name]}: pass"
+  end
   puts "agent_focus_cli: ok (file, integer revision, JSON, stdin clear)"
 end

@@ -48,7 +48,7 @@ module.exports = async ({ context, page, api, agentKey, save, waitForFocus }) =>
     focus = await waitForFocus(current => current.sections[1]?.items[0]?.title === "Survivor B edited");
     assert.deepEqual(focus.sections.map(section => section.items[0].title), ["Original A edited", "Survivor B edited"], `${viewport.name}: the second duplicate item remains distinct`);
 
-    await save([{ title: "Keyboard", items: [{ title: "Toggle me", completed: false }] }]);
+    await save([{ title: "Keyboard", items: [{ title: "Toggle me", completed: false }, { title: "Keep group open", completed: false }] }]);
     await page.evaluate(() => refreshAgentFocus(parseRoute().key));
     const start = (await (await context.request.get(api)).json()).focus;
     const checkbox = page.locator('[data-focus-toggle-item="0:0"]');
@@ -103,6 +103,7 @@ module.exports = async ({ context, page, api, agentKey, save, waitForFocus }) =>
     assert.notEqual(finalFocus.sections[0].items[0].completed, true, `${viewport.name}: second Space activation is saved`);
     assert.equal(finalFocus.revision, start.revision + 2, `${viewport.name}: both Space activations receive revisions`);
     assert.equal(putCount, 2, `${viewport.name}: both Space activations send writes`);
+    assert.notEqual(finalFocus.sections[0].items[1].completed, true, `${viewport.name}: the second item keeps the group active throughout the held-Space check`);
     await page.unroute(api);
 
     const runFailedDeleteQueueCase = async (ambiguous) => {
