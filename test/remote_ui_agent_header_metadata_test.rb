@@ -11,9 +11,13 @@ module RemoteUIAgentHeaderMetadataTest
 
   def run!
     css = File.read(CSS_PATH)
-    wrap_rule = css[/^[ \t]*\.app-header\.detail-header \.subtitle-status-text \{([^}]*)\}/, 1]
-    unless wrap_rule&.include?("white-space: normal") && wrap_rule.include?("overflow-wrap: anywhere")
-      raise "mobile detail-header metadata must wrap without clipping"
+    subtitle_rule = css[/^[ \t]*\.subtitle-status-text \{([^}]*)\}/, 1]
+    unless subtitle_rule&.include?("white-space: nowrap") &&
+           subtitle_rule.include?("overflow: hidden") && subtitle_rule.include?("text-overflow: ellipsis")
+      raise "header metadata must use one-line ellipsis"
+    end
+    if css.match?(/\.app-header\.detail-header \.subtitle-status-text \{[^}]*white-space: normal/m)
+      raise "mobile detail-header metadata must preserve one-line ellipsis"
     end
 
     script = <<~'JAVASCRIPT'
