@@ -509,15 +509,11 @@ h3 {
 /* Agent blocks share metadata rendering across lists, cards, and the switcher. */
 .agent-block-subtitle,
 .agent-reference-copy > .agent-block-subtitle {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
+  display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
 }
 
 .subtitle-status {

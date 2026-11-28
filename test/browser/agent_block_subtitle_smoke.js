@@ -11,7 +11,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     checks.push({ check, samples: 1, op, expect }); observations[check] = [value];
   };
   for (const theme of ["dark", "light"]) for (const width of [320, 1440]) {
-    const context = await browser.newContext({ viewport: { width, height: 900 }, deviceScaleFactor: 1, reducedMotion: "reduce", serviceWorkers: "block" });
+    const context = await browser.newContext({ viewport: { width, height: 900 }, deviceScaleFactor: 1, hasTouch: width === 320, reducedMotion: "reduce", serviceWorkers: "block" });
     await context.addInitScript(theme => localStorage.setItem("hq.remote.appearance", theme), theme);
     const page = await context.newPage();
     const errors = [];
@@ -26,7 +26,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
     }
     await page.goto(`${baseUrl}/ui#agents`, { waitUntil: "networkidle" });
     await page.locator(".agent-row").first().waitFor();
-    for (const sample of ["short", "two-line", "overflow", "unbroken"]) {
+    for (const sample of ["short", "would-wrap", "overflow", "unbroken"]) {
       const rows = await page.evaluate(async ({ sample, agentKey }) => {
         const source = findAgent(agentKey);
         const agent = { ...source, name: "Synthetic agent", agent: "", model: "", reasoning_effort: "", running: false, status: "succeeded", updated_at: new Date().toISOString(), delegation: { children: [{}] } };
@@ -74,13 +74,13 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           mount("");
           const firstLineHeight = naturalHeight;
           if (sample === "short") mount("");
-          else if (sample === "two-line") {
+          else if (sample === "would-wrap") {
             let found = false;
             for (let count = 1; count <= 100; count++) {
               mount("metadata ".repeat(count).trim());
               if (Math.abs(naturalHeight - firstLineHeight - lineHeight) < 1) { found = true; break; }
             }
-            if (!found) throw new Error(`Could not construct a natural two-line subtitle: ${variant} height=${naturalHeight} line=${lineHeight} style=${getComputedStyle(el).cssText} whitespace=${getComputedStyle(el).whiteSpace}`);
+            if (!found) throw new Error(`Could not construct a natural two-line subtitle: ${variant} height=${naturalHeight} line=${lineHeight} whitespace=${getComputedStyle(el).whiteSpace}`);
           } else mount(sample === "unbroken" ? "LongModelWithoutBreaks".repeat(50) : "Synthetic model metadata ".repeat(50));
           const expected = el.textContent;
           // A second unclamped copy proves that CSS, not string truncation, limits the display.
@@ -90,7 +90,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           el.parentElement.append(clone);
           const fullHeight = clone.getBoundingClientRect().height; clone.remove();
           const root = host.firstElementChild;
-          output.push({ variant, expectedModel: agent.model, fullText, expected, height: rect.height, lineHeight, firstLineHeight, naturalHeight: fullHeight, clientWidth: el.clientWidth, scrollWidth: el.scrollWidth, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight, clamp: style.webkitLineClamp, overflow: style.overflow, whiteSpace: style.whiteSpace, titleKept: root.textContent.includes(["reference", "relationship"].includes(variant) ? (source.name || source.key) : agent.name), iconCount: root.querySelectorAll(".ui-icon").length, highlights: el.querySelectorAll("mark").length, metadataKept: !agent.model || fullText.includes(agent.model), pageOverflow: document.documentElement.scrollWidth - innerWidth });
+          output.push({ variant, expectedModel: agent.model, fullText, expected, height: rect.height, lineHeight, firstLineHeight, naturalHeight: fullHeight, clientWidth: el.clientWidth, scrollWidth: el.scrollWidth, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight, display: style.display, ellipsis: style.textOverflow, overflow: style.overflow, whiteSpace: style.whiteSpace, titleKept: root.textContent.includes(["reference", "relationship"].includes(variant) ? (source.name || source.key) : agent.name), iconCount: root.querySelectorAll(".ui-icon").length, highlights: el.querySelectorAll("mark").length, metadataKept: !agent.model || fullText.includes(agent.model), pageOverflow: document.documentElement.scrollWidth - innerWidth });
         }
         await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
         return output;
@@ -99,15 +99,16 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
       fs.writeFileSync(path.join(captureDir, `${theme}-${width}-${sample}-accessibility.txt`), accessibility);
       for (const g of rows) {
         const id = `${theme}-${width}-${sample}-${g.variant}`;
-        record(`${id}:max-lines-px`, g.height - g.firstLineHeight - g.lineHeight, "le", 1);
-        record(`${id}:expected-height-error-px`, Math.abs(g.height - g.firstLineHeight - (sample === "short" ? 0 : g.lineHeight)), "le", 1);
-        record(`${id}:natural-lines-px`, g.naturalHeight - g.height, ["overflow", "unbroken"].includes(sample) ? "ge" : "le", 1);
+        record(`${id}:max-lines-px`, g.height - g.firstLineHeight, "le", 1);
+        record(`${id}:expected-height-error-px`, Math.abs(g.height - g.firstLineHeight), "le", 1);
+        record(`${id}:natural-lines-px`, g.naturalHeight - g.height, sample === "short" ? "le" : "ge", 1);
         record(`${id}:full-metadata`, Number(g.fullText === g.expected && g.metadataKept), "eq", 1);
         record(`${id}:accessible-metadata`, Number(!g.expectedModel || accessibility.includes(g.expectedModel.trim())), "eq", 1);
-        record(`${id}:clamp-style`, Number(g.clamp === "2" && g.overflow === "hidden" && g.whiteSpace === "normal"), "eq", 1);
+        record(`${id}:ellipsis-style`, Number(g.display === "block" && g.ellipsis === "ellipsis" && g.overflow === "hidden" && g.whiteSpace === "nowrap"), "eq", 1);
         if (g.variant === "highlighted") record(`${id}:search-highlight`, g.highlights, "ge", 1);
         record(`${id}:title-icons`, Number(g.titleKept && g.iconCount > 0), "eq", 1);
-        record(`${id}:horizontal-overflow-px`, Math.max(g.scrollWidth - g.clientWidth, g.pageOverflow), "le", 1);
+        record(`${id}:text-width-overflow-px`, g.scrollWidth - g.clientWidth, sample === "short" ? "eq" : "ge", sample === "short" ? 0 : 1);
+        record(`${id}:page-overflow-px`, g.pageOverflow, "le", 1);
         results.push({ id, ...g });
       }
       await page.screenshot({ path: path.join(captureDir, `${theme}-${width}-${sample}.png`), fullPage: true });
@@ -117,6 +118,9 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
           await cells.nth(index).screenshot({ path: path.join(captureDir, `${theme}-${width}-${sample}-${rows[index].variant}.png`) });
         }
       }
+    }
+    if (!process.env.TYCHO_SUBTITLE_BASELINE) {
+      await require("./agent_subtitle_interactions_smoke")({ page, baseUrl, agentKey, captureDir, theme, width, record });
     }
     assert.deepEqual(errors, []);
     await context.close();

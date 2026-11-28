@@ -20,6 +20,13 @@ module RemoteUIAgentHeaderMetadataTest
       raise "mobile detail-header metadata must preserve one-line ellipsis"
     end
 
+    block_rule = css[/\.agent-reference-copy > \.agent-block-subtitle \{([^}]*)\}/, 1]
+    unless block_rule&.include?("white-space: nowrap") && block_rule.include?("display: block") &&
+           block_rule.include?("overflow: hidden") && block_rule.include?("text-overflow: ellipsis") &&
+           !block_rule.include?("line-clamp")
+      raise "shared agent block metadata must use one-line ellipsis"
+    end
+
     script = <<~'JAVASCRIPT'
       const fs = require("fs");
       const vm = require("vm");
