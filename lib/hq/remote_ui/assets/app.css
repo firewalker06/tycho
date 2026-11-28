@@ -11236,6 +11236,7 @@ body:has(.agent-workspace.has-focus-panel) { overflow: hidden; }
 .agent-focus-mobile-menu > summary { list-style: none; cursor: pointer; }
 .agent-focus-mobile-menu > summary::-webkit-details-marker { display: none; }
 .agent-focus-mobile-menu-popover { position: absolute; z-index: 3; inset: calc(100% + 4px) 0 auto auto; min-width: max-content; }
+.agent-focus-group-menu .agent-focus-mobile-menu-popover { inset: auto 0 calc(100% + 4px) auto; }
 .agent-focus-panel { container: agent-focus / inline-size; }
 .agent-focus-panel .agent-focus-attachments {
   display: grid;
