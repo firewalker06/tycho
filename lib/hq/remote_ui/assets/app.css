@@ -7218,11 +7218,6 @@ details.queue-read-block:not([open]) > .queue-read-body {
     overflow: hidden;
   }
 
-  .agent-workspace .conversation-catchup-overlay {
-    position: absolute;
-    bottom: 12px;
-  }
-
   .agent-workspace.conversation-only .agent-conversation-scroll {
     min-height: 0;
     overflow-y: auto;
@@ -7871,7 +7866,7 @@ body:has(.inquiry-form-full-screen) {
   grid-template-rows: minmax(0, 1fr);
   width: var(--composer-viewport-width, 100vw);
   height: var(--composer-viewport-height, 100dvh);
-  padding: calc(16px + env(safe-area-inset-top, 0px)) 16px calc(16px + env(safe-area-inset-bottom, 0px));
+  padding: calc(16px + env(safe-area-inset-top, 0px)) 16px calc(16px + var(--safe-area-bottom));
   background: var(--bg);
 }
 
@@ -7879,7 +7874,7 @@ body:has(.inquiry-form-full-screen) {
   position: absolute;
   top: calc(10px + env(safe-area-inset-top, 0px));
   right: 10px;
-  z-index: 2;
+  z-index: 4;
   display: inline-grid;
   place-items: center;
   border: 0;
@@ -7888,7 +7883,8 @@ body:has(.inquiry-form-full-screen) {
 }
 
 .composer-full-screen .composer-content {
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: minmax(92px, 1fr);
+  overflow-y: auto;
   grid-auto-rows: max-content;
   width: min(100%, 960px);
   height: 100%;
@@ -7906,6 +7902,10 @@ body:has(.inquiry-form-full-screen) {
 }
 
 .composer-full-screen .send-row {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  background: var(--bg);
   align-self: end;
 }
 
@@ -7924,7 +7924,7 @@ body:has(.inquiry-form-full-screen) {
 
 @media (max-width: 640px) {
   .composer-full-screen {
-    padding: calc(10px + env(safe-area-inset-top, 0px)) 10px calc(10px + env(safe-area-inset-bottom, 0px));
+    padding: calc(10px + env(safe-area-inset-top, 0px)) 10px calc(10px + var(--safe-area-bottom));
   }
 
   .composer-close-button {
@@ -11684,6 +11684,15 @@ body:has([data-agent-workspace]) .app-header.detail-header {
   max-width: none;
   margin-inline: 0;
 }
+/* Safari's large 100vh body minimum can exceed the visible workspace. Keep
+   document scrolling out of the fixed layout; streams and docks own it. */
+html:has([data-agent-workspace]),
+body:has([data-agent-workspace]) {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  overscroll-behavior-y: none;
+}
 body:has([data-agent-workspace]) .app-shell { height: 100dvh; min-height: 0; overflow: hidden; padding-bottom: 0; }
 .content.agent-detail:has([data-agent-workspace]) { height: auto; min-height: 0; overflow: hidden; padding-bottom: 0; }
 .agent-workspace:is(.has-detail, .conversation-only),
@@ -11721,14 +11730,31 @@ body:has([data-agent-workspace]) .app-shell { height: 100dvh; min-height: 0; ove
 .agent-workspace .agent-dock.composer-short-viewport .pending-attachments:not([open]) { gap: 0; }
 .agent-workspace.conversation-only .agent-conversation-pane { display: grid; grid-column: 1; grid-row: 1; min-height: 0; overflow: hidden; }
 .agent-workspace .agent-conversation-scroll { min-height: 0; overflow-y: auto; }
+.agent-workspace .conversation-catchup-overlay { position: absolute; bottom: 12px; }
 .agent-workspace .composer:not(.composer-full-screen) .composer-editor-shell #prompt-input {
   min-height: min(92px, var(--agent-composer-editor-max-height, 92px));
   max-height: min(calc(6lh + 20px), var(--agent-composer-editor-max-height, 100dvh));
   padding-block: clamp(4px, calc((var(--agent-composer-editor-max-height, 100dvh) - 1lh - 2px) / 2), 10px);
   overflow-y: auto;
 }
-.agent-workspace #composer:not(.composer-full-screen) .send-row { position: sticky; bottom: 0; z-index: 3; background: var(--panel); }
+/* Keep the safe-area fill inside the sticky footer, including while its dock scrolls. */
+.agent-workspace .agent-dock:has(> #composer:not(.composer-full-screen)) {
+  grid-auto-rows: max-content;
+  align-content: start;
+  padding-bottom: 6px;
+}
+.agent-workspace #composer:not(.composer-full-screen) .send-row {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  padding-bottom: var(--safe-area-bottom);
+  background: var(--panel);
+}
 .agent-workspace .agent-panel-controls-row { position: sticky; top: 0; z-index: 4; background: var(--panel); }
+/* In short viewports the tabs must scroll away so they cannot cover wrapped prompt actions. */
+.agent-workspace .composer-short-viewport .agent-panel-controls-row { position: static; }
+/* When the footer leaves no editor room, let each control scroll into view. */
+.agent-workspace .composer-scroll-viewport #composer:not(.composer-full-screen) .send-row { position: relative; }
 @media (max-width: 899px) {
   .agent-workspace.side-conversation-workspace .side-conversation-pane { grid-row: 1; }
 }
