@@ -14,7 +14,9 @@ module HQ
     MAX_BYTES = 128 * 1024
     MAX_SECTIONS = 20
     MAX_ITEMS = 100
-    MAX_SUBTITLE_LENGTH = 80
+    MAX_TITLE_LENGTH = 40
+    MAX_SUBTITLE_LENGTH = 60
+    TEXT_LIMITS = { "title" => MAX_TITLE_LENGTH, "subtitle" => MAX_SUBTITLE_LENGTH }.freeze
     ICONS = %w[todo_done todo_working todo_pending blocked note].freeze
 
     def initialize(agent)
@@ -46,7 +48,7 @@ module HQ
         # A lost-response retry is safe, but a stale different write is rejected.
         return current if current["sections"] == normalized && [current["revision"], current["revision"] - 1].include?(expected_revision)
         raise Conflict, "Focus changed; read the current revision before updating" unless current["revision"] == expected_revision
-        validate_changed_subtitles!(normalized, current["sections"])
+        validate_changed_text!(normalized, current["sections"])
 
         result = { "revision" => current["revision"] + 1, "updated_at" => Time.now.utc.iso8601(6), "sections" => normalized }
         FileStore.write_json(@path, result)
@@ -65,7 +67,8 @@ module HQ
       raise Error, "Focus exceeds #{MAX_BYTES} bytes" if JSON.generate(sections).bytesize > MAX_BYTES
       count = 0
       normalized = sections.map do |section|
-        object!(section, %w[title subtitle icon items])
+        object!(section, %w[title subtitle icon items completed])
+        completed = completed_value(section)
         icon = section["icon"] || "note"
         raise Error, "Unknown Focus icon: #{icon}" unless ICONS.include?(icon)
         items = section["items"]
@@ -76,6 +79,7 @@ module HQ
           "title" => text(section["title"], required: true),
           "subtitle" => subtitle(section["subtitle"]),
           "icon" => icon,
+          **(completed ? { "completed" => true } : {}),
           "items" => items.map { |item| normalize_item(item, check_files:) }
         }
       end
@@ -84,100 +88,89 @@ module HQ
     end
 
     def normalize_item(item, check_files:)
-      object!(item, %w[title subtitle attachments])
+      object!(item, %w[title subtitle attachments completed])
+      completed = completed_value(item)
       attachments = item["attachments"] || []
       raise Error, "Focus item must have at most 10 attachments" unless attachments.is_a?(Array) && attachments.length <= 10
       {
         "title" => text(item["title"], required: true),
         "subtitle" => subtitle(item["subtitle"]),
+        **(completed ? { "completed" => true } : {}),
         "attachments" => attachments.map { |attachment| normalize_attachment(attachment, check_files:) }
       }
+    end
+
+    def completed_value(entry)
+      return false unless entry.key?("completed")
+      return entry["completed"] if [true, false].include?(entry["completed"])
+
+      raise Error, "Focus completion must be a boolean"
     end
 
     def subtitle(value)
       text(value)
     end
 
-    def validate_changed_subtitles!(sections, current_sections)
-      validate_entry_subtitles!(sections, current_sections, :section)
+    def validate_changed_text!(sections, current_sections)
+      validate_text_values!(sections, current_sections)
+      validate_text_values!(sections.flat_map { |section| section["items"] },
+                            current_sections.flat_map { |section| section["items"] })
+      return if legacy_entries_match?(sections, current_sections, sections: true)
 
-      new_items = sections.flat_map do |section|
-        parent_identity = entry_identity(section, :section)
-        section["items"].map { |item| [parent_identity, item] }
-      end
-      current_items = current_sections.flat_map do |section|
-        parent_identity = entry_identity(section, :section)
-        section["items"].map { |item| [parent_identity, item] }
-      end
-      validate_entry_subtitles!(new_items, current_items, :item)
+      raise Error, "Focus titles must be #{MAX_TITLE_LENGTH} characters or fewer; subtitles must be #{MAX_SUBTITLE_LENGTH} characters or fewer. Unchanged legacy text needs distinct saved sources"
     end
 
-    def validate_entry_subtitles!(entries, current_entries, kind)
-      matched_current = {}
-      new_matches = {}
-      current_by_identity = Hash.new { |hash, key| hash[key] = [] }
-      new_identity_counts = Hash.new(0)
-      current_entries.each_with_index do |entry, index|
-        current_by_identity[entry_identity(entry, kind)] << index
-      end
-      entries.each { |entry| new_identity_counts[entry_identity(entry, kind)] += 1 }
+    def validate_text_values!(entries, current_entries)
+      entries.each do |entry|
+        TEXT_LIMITS.each do |field, limit|
+          value = entry[field]
+          next if value.nil? || value.length <= limit || current_entries.any? { |previous| previous[field] == value }
 
-      # Match exact subtitle values first within each identity group. This keeps
-      # duplicate entries one-to-one when callers reorder or copy their data.
-      entries.each_with_index do |entry, new_index|
-        identity = entry_identity(entry, kind)
-        candidates = current_by_identity[identity]
-        next if candidates.empty?
-
-        match = candidates.find do |current_index|
-          !matched_current[current_index] && entry_subtitle(current_entries[current_index], kind) == entry_subtitle(entry, kind)
+          raise Error, "Focus #{field}s must be #{limit} characters or fewer"
         end
-        next unless match
-
-        matched_current[match] = true
-        new_matches[new_index] = match
       end
+    end
 
-      # Match remaining entries by identity. This records changed subtitles as
-      # changes to that entry, even when its array position has changed.
-      entries.each_with_index do |entry, new_index|
-        next if new_matches.key?(new_index)
+    def legacy_entry?(entry, sections: false)
+      TEXT_LIMITS.any? { |field, limit| entry[field] && entry[field].length > limit } ||
+        sections && entry["items"].any? { |item| legacy_entry?(item) }
+    end
 
-        match = current_by_identity[entry_identity(entry, kind)].find { |index| !matched_current[index] }
-        next unless match
-
-        matched_current[match] = true
-        new_matches[new_index] = match
-      end
-
-      entries.each_with_index do |entry, new_index|
-        value = entry_subtitle(entry, kind)
-        next if value.nil? || value.length <= MAX_SUBTITLE_LENGTH
-
-        identity = entry_identity(entry, kind)
-        # No stable IDs exist for legacy entries. Do not grant an exception
-        # when duplicate identities make the source entry ambiguous.
-        if current_by_identity[identity].length != 1 || new_identity_counts[identity] != 1
-          raise Error, "Focus subtitles over 80 characters are ambiguous for duplicate entries"
+    def legacy_entries_match?(entries, current_entries, sections: false)
+      required = entries.each_index.select { |index| legacy_entry?(entries[index], sections:) }
+      candidates = required.to_h do |index|
+        entry = entries[index]
+        sources = current_entries.each_index.select do |source|
+          previous = current_entries[source]
+          fields_match = TEXT_LIMITS.all? do |field, limit|
+            value = entry[field]
+            value.nil? || value.length <= limit || value == previous[field]
+          end
+          fields_match && (!sections || legacy_entries_match?(entry["items"], previous["items"]))
         end
-        current_index = new_matches[new_index]
-        next if current_index && entry_subtitle(current_entries[current_index], kind) == value
-
-        raise Error, "Focus subtitles must be 80 characters or fewer"
+        [index, sources]
+      end
+      # Short names can cross in a batch. Only unchanged overlong fields and
+      # descendants constrain sources; short-only entries need no exemption.
+      owners = {}
+      required.sort_by { |index| candidates[index].length }.all? do |index|
+        assign_legacy_source(index, candidates, owners, {})
       end
     end
 
-    def entry_identity(entry, kind)
-      if kind == :section
-        JSON.generate("title" => entry["title"], "icon" => entry["icon"])
-      else
-        parent_identity, item = entry
-        JSON.generate("parent" => parent_identity, "title" => item["title"], "attachments" => item["attachments"])
-      end
-    end
+    def assign_legacy_source(index, candidates, owners, visited)
+      candidates.fetch(index).each do |source|
+        next if visited[source]
 
-    def entry_subtitle(entry, kind)
-      kind == :section ? entry["subtitle"] : entry.last["subtitle"]
+        visited[source] = true
+        owner = owners[source]
+        # Reassign an earlier choice when it would prevent a complete mapping.
+        next unless owner.nil? || assign_legacy_source(owner, candidates, owners, visited)
+
+        owners[source] = index
+        return true
+      end
+      false
     end
 
     def normalize_attachment(attachment, check_files:)

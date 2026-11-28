@@ -621,7 +621,7 @@ def run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_
     const smoke = require(#{File.join(ROOT, "test", "browser", "#{test_name}.js").inspect});
     const inquiryFixture = #{inquiry_fixture.strip};
     (async () => {
-      const browser = process.env.TYCHO_REMOTE_UI_INQUIRY_INITIAL_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_FOCUS_REFRESH_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_COMPOSER_MENUS_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_RESOURCE_GRID_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_INQUIRY_PANEL_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_SUMMARY_VIEW_MODES_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_MOBILE_PROMPT_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_FIXED_SLOTS_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_FOCUS_ATTACHMENTS_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_PANEL_PLACEMENT_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_SUMMARY_ATTACHMENT_LAYOUT_WEBKIT === "1" || (#{test_name == "side_conversation_top_smoke"} && process.env.TYCHO_REMOTE_UI_SIDE_TOP_WEBKIT === "1") || (#{test_name == "side_conversation_bounds_smoke"} && process.env.TYCHO_REMOTE_UI_SIDE_BOUNDS_WEBKIT === "1")
+      const browser = process.env.TYCHO_REMOTE_UI_INQUIRY_INITIAL_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_FOCUS_REFRESH_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_COMPOSER_MENUS_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_RESOURCE_GRID_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_INQUIRY_PANEL_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_SUMMARY_VIEW_MODES_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_MOBILE_PROMPT_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_FIXED_SLOTS_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_FOCUS_ATTACHMENTS_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_PANEL_PLACEMENT_WEBKIT === "1" || process.env.TYCHO_REMOTE_UI_SUMMARY_ATTACHMENT_LAYOUT_WEBKIT === "1" || (#{["focus_smoke", "focus_group_menu_smoke", "focus_text_limits_smoke"].include?(test_name)} && process.env.TYCHO_REMOTE_UI_FOCUS_WEBKIT === "1") || (#{test_name == "side_conversation_top_smoke"} && process.env.TYCHO_REMOTE_UI_SIDE_TOP_WEBKIT === "1") || (#{test_name == "side_conversation_bounds_smoke"} && process.env.TYCHO_REMOTE_UI_SIDE_BOUNDS_WEBKIT === "1")
         ? await webkit.launch({ headless: true })
         : await chromium.launch({ executablePath: #{browser.inspect}, headless: true });
       try {
@@ -11564,6 +11564,14 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       test_name = ENV["TYCHO_REMOTE_UI_FOCUS_EMPTY_ONLY"] == "1" ? "focus_empty_smoke" : ENV["TYCHO_REMOTE_UI_SUMMARY_VIEW_MODES_ONLY"] == "1" ? "summary_view_modes_smoke" : ENV["TYCHO_REMOTE_UI_MOBILE_PROMPT_ONLY"] == "1" ? "mobile_prompt_viewport_smoke" : ENV["TYCHO_REMOTE_UI_FIXED_SLOTS_ONLY"] == "1" ? "fixed_panel_slots_smoke" : ENV["TYCHO_REMOTE_UI_FOCUS_ATTACHMENTS_ONLY"] == "1" ? "focus_attachments_smoke" : ENV["TYCHO_REMOTE_UI_PANEL_PLACEMENT_ONLY"] == "1" ? "panel_placement_smoke" : ENV["TYCHO_REMOTE_UI_SIDE_BOUNDS_ONLY"] == "1" ? "side_conversation_bounds_smoke" : ENV["TYCHO_REMOTE_UI_SIDE_TOP_ONLY"] == "1" ? "side_conversation_top_smoke" : "side_conversations_smoke"
       test_name = "fixed_panel_slots_smoke" if ENV["TYCHO_REMOTE_UI_FIXED_SLOTS_ONLY"] == "1"
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, metadata_fixture: { logsDir: fixture.fetch(:logs_dir) }, test_name:)
+      next
+    end
+    if ENV["TYCHO_REMOTE_UI_FOCUS_TEXT_LIMITS_ONLY"] == "1"
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, metadata_fixture: { logsDir: fixture.fetch(:logs_dir) }, test_name: "focus_text_limits_smoke")
+      next
+    end
+    if ENV["TYCHO_REMOTE_UI_FOCUS_GROUP_MENU_ONLY"] == "1"
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "focus_group_menu_smoke")
       next
     end
     if ENV["TYCHO_REMOTE_UI_FOCUS_ONLY"] == "1"

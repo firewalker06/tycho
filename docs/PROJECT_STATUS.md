@@ -123,6 +123,9 @@ narrow/mobile views start closed. Explicit choices survive polling, resizing,
 and navigation. Focus and Conversation scroll independently. Summary and
 attachment panels keep their existing state. See
 [Agent Focus](AGENT_FOCUS.md) for schema, update rules, limits, and verification.
+New and changed group/item titles use at most 40 Unicode code points; subtitles
+use at most 60. Unchanged legacy text remains valid during unrelated updates.
+The Remote UI clamps each field to two lines and keeps full text in editors.
 
 ## Background project deletion
 

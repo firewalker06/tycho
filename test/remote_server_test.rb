@@ -21,6 +21,7 @@ module RemoteServerTest
 
   def run!
     assert_remote_agent_focus
+    assert_remote_agent_focus_legacy_batches
     assert_remote_manual_project_creation
     assert_remote_agent_lifecycle
     assert_remote_creation_retries
@@ -3103,10 +3104,20 @@ module RemoteServerTest
       saved = service.update_agent_focus(key, "sections" => sections, "revision" => 0)
       assert(saved["revision"] == 1, "Focus revision must advance")
       assert(service.update_agent_focus(key, "sections" => sections, "revision" => 0) == saved, "exact retries must be safe")
-      at_limit = [{ "title" => "Limit", "subtitle" => "x" * 80, "items" => [{ "title" => "Item", "subtitle" => "y" * 80 }] }]
+      at_limit = [{ "title" => "g" * 40, "subtitle" => "x" * 60, "items" => [{ "title" => "i" * 40, "subtitle" => "y" * 60 }] }]
       limit_saved = service.update_agent_focus(key, "sections" => at_limit, "revision" => 1)
-      assert(limit_saved["sections"][0]["subtitle"].length == 80 && limit_saved["sections"][0]["items"][0]["subtitle"].length == 80,
-             "80-character Focus subtitles must be accepted")
+      assert(limit_saved["sections"][0]["subtitle"].length == 60 && limit_saved["sections"][0]["items"][0]["subtitle"].length == 60,
+             "60-character Focus subtitles must be accepted")
+      [false, true].each do |item|
+        invalid = Marshal.load(Marshal.dump(at_limit))
+        (item ? invalid[0]["items"][0] : invalid[0])["title"] += "x"
+        begin
+          service.update_agent_focus(key, "sections" => invalid, "revision" => 2)
+          raise "41-character Focus title was accepted"
+        rescue HQ::RemoteServer::Error => e
+          assert(e.status == 422 && e.message.include?("40 characters"), "title limit must return 422 without truncation")
+        end
+      end
       legacy_sections = [
         { "title" => "Legacy section", "subtitle" => "s" * 81, "icon" => "note", "items" => [
           Marshal.load(Marshal.dump(sections[0]["items"][0])).merge("subtitle" => "i" * 85),
@@ -3138,9 +3149,9 @@ module RemoteServerTest
       ].each do |invalid_sections|
         begin
           service.update_agent_focus(key, "sections" => invalid_sections, "revision" => 3)
-          raise "new or changed Focus subtitle over 80 characters was accepted"
+          raise "new or changed Focus subtitle over 60 characters was accepted"
         rescue HQ::RemoteServer::Error => e
-          assert(e.status == 422 && e.message.include?("80 characters"), "new or changed overlong Focus subtitle must return a clear validation error")
+          assert(e.status == 422 && e.message.include?("60 characters"), "new or changed overlong Focus subtitle must return a clear validation error")
         end
       end
       assert(service.agent_focus(key)["revision"] == 3, "rejected subtitle edits must not change the revision")
@@ -3175,9 +3186,39 @@ module RemoteServerTest
         assert(HQ::CLICommand.agent_focus(key, { file: path, revision: 3 }, out: StringIO.new) == 0, "Focus CLI replacement must succeed")
         assert(service.agent_focus(key)["sections"].empty?, "empty sections must clear Focus")
       end
+      completed = [{ "title" => "Done", "icon" => "todo_done", "completed" => true, "items" => [
+        { "title" => "Finished item", "completed" => true, "attachments" => [] }
+      ] }]
+      completed_saved = service.update_agent_focus(key, "sections" => completed, "revision" => 4)
+      assert(completed_saved["revision"] == 5 && completed_saved["sections"][0]["completed"] && completed_saved["sections"][0]["items"][0]["completed"],
+             "completed groups and items must persist through the revisioned API")
+      begin
+        service.update_agent_focus(key, "sections" => [{ "title" => "Bad state", "completed" => "yes", "items" => [] }], "revision" => 5)
+        raise "invalid Focus completion state accepted"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 422, "invalid completion values must be rejected")
+      end
+      begin
+        service.update_agent_focus(key, "sections" => [], "revision" => 4)
+        raise "stale completion replacement accepted"
+      rescue HQ::RemoteServer::Error => e
+        assert(e.status == 409, "completion changes must retain Focus revision conflicts")
+      end
+      with_env_values("TYCHO_CONFIG_PATH" => File.join(dir, "hq.yml"), "TYCHO_SYSTEM_PROMPTS_PATH" => File.join(dir, "system_prompts.yml")) do
+        output = StringIO.new
+        assert(HQ::CLICommand.agent_focus(key, { json: true }, out: output) == 0, "Focus CLI must read completed data")
+        assert(JSON.parse(output.string) == completed_saved, "Focus CLI must preserve completion state")
+        input = File.join(dir, "completed-focus.json")
+        File.write(input, JSON.generate(completed))
+        assert(HQ::CLICommand.agent_focus(key, { file: input, revision: 5 }, out: StringIO.new) == 0,
+               "Focus CLI must accept completed data with the current revision")
+        File.write(input, JSON.generate([{ "title" => "Conflicting edit", "items" => [] }]))
+        assert(HQ::CLICommand.agent_focus(key, { file: input, revision: 4 }, out: StringIO.new, err: StringIO.new) != 0,
+               "stale Focus CLI edits must retain revision conflicts")
+      end
       service.archive_agent(key)
       archived = HQ::RemoteService.new(registry: registry)
-      assert(archived.agent_focus(key)["revision"] == 4, "Focus must remain readable in archive history")
+      assert(archived.agent_focus(key)["revision"] == 5, "Focus must remain readable in archive history")
       begin
         archived.update_agent_focus(key, "sections" => sections, "revision" => 4)
         raise "archived Focus changed"
@@ -3185,6 +3226,43 @@ module RemoteServerTest
         assert(e.status == 409, "archived Focus must be read-only")
       end
     end
+  end
+
+  def assert_remote_agent_focus_legacy_batches
+    require_relative "support/focus_legacy_batch_cases"
+    with_remote_temp_store do |dir|
+      workspace = File.join(dir, "workspace")
+      FileUtils.mkdir_p(workspace)
+      registry = registry_for(dir, workspace)
+      service = HQ::RemoteService.new(registry: registry)
+      created = service.create_agent("project_key" => "web", "template_key" => "custom", "name" => "Batch fixture", "prompt" => "Synthetic only")
+      key = created[:key]
+      managed = HQ::AgentStore.new(registry.projects).load.find { |entry| entry.key == key }
+      server = HQ::RemoteServer.new(host: "127.0.0.1", port: 0, token: "", registry: registry)
+      FocusLegacyBatchCases.cases.first(2).each do |fixture|
+        File.write(managed.focus_path, JSON.generate("revision" => 1, "updated_at" => nil, "sections" => fixture[:before]))
+        result = server.send(:route, service, "PUT", "/agents/#{key}/focus", { "revision" => 1, "sections" => fixture[:after] })
+        assert(result[:status] == 200, "#{fixture[:name]}: API must accept crossed names")
+        saved = result[:body][:focus]
+        assert(saved["revision"] == 2 && saved["sections"] == fixture[:after], "#{fixture[:name]}: API must preserve exact legacy text")
+        assert(service.agent_focus(key) == saved, "#{fixture[:name]}: API result must persist")
+        changed = Marshal.load(Marshal.dump(fixture[:after]))
+        changed[0]["items"][0][fixture[:field]] += "!"
+        copied = Marshal.load(Marshal.dump(fixture[:after]))
+        copied[0]["items"] << Marshal.load(Marshal.dump(copied[0]["items"][0]))
+        [changed, copied].each do |invalid|
+          before = File.binread(managed.focus_path)
+          begin
+            server.send(:route, service, "PUT", "/agents/#{key}/focus", { "revision" => 2, "sections" => invalid })
+            raise "API accepted new or changed overlong text"
+          rescue HQ::RemoteServer::Error => error
+            assert(error.status == 422, "#{fixture[:name]}: invalid legacy reuse must return 422")
+          end
+          assert(File.binread(managed.focus_path) == before, "#{fixture[:name]}: API rejection must preserve saved bytes")
+        end
+      end
+    end
+    puts "remote_agent_focus_legacy_batches: ok"
   end
 
   def assert_remote_agent_payload_has_revision
