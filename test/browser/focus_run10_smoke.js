@@ -1,3 +1,4 @@
+const clickFocusAction = require("./focus_menu_actions");
 const assert = require("node:assert/strict");
 
 module.exports = async ({ context, page, api, agentKey, save, waitForFocus }) => {
@@ -6,6 +7,8 @@ module.exports = async ({ context, page, api, agentKey, save, waitForFocus }) =>
     { name: "mobile", width: 390, height: 844 },
   ];
   const activate = async (locator, viewport) => {
+    const menu = locator.locator('xpath=ancestor::details[contains(@class,"agent-focus-group-menu")]');
+    if (await menu.count() && !await menu.evaluate(element => element.open)) await menu.locator('summary').click();
     if (viewport.width < 600) await locator.tap();
     else await locator.click();
   };
@@ -83,7 +86,7 @@ module.exports = async ({ context, page, api, agentKey, save, waitForFocus }) =>
         await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "controlled delete failure" }) });
       } else await route.continue();
     });
-    await page.locator('[data-focus-delete-group="0"]').click();
+    await clickFocusAction(page.locator('[data-focus-delete-group="0"]'));
     await page.locator("#confirmation-dialog [data-confirmation-accept]").click();
     await deleteWrite;
     await activate(page.locator('[data-focus-complete-group="0"]'), viewport);

@@ -1,3 +1,4 @@
+const clickFocusAction = require("./focus_menu_actions");
 const assert = require("node:assert/strict");
 
 module.exports = async ({ context, page, api, agentKey, save, waitForFocus }) => {
@@ -136,7 +137,7 @@ module.exports = async ({ context, page, api, agentKey, save, waitForFocus }) =>
 
       await page.locator('[data-focus-toggle-item="2:0"]').check();
       await firstStarted;
-      await page.locator('[data-focus-delete-group="0"]').click();
+      await clickFocusAction(page.locator('[data-focus-delete-group="0"]'));
       await page.locator('#confirmation-dialog [data-confirmation-accept]').click();
       await page.locator('[data-focus-edit-group="0"]').waitFor({ state: "visible" });
       const editGroup = page.locator('[data-focus-edit-group="0"]');
@@ -200,7 +201,7 @@ module.exports = async ({ context, page, api, agentKey, save, waitForFocus }) =>
           } else await route.continue();
         } else await route.continue();
       });
-      await page.locator('[data-focus-delete-group="0"]').click();
+      await clickFocusAction(page.locator('[data-focus-delete-group="0"]'));
       await page.locator('#confirmation-dialog [data-confirmation-accept]').click();
       await deleteStarted;
       const selected = page.locator('[data-focus-edit-group="0"]');

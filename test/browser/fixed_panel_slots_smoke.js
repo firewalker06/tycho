@@ -1,3 +1,4 @@
+const clickFocusAction = require("./focus_menu_actions");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -133,7 +134,7 @@ module.exports = async ({ browser, baseUrl, agentKey, captureDir, metadataFixtur
       assert.equal(await page.locator('[data-side-kind="summary"]').isVisible(), true);
     }
     await setPanels(["summary", "focus"], "compact");
-    await page.locator('[data-focus-section]').nth(1).click();
+    await clickFocusAction(page.locator('[data-focus-section]').nth(1));
     await page.locator('.agent-focus-attachments button[data-preview-summary-attachment]').click();
     await page.locator('.summary-attachment-preview-scroll[aria-busy="false"]').waitFor({ state: "visible" });
     assert.deepEqual(await page.locator('[data-side-kind]').evaluateAll(es => es.map(e => e.dataset.sideKind)), ["focus", "attachment"]);

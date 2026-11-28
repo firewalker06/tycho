@@ -304,3 +304,15 @@ manual Focus result.
 Collapse all and Expand all are icon-only controls with accessible names and
 tooltips. Mixed state still means Collapse all; all closed means Expand all.
 See [Focus refresh verification](REMOTE_UI_FOCUS_REFRESH.md).
+
+Each group has one borderless context-menu trigger on desktop and mobile.
+The menu contains Expand or Collapse with the item count, Complete or Reopen,
+and Delete. Panel actions and item controls retain their existing behavior.
+The Add item plus stays inside a circle on the rail with a 44-pixel target.
+Open menus follow visible triggers during scroll and resize; a menu closes
+when its trigger leaves the Focus scroll area. Cancel returns focus to the
+visible menu trigger, including touch use in WebKit.
+
+Run `TYCHO_REMOTE_UI_FOCUS_GROUP_MENU_ONLY=1 bin/remote-ui-smoke` for the
+focused group-control checks. Add `TYCHO_REMOTE_UI_FOCUS_WEBKIT=1` for WebKit
+and `TYCHO_REMOTE_UI_CAPTURE_DIR=path/to/temp/captures` to save screenshots.

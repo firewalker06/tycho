@@ -1,3 +1,4 @@
+const clickFocusAction = require("./focus_menu_actions");
 const assert = require("node:assert/strict");
 
 module.exports = async ({ browser, context, page, api, agentKey, save, waitForFocus }) => {
@@ -91,7 +92,7 @@ module.exports = async ({ browser, context, page, api, agentKey, save, waitForFo
     });
     await page.locator('[data-focus-toggle-item="0:0"]').check();
     await writeStarted;
-    await page.locator("[data-focus-clear]").click();
+    await clickFocusAction(page.locator("[data-focus-clear]"));
     await page.locator("#confirmation-dialog").getByRole("button", { name: "Clear all" }).click();
     assert.equal(await page.locator(".agent-focus-section").count(), 0, `${viewport.name}: confirmed Clear All is immediate`);
     releaseWrite();
@@ -116,7 +117,7 @@ module.exports = async ({ browser, context, page, api, agentKey, save, waitForFo
     });
     await page.locator('[data-focus-toggle-item="0:0"]').check();
     await externalStarted;
-    await page.locator("[data-focus-clear]").click();
+    await clickFocusAction(page.locator("[data-focus-clear]"));
     const externalBase = (await (await context.request.get(api)).json()).focus;
     const externalSections = JSON.parse(JSON.stringify(externalBase.sections));
     externalSections[0].title = "External writer changed this";

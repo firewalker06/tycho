@@ -1,3 +1,4 @@
+const clickFocusAction = require("./focus_menu_actions");
 const assert = require("node:assert/strict");
 const fixedSlots = require("./fixed_panel_slots_smoke");
 const run6Smoke = require("./focus_run6_smoke");
@@ -78,7 +79,7 @@ module.exports = async options => {
       height: rect.height,
     };
   }));
-  assert(actionChecks.length >= 8, "Focus actions render as icon controls");
+  assert(actionChecks.length >= 4, "Focus actions render as icon controls");
   for (const action of actionChecks) {
     assert(action.name && action.title, "each icon action has an accessible name and tooltip");
     assert.equal(action.iconOnly, true, "action buttons show icons without text");
@@ -159,7 +160,7 @@ module.exports = async options => {
   await page.locator('[data-focus-edit-field="title"]').press("Escape");
   assert.equal(await page.locator(".agent-focus-section").first().locator("[data-focus-edit-group]").innerText().then(text => text.includes("Release work")), true);
   assert.equal(await page.locator(".agent-focus-completed .agent-focus-section").getAttribute("class").then(value => value.includes("is-completed")), true);
-  assert.equal(await page.locator(".agent-focus-completed .agent-focus-section-toggle").getAttribute("aria-expanded"), "false", "completed groups start collapsed");
+  assert.equal(await page.locator(".agent-focus-completed [data-focus-section]").getAttribute("aria-expanded"), "false", "completed groups start collapsed");
   if (captureDir) {
     fs.mkdirSync(captureDir, { recursive: true });
     await page.screenshot({ path: path.join(captureDir, "focus-desktop.png"), fullPage: true });
@@ -195,9 +196,9 @@ module.exports = async options => {
   await run9Smoke({ context, page, api, agentKey, save, waitForFocus });
   await run10Smoke({ context, page, api, agentKey, save, waitForFocus });
   await run11Smoke({ context, page, api, agentKey, save, waitForFocus });
-  await page.locator(".agent-focus-completed .agent-focus-section-toggle").click();
-  assert.equal(await page.locator(".agent-focus-completed .agent-focus-section-toggle").getAttribute("aria-expanded"), "true", "users can expand a completed group");
-  await page.locator(".agent-focus-completed .agent-focus-section-toggle").click();
+  await clickFocusAction(page.locator(".agent-focus-completed [data-focus-section]"));
+  assert.equal(await page.locator(".agent-focus-completed [data-focus-section]").getAttribute("aria-expanded"), "true", "users can expand a completed group");
+  await clickFocusAction(page.locator(".agent-focus-completed [data-focus-section]"));
   const beforeInlineConflict = (await (await context.request.get(api)).json()).focus;
   await page.locator('[data-focus-edit-group="0"]').click();
   const conflictedEdit = page.locator(`[data-focus-edit-form="${agentKey}"][data-focus-item-index=""]`);
@@ -239,7 +240,7 @@ module.exports = async options => {
   await waitForFocusWrites();
   await page.locator(".agent-focus-completed").getByText("Release work edited", { exact: true }).waitFor();
   assert.equal(await page.locator('.agent-focus-completed [data-focus-section]').last().getAttribute("aria-expanded"), "false", "a fully completed group moves below Completed and collapses");
-  await page.locator('[data-focus-complete-group="0"]').click();
+  await clickFocusAction(page.locator('[data-focus-complete-group="0"]'));
   await waitForFocusState(0, false);
   await waitForFocusWrites();
   await page.locator(".agent-focus-section").first().getByText("Release work edited", { exact: true }).waitFor();
@@ -287,7 +288,7 @@ module.exports = async options => {
   // returns the group to Completed and collapses it. Recompletion after reopen
   // must also collapse, through both the group and item controls.
   const reopenedGroup = page.locator('.agent-focus-completed .agent-focus-section').first();
-  await reopenedGroup.locator('[data-focus-section]').click({ force: true });
+  await clickFocusAction(reopenedGroup.locator('[data-focus-section]'), { force: true });
   await reopenedGroup.locator('[data-focus-add-item]').waitFor();
   page.on("dialog", async dialog => dialog.accept("New active task"));
   const reopenedGroupIndex = Number(await reopenedGroup.locator('[data-focus-add-item]').getAttribute("data-focus-add-item"));
@@ -304,11 +305,11 @@ module.exports = async options => {
   assert.equal(await page.locator('.agent-focus-completed').locator(`[data-focus-complete-group="${reopenedGroupIndex}"]`).count(), 1, "item completion returns the group to Completed");
   const reopenedDisclosure = page.locator(`.agent-focus-completed [data-focus-section]`);
   assert.equal(await reopenedDisclosure.getAttribute("aria-expanded"), "false", "item completion collapses the group again");
-  await reopenedDisclosure.click({ force: true });
+  await clickFocusAction(reopenedDisclosure, { force: true });
   assert.equal(await reopenedDisclosure.getAttribute("aria-expanded"), "true", "users can still expand after automatic collapse");
-  await reopenedCompleteAction.click();
+  await clickFocusAction(reopenedCompleteAction);
   await waitForFocusState(reopenedGroupIndex, false);
-  await reopenedCompleteAction.click();
+  await clickFocusAction(reopenedCompleteAction);
   await waitForFocusState(reopenedGroupIndex, true);
   await page.locator('.agent-focus-completed').waitFor();
   assert.equal(await page.locator('.agent-focus-completed [data-focus-section]').getAttribute("aria-expanded"), "false", "group completion after reopen collapses again");
@@ -534,7 +535,7 @@ module.exports = async options => {
   await save([{ title: "Group A", items: [{ title: "Keep A" }] }, { title: "Group B", items: [{ title: "Keep B" }] }]);
   await page.evaluate(() => refresh({ force: true }));
   const groupBeforeCancel = (await (await context.request.get(api)).json()).focus;
-  await page.locator('[data-focus-delete-group="0"]').click();
+  await clickFocusAction(page.locator('[data-focus-delete-group="0"]'));
   await page.locator("#confirmation-dialog").getByRole("button", { name: "Cancel" }).click();
   assert.equal((await (await context.request.get(api)).json()).focus.revision, groupBeforeCancel.revision, "canceling group delete does not write Focus");
   let releaseRefresh;
@@ -550,9 +551,9 @@ module.exports = async options => {
     }
     await route.continue();
   });
-  await page.locator(`[data-refresh-focus="${agentKey}"]`).click();
+  await clickFocusAction(page.locator(`[data-refresh-focus="${agentKey}"]`));
   await started;
-  await page.locator('[data-focus-delete-group="0"]').click();
+  await clickFocusAction(page.locator('[data-focus-delete-group="0"]'));
   await page.locator("#confirmation-dialog").getByRole("button", { name: "Delete group" }).waitFor();
   let latest = (await (await context.request.get(api)).json()).focus;
   const reordered = await context.request.put(api, { data: { revision: latest.revision, sections: [{ title: "Group B", items: [{ title: "Keep B" }] }, { title: "Group A", items: [{ title: "Keep A" }] }] } });
@@ -567,11 +568,11 @@ module.exports = async options => {
   // Clear all must use the same pre-confirmation revision rule.
   await save([{ title: "Old work", items: [{ title: "Keep old work" }] }]);
   await page.evaluate(() => refresh({ force: true }));
-  await page.locator("[data-focus-clear]").click();
+  await clickFocusAction(page.locator("[data-focus-clear]"));
   latest = (await (await context.request.get(api)).json()).focus;
   await page.locator("#confirmation-dialog").getByRole("button", { name: "Cancel" }).click();
   assert.equal((await (await context.request.get(api)).json()).focus.revision, latest.revision, "canceling Clear All does not write Focus");
-  await page.locator("[data-focus-clear]").click();
+  await clickFocusAction(page.locator("[data-focus-clear]"));
   latest = (await (await context.request.get(api)).json()).focus;
   const replacement = await context.request.put(api, { data: { revision: latest.revision, sections: [{ title: "New work", items: [{ title: "Keep new work" }] }] } });
   assert(replacement.ok(), await replacement.text());
@@ -590,7 +591,7 @@ module.exports = async options => {
   ]);
   await page.evaluate(() => refreshAgentFocus(parseRoute().key));
   await page.evaluate(() => refresh({ force: true }));
-  await page.locator('[data-focus-delete-group="1"]').waitFor({ state: "visible" });
+  await page.locator('[data-focus-delete-group="1"]').waitFor({ state: "attached" });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => refresh({ force: true }));
   await page.locator("[data-agent-focus]").waitFor({ state: "visible" });
@@ -600,10 +601,10 @@ module.exports = async options => {
     return { width: rect.width, height: rect.height, background: getComputedStyle(button).backgroundColor };
   }));
   assert(mobileActions.length > 0 && mobileActions.every(button => button.width >= 44 && button.height >= 44 && button.background === "rgba(0, 0, 0, 0)"), "mobile icon actions keep transparent 44px touch targets");
-  await page.locator('[data-focus-delete-group="1"]').click();
+  await clickFocusAction(page.locator('[data-focus-delete-group="1"]'));
   await page.locator("#confirmation-dialog").getByRole("button", { name: "Delete group" }).click();
   await page.locator(".agent-focus-completed").waitFor({ state: "detached" });
-  await page.locator("[data-focus-clear]").click();
+  await clickFocusAction(page.locator("[data-focus-clear]"));
   await page.locator("#confirmation-dialog").getByRole("button", { name: "Clear all" }).click();
   await waitForFocus(focus => focus.sections.length === 0);
   revision = (await (await context.request.get(api)).json()).focus.revision;

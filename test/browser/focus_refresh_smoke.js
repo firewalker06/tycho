@@ -1,3 +1,4 @@
+const clickFocusAction = require("./focus_menu_actions");
 const assert=require('node:assert/strict');const fs=require('node:fs');const path=require('node:path');
 module.exports=async({browser,baseUrl,agentKey,captureDir})=>{
  const api=await browser.newContext();
@@ -12,7 +13,7 @@ module.exports=async({browser,baseUrl,agentKey,captureDir})=>{
   page.on('request',r=>{if(new URL(r.url()).pathname.endsWith(`/agents/${peer.key}/focus`)&&r.method()==='GET')peerReads++;if(new URL(r.url()).pathname.endsWith(`/agents/${agentKey}/focus`)&&r.method()==='GET')focusReads++;});
   await page.goto(`${baseUrl}/ui#agent/${agentKey}`,{waitUntil:'networkidle'});await page.evaluate(theme=>window.TychoAppearance.setPreference(theme),theme);
   const panel=page.locator('[data-agent-focus]');for(let i=0;i<2&&!await panel.isVisible();i++)await page.locator('[data-side-conversation="focus"]').click();await panel.waitFor({state:'visible'});
-  await page.locator('#prompt-input').fill('Retain this refresh draft');await page.locator('[data-focus-section]').nth(1).click();
+  await page.locator('#prompt-input').fill('Retain this refresh draft');await clickFocusAction(page.locator('[data-focus-section]').nth(1));
   await page.locator('.agent-focus-scroll').evaluate(e=>e.scrollTop=160);
   await page.evaluate(()=>{window.retainedFocus=document.querySelector('[data-agent-focus]');window.retainedFocusScroll=document.querySelector('.agent-focus-scroll').scrollTop;});
   const reads=focusReads;await save('Background update');

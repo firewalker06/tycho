@@ -1,3 +1,4 @@
+const clickFocusAction = require("./focus_menu_actions");
 const assert = require("node:assert/strict");
 
 module.exports = async ({ page, api, agentKey, save, waitForFocus }) => {
@@ -6,10 +7,10 @@ module.exports = async ({ page, api, agentKey, save, waitForFocus }) => {
     await save([{ title: "Notes", completed: true, items: [{ title: "Same task", completed: true }] }, { title: "Notes", completed: true, items: [{ title: "Same task", completed: true }] }]);
     await page.evaluate(() => refreshAgentFocus(parseRoute().key));
     const first = page.locator(".agent-focus-completed [data-focus-section]").first();
-    await first.click();
-    await page.locator('[data-focus-complete-group="0"]').click();
+    await clickFocusAction(first);
+    await clickFocusAction(page.locator('[data-focus-complete-group="0"]'));
     await waitForFocus(focus => focus.sections[0]?.completed !== true);
-    await page.locator('[data-focus-complete-group="0"]').click();
+    await clickFocusAction(page.locator('[data-focus-complete-group="0"]'));
     await waitForFocus(focus => focus.sections[0]?.completed === true);
     assert.equal(await first.getAttribute("aria-expanded"), "false", "duplicate recompletion collapses the selected group");
 
