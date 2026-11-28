@@ -104,3 +104,23 @@ layout menu, so those cases invoke the shared layout transition directly.
 
 From 900 pixels, answer and prompt editors expand vertically within their fixed
 panel. Small screens retain modal editing. See [inquiry headers and panel editors](REMOTE_UI_PANEL_EDITORS.md).
+
+## Conversation scroll ownership
+
+The mounted workspace owns scrolling inside the message stream and dock. Its
+root document uses the dynamic viewport height and has no scroll range. This
+overrides the large viewport minimum in both body styles, including the loading
+style. Other routes retain document scrolling. Catch-up controls are anchored inside
+the stream pane so viewport changes cannot place them over the dock. No touch
+handler cancels input.
+
+The mobile prompt smoke profile also tests three cold mounts per Conversation
+and Summary route with a modeled 40-pixel difference between large and dynamic
+viewport units. It checks the first revealed frame, restored document scroll,
+stream input and boundaries, short-dock scrolling, viewport pan and height
+changes, editor preservation, and scrolling after leaving the workspace. The
+existing cold first-visible checks still run. Chrome uses CDP touch input;
+mobile WebKit replays touch markers and scroll offsets because native swipes
+and wheel input are unavailable through Playwright in that mode. Use the same mobile prompt flags
+and add the cold-only flag for these two focused profiles. Native Safari toolbar
+movement, touch and software keyboard behavior still need device acceptance.

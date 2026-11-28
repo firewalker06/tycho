@@ -7218,11 +7218,6 @@ details.queue-read-block:not([open]) > .queue-read-body {
     overflow: hidden;
   }
 
-  .agent-workspace .conversation-catchup-overlay {
-    position: absolute;
-    bottom: 12px;
-  }
-
   .agent-workspace.conversation-only .agent-conversation-scroll {
     min-height: 0;
     overflow-y: auto;
@@ -11553,6 +11548,15 @@ body:has([data-agent-workspace]) .app-header.detail-header {
   max-width: none;
   margin-inline: 0;
 }
+/* Safari's large 100vh body minimum can exceed the visible workspace. Keep
+   document scrolling out of the fixed layout; streams and docks own it. */
+html:has([data-agent-workspace]),
+body:has([data-agent-workspace]) {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  overscroll-behavior-y: none;
+}
 body:has([data-agent-workspace]) .app-shell { height: 100dvh; min-height: 0; overflow: hidden; padding-bottom: 0; }
 .content.agent-detail:has([data-agent-workspace]) { height: auto; min-height: 0; overflow: hidden; padding-bottom: 0; }
 .agent-workspace:is(.has-detail, .conversation-only),
@@ -11590,6 +11594,7 @@ body:has([data-agent-workspace]) .app-shell { height: 100dvh; min-height: 0; ove
 .agent-workspace .agent-dock.composer-short-viewport .pending-attachments:not([open]) { gap: 0; }
 .agent-workspace.conversation-only .agent-conversation-pane { display: grid; grid-column: 1; grid-row: 1; min-height: 0; overflow: hidden; }
 .agent-workspace .agent-conversation-scroll { min-height: 0; overflow-y: auto; }
+.agent-workspace .conversation-catchup-overlay { position: absolute; bottom: 12px; }
 .agent-workspace .composer:not(.composer-full-screen) .composer-editor-shell #prompt-input {
   min-height: min(92px, var(--agent-composer-editor-max-height, 92px));
   max-height: min(calc(6lh + 20px), var(--agent-composer-editor-max-height, 100dvh));
