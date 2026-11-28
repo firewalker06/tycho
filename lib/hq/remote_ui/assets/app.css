@@ -506,6 +506,20 @@ h3 {
   font-size: 13px;
 }
 
+/* Agent blocks share metadata rendering across lists, cards, and the switcher. */
+.agent-block-subtitle,
+.agent-reference-copy > .agent-block-subtitle {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .subtitle-status {
   display: inline-grid;
   grid-template-columns: 14px minmax(0, 1fr);

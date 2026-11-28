@@ -11579,6 +11579,10 @@ Dir.mktmpdir("tycho-remote-ui-smoke") do |dir|
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, metadata_fixture: { logsDir: fixture.fetch(:logs_dir) }, test_name: "focus_smoke")
       next
     end
+    if ENV["TYCHO_REMOTE_UI_AGENT_BLOCK_SUBTITLE_ONLY"] == "1"
+      run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "agent_block_subtitle_smoke")
+      next
+    end
     if ENV["TYCHO_REMOTE_UI_AGENT_SUBTITLE_ONLY"] == "1"
       run_conversation_browser_smoke!(dir:, base_url:, agent_key:, browser:, test_name: "agent_subtitle_smoke")
       next
