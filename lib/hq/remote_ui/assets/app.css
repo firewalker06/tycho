@@ -10264,13 +10264,6 @@ body:has(.inquiry-form-full-screen) {
     white-space: nowrap;
   }
 
-  .app-header.detail-header .subtitle-status-text {
-    overflow: visible;
-    text-overflow: clip;
-    white-space: normal;
-    overflow-wrap: anywhere;
-  }
-
   .content {
     padding-bottom: calc(var(--mobile-nav-height) + 24px + env(safe-area-inset-bottom, 0px));
   }
