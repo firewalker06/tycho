@@ -9456,11 +9456,12 @@ body:has(.inquiry-form-full-screen) {
 }
 
 @media (max-width: 899px) {
-  .agent-focus-panel { overflow: visible; }
-  .agent-focus-scroll { overflow: visible; }
   .header-detail-close {
     display: none !important;
   }
+
+  .agent-focus-panel { overflow: visible; }
+  .agent-focus-scroll { overflow: visible; }
 
   .focused-view-toolbar {
     display: none;
