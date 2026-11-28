@@ -506,6 +506,16 @@ h3 {
   font-size: 13px;
 }
 
+/* Agent blocks share metadata rendering across lists, cards, and the switcher. */
+.agent-block-subtitle,
+.agent-reference-copy > .agent-block-subtitle {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .subtitle-status {
   display: inline-grid;
   grid-template-columns: 14px minmax(0, 1fr);
@@ -10262,13 +10272,6 @@ body:has(.inquiry-form-full-screen) {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .app-header.detail-header .subtitle-status-text {
-    overflow: visible;
-    text-overflow: clip;
-    white-space: normal;
-    overflow-wrap: anywhere;
   }
 
   .content {
