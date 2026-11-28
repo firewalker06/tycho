@@ -3,6 +3,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 module.exports = async ({ browser, baseUrl, agentKey, captureDir }) => {
+  await require("./mobile_prompt_cold_load_smoke")({ browser, baseUrl, agentKey, captureDir });
+  if (process.env.TYCHO_REMOTE_UI_MOBILE_PROMPT_COLD_ONLY === "1") return;
   const results = [];
   for (const [width, height] of [[390, 844], [320, 740], [844, 390], [932, 430], [1440, 900]]) {
     const mobile = width < 900;
