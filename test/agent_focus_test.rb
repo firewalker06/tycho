@@ -81,5 +81,21 @@ Dir.mktmpdir("tycho-focus-cli-") do |dir|
   raise "bad saved revision" unless saved["revision"] == 1
   cleared = command.call("agent", "focus", key, "--file", "-", "--revision", "1", stdin: "[]")
   raise "stdin clear failed" unless cleared["revision"] == 2 && cleared["sections"] == []
+  boundary = [{ "title" => "😀" * 40, "subtitle" => "😀" * 60, "items" => [{ "title" => "界" * 40, "subtitle" => "界" * 60 }] }]
+  File.write(input, JSON.generate(boundary))
+  limited = command.call("agent", "focus", key, "--file", input, "--revision", "2", "--json")
+  raise "CLI boundary write was truncated" unless limited["sections"][0]["title"] == boundary[0]["title"]
+  %w[title subtitle].each do |field|
+    [false, true].each do |item|
+      invalid = Marshal.load(Marshal.dump(boundary))
+      (item ? invalid[0]["items"][0] : invalid[0])[field] += "x"
+      File.write(input, JSON.generate(invalid))
+      out, err, status = Open3.capture3(env, "bundle", "exec", "bin/tycho", "agent", "focus", key, "--file", input, "--revision", "3", "--json")
+      limit = field == "title" ? 40 : 60
+      raise "CLI accepted invalid text: #{out} #{err}" if status.success?
+      raise "CLI limit feedback is missing" unless "#{out} #{err}".include?("#{limit} characters")
+    end
+  end
+  raise "CLI rejection changed saved text" unless command.call("agent", "focus", key, "--json") == limited
   puts "agent_focus_cli: ok (file, integer revision, JSON, stdin clear)"
 end

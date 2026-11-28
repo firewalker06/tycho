@@ -111,7 +111,7 @@ The initial revision is zero. A changed document advances the revision once.
 An unchanged replacement is a no-op. Simultaneous writers cannot silently
 replace each other's changes. The API returns 409 for a stale different write
 and 422 for invalid content. Limits are 20 sections, 100 total items, 10
-attachments per item, 2,000 characters per text field, and 128 KiB input.
+attachments per item, 40 characters per group/item title and 60 per subtitle, and 128 KiB input.
 
 Focus does not change agent status, add transcript messages, send a prompt, or
 mark the agent unread. Agents receive Focus command guidance on each run.
@@ -316,3 +316,23 @@ visible menu trigger, including touch use in WebKit.
 Run `TYCHO_REMOTE_UI_FOCUS_GROUP_MENU_ONLY=1 bin/remote-ui-smoke` for the
 focused group-control checks. Add `TYCHO_REMOTE_UI_FOCUS_WEBKIT=1` for WebKit
 and `TYCHO_REMOTE_UI_CAPTURE_DIR=path/to/temp/captures` to save screenshots.
+
+New and changed group/item titles have a 40-character limit. Subtitles have a
+60-character limit. Both the client and canonical UI/API/CLI write validator
+count Unicode code points, including combining marks and emoji components.
+No input is silently cut to fit. Attachment titles retain their existing limit.
+
+Saved legacy text remains readable. Unchanged fields are retained during
+unrelated edits, completion, insertion, deletion, and reordering. Compatibility
+matching consumes each old entry once; it does not permit copying an overlong
+entry as new work. Changed text must meet the new limit. Exact retries and
+revision conflicts keep their existing behavior.
+
+Displayed group and item titles and subtitles each use at most two lines with
+an ellipsis. Editors contain the complete saved text, including line breaks;
+unchanged text keeps its original line endings. Native `maxlength` is not used
+because it counts UTF-16 units and can cut off legacy text.
+
+Run `TYCHO_REMOTE_UI_FOCUS_TEXT_LIMITS_ONLY=1 bin/remote-ui-smoke` for text-limit
+and display checks at 320/390/desktop. Add `TYCHO_REMOTE_UI_FOCUS_WEBKIT=1` for
+WebKit, and use `TYCHO_REMOTE_UI_CAPTURE_DIR=path/to/temp/captures` for evidence.

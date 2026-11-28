@@ -163,7 +163,7 @@ Titles are required plain text; subtitles are optional. Items are ordered arrays
 Attachments default to `[]`. Links use HTTP or HTTPS without credentials. Files
 use `type: "file"`, `title`, and a `path` that exactly matches an existing agent
 attachment. Focus does not register new file paths. Limits: 20 sections, 100
-items total, 10 attachments per item, 2,000 characters per text field, 128 KiB.
+items total, 10 attachments per item, 40 characters per group/item title and 60 per subtitle, 128 KiB.
 The command always returns JSON. A change advances the revision; an unchanged
 replacement does not. Do not include Focus updates in every run's prose unless
 the operator needs that notification.

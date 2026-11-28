@@ -3103,10 +3103,20 @@ module RemoteServerTest
       saved = service.update_agent_focus(key, "sections" => sections, "revision" => 0)
       assert(saved["revision"] == 1, "Focus revision must advance")
       assert(service.update_agent_focus(key, "sections" => sections, "revision" => 0) == saved, "exact retries must be safe")
-      at_limit = [{ "title" => "Limit", "subtitle" => "x" * 80, "items" => [{ "title" => "Item", "subtitle" => "y" * 80 }] }]
+      at_limit = [{ "title" => "g" * 40, "subtitle" => "x" * 60, "items" => [{ "title" => "i" * 40, "subtitle" => "y" * 60 }] }]
       limit_saved = service.update_agent_focus(key, "sections" => at_limit, "revision" => 1)
-      assert(limit_saved["sections"][0]["subtitle"].length == 80 && limit_saved["sections"][0]["items"][0]["subtitle"].length == 80,
-             "80-character Focus subtitles must be accepted")
+      assert(limit_saved["sections"][0]["subtitle"].length == 60 && limit_saved["sections"][0]["items"][0]["subtitle"].length == 60,
+             "60-character Focus subtitles must be accepted")
+      [false, true].each do |item|
+        invalid = Marshal.load(Marshal.dump(at_limit))
+        (item ? invalid[0]["items"][0] : invalid[0])["title"] += "x"
+        begin
+          service.update_agent_focus(key, "sections" => invalid, "revision" => 2)
+          raise "41-character Focus title was accepted"
+        rescue HQ::RemoteServer::Error => e
+          assert(e.status == 422 && e.message.include?("40 characters"), "title limit must return 422 without truncation")
+        end
+      end
       legacy_sections = [
         { "title" => "Legacy section", "subtitle" => "s" * 81, "icon" => "note", "items" => [
           Marshal.load(Marshal.dump(sections[0]["items"][0])).merge("subtitle" => "i" * 85),
@@ -3138,9 +3148,9 @@ module RemoteServerTest
       ].each do |invalid_sections|
         begin
           service.update_agent_focus(key, "sections" => invalid_sections, "revision" => 3)
-          raise "new or changed Focus subtitle over 80 characters was accepted"
+          raise "new or changed Focus subtitle over 60 characters was accepted"
         rescue HQ::RemoteServer::Error => e
-          assert(e.status == 422 && e.message.include?("80 characters"), "new or changed overlong Focus subtitle must return a clear validation error")
+          assert(e.status == 422 && e.message.include?("60 characters"), "new or changed overlong Focus subtitle must return a clear validation error")
         end
       end
       assert(service.agent_focus(key)["revision"] == 3, "rejected subtitle edits must not change the revision")

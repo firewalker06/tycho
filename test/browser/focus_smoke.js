@@ -220,8 +220,8 @@ module.exports = async options => {
   await page.keyboard.press("Enter");
   const groupForm = page.locator(`[data-focus-edit-form="${agentKey}"][data-focus-item-index=""]`);
   await groupForm.waitFor();
-  assert.equal(await groupForm.locator("input[type=text]").count(), 2, "group edit uses two ordinary single-line inputs");
-  assert.equal(await groupForm.locator("textarea").count(), 0, "group edit has no textarea");
+  assert.equal(await groupForm.locator("textarea").count(), 2, "group edit keeps complete legacy text in two text areas");
+  assert.equal(await groupForm.locator("[maxlength]").count(), 0, "group edit does not truncate legacy text");
   assert.equal(await page.evaluate(() => document.activeElement?.matches("[data-focus-edit-title]")), true, "keyboard edit moves focus to the title input");
   await groupForm.locator('[data-focus-edit-field="title"]').fill("Release work edited");
   await groupForm.locator('[data-focus-edit-field="subtitle"]').fill("Updated group");
@@ -271,8 +271,8 @@ module.exports = async options => {
     }), agentKey);
     assert.fail(`item text opens its inline editor: ${JSON.stringify({ itemTriggerInfo, itemEditState, pageErrors })}; ${error.message}`);
   }
-  assert.equal(await itemEditForm.locator("input[type=text]").count(), 2, "item edit uses two ordinary single-line inputs");
-  assert.equal(await itemEditForm.locator("textarea").count(), 0, "item edit has no textarea");
+  assert.equal(await itemEditForm.locator("textarea").count(), 2, "item edit keeps complete legacy text in two text areas");
+  assert.equal(await itemEditForm.locator("[maxlength]").count(), 0, "item edit does not truncate legacy text");
   await itemEditForm.locator('[data-focus-edit-field="title"]').fill("Discarded task title");
   await itemEditForm.locator('[data-focus-edit-field="subtitle"]').press("Escape");
   await page.getByText("First task", { exact: true }).waitFor();
